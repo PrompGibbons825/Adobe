@@ -281,6 +281,8 @@ def analyze(source: dict) -> Design:
     _make_panels(design)
     _make_composites(design)
     _make_backdrops(design, pending_backdrops)
+    from . import decor  # [formats-decor] decorations leave the layout
+    decor.classify(design)
     _assign_corners(design)
     return design
 

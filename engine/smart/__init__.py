@@ -85,7 +85,7 @@ def layout_design(source: dict, target: dict) -> dict:
 
 
 def _strip(el: dict) -> dict:
-    return {k: v for k, v in el.items() if k != "_idx"}
+    return {k: v for k, v in el.items() if k not in ("_idx", "_decor_kind")}
 
 
 def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
@@ -99,8 +99,9 @@ def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
         if b.get("type") == "image":
             b["fit"] = "cover"
         out[b["id"]] = b
+    from . import decor  # [formats-decor] anchor + coverage placement
     for e in d.decor:
-        out[e["id"]] = _slab(e, d, ctx) if e.get("_slab") else _decor(e, d, ctx)
+        out[e["id"]] = _slab(e, d, ctx) if e.get("_slab") else (decor.place(e, d, ctx) or _decor(e, d, ctx))
     for bd in d.backdrops:
         out[bd.el["id"]] = _backdrop(bd, plan, d, ctx)
     for it in plan.hidden:
@@ -280,7 +281,8 @@ def finalize(source: dict, out: dict, target: dict) -> dict:
         e["width"] = max(0.0, e["width"])
         e["height"] = max(0.0, e["height"])
         _keep_ratio(e, se)
-        _inside(e, W, H)
+        if not e.pop("_bleed", False):  # [formats-decor] decor.DECOR_BLEED (off by default)
+            _inside(e, W, H)
         if e.get("type") == "text":
             try:
                 fs = float(e.get("font_size", se.get("font_size", 12)))
@@ -292,6 +294,7 @@ def finalize(source: dict, out: dict, target: dict) -> dict:
             for k in ("x", "y", "width", "height"):
                 e[k] = round(e[k], 2)
         e.pop("_idx", None)
+        e.pop("_decor_kind", None)
         elements.append(e)
     return {"canvas": {"width": int(target["width"]), "height": int(target["height"])}, "elements": elements}
 
