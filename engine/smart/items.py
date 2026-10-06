@@ -146,8 +146,8 @@ def realize_image(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float
     f = min(1.0, max_w / iw if iw > 0 else 1.0, max_h / ih if ih > 0 else 1.0,
             (ctx.W - 2.0) * fw_ / iw if iw > 0 else 1.0, (ctx.H - 2.0) * fh_ / ih if ih > 0 else 1.0)
     iw, ih = iw * f, ih * f
-    if iw < 2 or ih < 2:  # never vanish: a sliver is still a valid (if bad) layout
-        g = 2.0 / max(1e-6, min(iw, ih))
+    if max(iw, ih) < 2:  # never vanish entirely (thin rules may stay thin)
+        g = 2.0 / max(1e-6, max(iw, ih))
         if iw * g > max_w + 0.5 or ih * g > max_h + 0.5:
             return None
         iw, ih = iw * g, ih * g
@@ -291,7 +291,7 @@ def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, r
                 return None
     fonts, blocks = {}, {}
     for lab in it.labels:
-        fs = max(1, int(round(float(lab.get("font_size", 16) or 16) * g)))
+        fs = max(1, int(float(lab.get("font_size", 16) or 16) * g))  # rounded down: never an extra line
         fonts[lab["id"]] = fs
         blocks[lab["id"]] = textfit.measure(str(lab.get("content", "")), TextStyle.of(lab), fs, el_box(lab).w * g)
 
@@ -319,8 +319,15 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float):
     if rh is None:
         return None
     hb = host.src_box
+    k = rh.w / max(1e-6, hb.w)  # px of output per px of source
     parts = [(rh, 0.0, 0.0)]
     for sat in it.sats:
+        if sat.kind == "text":
+            # copy on art keeps its place and measure, so captions do not collide
+            rs = _scaled_text(sat, k, ctx)
+            eb = el_box(sat.els[0])
+            parts.append((rs, (eb.x - hb.x) * k, (eb.y - hb.y) * k))
+            continue
         rs = realize(sat, t, ctx, relax=relax)
         if rs is None:
             return None
@@ -332,6 +339,28 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float):
     x1 = max(px + r.w for r, px, _ in parts)
     y1 = max(py + r.h for r, _, py in parts)
     return parts, x0, y0, x1 - x0, y1 - y0, rh
+
+
+def _scaled_text(it: Item, k: float, ctx: Ctx) -> Real:
+    """A caption scaled with the art it sits on: same place, same measure (in
+    ems), font rounded down but never below small-print legibility."""
+    el = it.els[0]
+    style = it.style or TextStyle.of(el)
+    fs0 = max(1.0, it.fs0)
+    fs = max(1, int(fs0 * k), int(min(fs0, ctx.floor("legal"))))
+    eb = el_box(el)
+    width = max(1.0, eb.w * fs / fs0)
+    blk = textfit.measure(str(el.get("content", "")), style, fs, width, exact=True)
+    width = max(width, blk.ink_width + 1.0)
+    blk = textfit.measure(str(el.get("content", "")), style, fs, width, exact=True)
+
+    def emit(x: float, y: float) -> List[dict]:
+        e = _copy(el)
+        e.update(x=x, y=y, width=width, height=blk.height, font_size=fs)
+        return [e]
+
+    return Real(item=it, w=width, h=blk.height, scale=fs / fs0, fonts={el["id"]: fs},
+                blocks={el["id"]: blk}, emit_fn=emit)
 
 
 def realize_composite(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF,

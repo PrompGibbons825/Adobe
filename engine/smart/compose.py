@@ -306,7 +306,8 @@ def _zone(d: Design, ctx: Ctx, insets) -> Tuple[Box, float, float]:
     return Box(mx + il, my + it_, ctx.W - 2 * mx - il - ir, ctx.H - 2 * my - it_ - ib), mx, my
 
 
-def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", insets=(0, 0, 0, 0)) -> Optional[Plan]:
+def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", insets=(0, 0, 0, 0),
+               force_align: Optional[str] = None) -> Optional[Plan]:
     vis = _visible(d, hidden)
     floaters = [it for it in vis if it.corner]
     body = [it for it in vis if not it.corner]
@@ -317,7 +318,7 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
     zone, mx, my = _zone(d, ctx, insets)
     if zone.w < 20 or zone.h < 20:
         return None
-    root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.45)
+    root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.45, force_align=force_align)
     weights = [3.0 if any(i.role == "headline" for i in r) else (1.5 if any(i.role == "hero" for i in r) else 1.0)
                for r in rows]
     for _ in range(4):
@@ -501,8 +502,8 @@ def drop_orders(d: Design) -> List[List[Item]]:
     for u in units:
         acc = acc + u
         out.append(list(acc))
-    for role in ("hero", "logo", "cta"):
-        extra = [it for it in d.items if it.role == role]
+    for role in ("hero", "logo", "cta", "panel"):
+        extra = [it for it in d.items if it.role == role and it not in acc]
         if extra:
             acc = acc + extra
             out.append(list(acc))
@@ -548,11 +549,17 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
     plans: List[Plan] = []
     missing = [it for it in d.items if it.role in ("missing", "void")]
     has_corners = any(it.corner for it in d.items if it.role not in ("missing", "void"))
+    from . import assets as _assets
+
+    busy_bg = any(b.get("type") == "image" and _assets.info(b.get("asset_id")).busy > 0.3 for b in d.backgrounds)
 
     def variants(force_all: bool = False):
         yield "adapt", plan_adapt, {}
         if r <= 2.2 or force_all:
             yield "stack", plan_stack, {}
+            if busy_bg:  # copy over a photo: also try it against either side
+                yield "stack-start", plan_stack, dict(force_align="start")
+                yield "stack-end", plan_stack, dict(force_align="end")
         if r >= 1.15:
             for side in ("left", "right"):
                 for frac in (0.34, 0.48):

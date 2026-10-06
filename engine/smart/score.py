@@ -126,3 +126,19 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         b["balance"] = -25.0 * abs(mx - ctx.W / 2.0) / ctx.W - 12.0 * abs(my - ctx.H / 2.0) / ctx.H
     b["prior"] = _prior(p.name, ctx.W / ctx.H, d.W / d.H)
     return sum(b.values()), b
+
+
+def pixel_penalty(stats, src_stats, importance) -> float:
+    """Copy that lost contrast against the pixels under it, or landed on texture
+    the source kept it off."""
+    pen = 0.0
+    for tid, (c, busy) in stats.items():
+        imp = importance.get(tid, 40.0)
+        c0, b0 = src_stats.get(tid, (4.5, 0.0))
+        target = max(1.5, min(c0, 4.5))
+        if c < 0.85 * target:
+            pen += imp * 1.5 * (1.0 - c / target)
+        calm = max(1.5 * b0, 0.06)
+        if busy > calm:
+            pen += imp * 0.6 * min(1.0, (busy - calm) / 0.1)
+    return pen

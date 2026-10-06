@@ -30,6 +30,7 @@ class AssetInfo:
     luminance: float = 0.5  # mean luminance 0..1 of visible pixels
     busy: float = 0.0  # 0..1 edge density of visible pixels
     coverage: float = 1.0  # share of the image that is painted (frames and outlines are low)
+    ring: float = 0.0  # share of the painted pixels lying in the outer band of the visible bounds
 
 
 @lru_cache(maxsize=256)
@@ -53,8 +54,13 @@ def info(asset_id: Optional[str]) -> AssetInfo:
     small.thumbnail((128, 128))
     hist = small.histogram()
     coverage = sum(hist[128:]) / max(1, sum(hist))
+    sw, sh = small.size
+    bx, by = max(1, round(0.15 * sw)), max(1, round(0.15 * sh))
+    inner = small.crop((bx, by, max(bx + 1, sw - bx), max(by + 1, sh - by))).histogram()
+    painted = sum(hist[128:])
+    ring = (painted - sum(inner[128:])) / max(1, painted)
     return AssetInfo(found=True, size=(w, h), alpha_bbox=bbox, opaque=opaque, luminance=lum, busy=busy,
-                     coverage=coverage)
+                     coverage=coverage, ring=ring)
 
 
 def _stats(rgba, mask) -> Tuple[float, float]:

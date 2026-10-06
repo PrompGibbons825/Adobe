@@ -20,7 +20,33 @@ def plan_design(source: dict, target: dict):
     plans = prune_relaxed(generate(d, ctx))
     score_plans(plans, d, ctx)
     plans.sort(key=lambda p: -p.score)
+    _pixel_rerank(plans, d, ctx)
     return d, ctx, plans
+
+
+def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
+    """Re-rank the best candidates by what is actually under their copy."""
+    from . import pixels
+    from .score import pixel_penalty
+
+    if len(plans) < 1 or not pixels.available():
+        return
+    src = pixels.measure(d.elements, d.W, d.H, skip=set())
+    if not src:
+        return
+    head = plans[:top]
+    for p in head:
+        imp = {}
+        for r, _, _ in p.placed + p.floaters:
+            for e in r.item.els:
+                imp[e["id"]] = r.item.importance
+        hidden = {e["id"] for it in p.hidden for e in it.els}
+        stats = pixels.measure(emit(p, d, ctx), ctx.W, ctx.H, skip=hidden)
+        pen = pixel_penalty(stats, src, imp)
+        p.breakdown["pixels"] = -pen
+        p.score -= pen
+    head.sort(key=lambda p: -p.score)
+    plans[:top] = head
 
 
 def layout_design(source: dict, target: dict) -> dict:
@@ -238,8 +264,9 @@ def finalize(source: dict, out: dict, target: dict) -> dict:
                 fs = float(se.get("font_size", 12) or 12)
             e["font_size"] = max(1, int(round(fs)) if math.isfinite(fs) else 12)
         _renderer_safe(e)
-        for k in ("x", "y", "width", "height"):
-            e[k] = round(e[k], 2)
+        if e.get("type") != "image":  # images keep full precision: thin rules must keep their ratio
+            for k in ("x", "y", "width", "height"):
+                e[k] = round(e[k], 2)
         e.pop("_idx", None)
         elements.append(e)
     return {"canvas": {"width": int(target["width"]), "height": int(target["height"])}, "elements": elements}
@@ -329,7 +356,13 @@ def _keep_ratio(e: dict, se: dict) -> None:
     if e.get("type") != "image":
         return
     sw, sh = float(se.get("width", 0) or 0), float(se.get("height", 0) or 0)
-    if sw <= 0 or sh <= 0 or e["width"] <= 0 or e["height"] <= 0:
+    if sw <= 0 or sh <= 0:
+        return
+    if e["width"] < 1e-3 or e["height"] < 1e-3:  # collapsed: a 1px speck at the source ratio
+        cx, cy = e["x"] + e["width"] / 2.0, e["y"] + e["height"] / 2.0
+        r = sw / sh
+        e["width"], e["height"] = (1.0, 1.0 / r) if r >= 1 else (r, 1.0)
+        e["x"], e["y"] = cx - e["width"] / 2.0, cy - e["height"] / 2.0
         return
     full = e["x"] <= 0.5 and e["y"] <= 0.5 and e.get("fit") == "cover"
     if full:

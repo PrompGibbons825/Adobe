@@ -339,7 +339,8 @@ def _make_panels(d: Design) -> None:
         if (span_h or span_w) and b.inter(canvas) >= 0.15 * canvas.area:
             slabs.append(it)
     hosts = [it for it in d.items if it.kind == "image" and it.role not in ("logo", "missing", "void")
-             and el_box(it.els[0]).area <= 0.6 * canvas.area]
+             and (el_box(it.els[0]).area <= 0.6 * canvas.area or
+                  (flat(it) and el_box(it.els[0]).area <= 0.8 * canvas.area))]
     z = lambda it: min(e["z_index"] for e in it.els)  # noqa: E731
 
     # 1. each text belongs to the surface right under it (highest host below it)
@@ -616,12 +617,13 @@ def _assign_roles(d: Design) -> None:
 
 
 def _solid(it: Item) -> bool:
-    """Art with substance (a product, a photo), as opposed to an outline or frame."""
+    """Art with substance (a product, a photo, a cluster of objects), as opposed
+    to an outline or frame: low coverage with the ink hugging the bounds."""
     e = it.els[0]
     if e.get("type") != "image":
         return True
     a = assets.info(e.get("asset_id"))
-    return not a.found or a.coverage >= 0.25
+    return not a.found or a.coverage >= 0.25 or (a.ring < 0.6 and a.coverage >= 0.02)
 
 
 def _text_alpha(el: dict) -> float:
