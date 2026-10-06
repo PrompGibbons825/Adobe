@@ -18,6 +18,10 @@ try:
 except Exception:  # pragma: no cover
     Image = None
 
+# finale-api: where asset pixels come from (engine/smart/providers.py). None = the
+# brand kit on disk (stage one); a host can hand in PIL images (Express blobs).
+_SOURCE = None
+
 Frac = Tuple[float, float, float, float]  # x0, y0, x1, y1 as fractions of the element box
 
 
@@ -35,11 +39,11 @@ class AssetInfo:
 
 @lru_cache(maxsize=256)
 def info(asset_id: Optional[str]) -> AssetInfo:
-    path = paths.find_asset(asset_id)
+    path = paths.find_asset(asset_id) if _SOURCE is None else asset_id
     if path is None or Image is None:
         return AssetInfo(found=False)
     try:
-        im = Image.open(path)
+        im = Image.open(path) if _SOURCE is None else _SOURCE(asset_id)  # finale-api: pluggable source
         im.load()
     except Exception:
         return AssetInfo(found=False)

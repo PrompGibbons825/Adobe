@@ -116,9 +116,30 @@ def book() -> _FontBook:
     return _BOOK
 
 
+# finale-api: text measurement is pluggable (engine/smart/providers.py). None =
+# the brand fonts through skia, exactly like the renderer (stage one).
+_MEASURER = None
+_CALLS = [0]  # measure() calls: a deterministic proxy for planning time (budget.py)
+
+
+def measure_calls() -> int:
+    return _CALLS[0]
+
+
+def clear_caches() -> None:
+    for f in (char_widths, _prepared, longest_word, _balanced):
+        f.cache_clear()
+
+
 @lru_cache(maxsize=4096)
 def char_widths(family: str, weight: str, style: str, size: float, text: str) -> Tuple[float, ...]:
     """Per-character advances, measured exactly like renderer.converter.wrap.char_widths."""
+    if _MEASURER is not None:  # finale-api: a host-supplied or corrected measurer
+        return tuple(_MEASURER.char_widths(family, weight, style, size, text))
+    return native_char_widths(family, weight, style, size, text)
+
+
+def native_char_widths(family: str, weight: str, style: str, size: float, text: str) -> Tuple[float, ...]:
     if not text:
         return ()
     tf = book().typeface(family, weight, style)
@@ -289,6 +310,7 @@ class TextBlock:
 
 
 def measure(content: str, style: TextStyle, font_size: float, wrap_width: float, exact: bool = False) -> TextBlock:
+    _CALLS[0] += 1
     fs = max(1, int(font_size))
     if exact:
         widths = char_widths(style.family, style.weight, style.style, float(fs), content)
@@ -312,7 +334,7 @@ def measure(content: str, style: TextStyle, font_size: float, wrap_width: float,
         line_ws.append(P[cut] - P[start] + style.letter_spacing * max(0, n - 1))
         start = cut + 1
 
-    asc, desc, cap = book().metrics(style.family, style.weight, style.style)
+    asc, desc, cap = (_MEASURER or book()).metrics(style.family, style.weight, style.style)
     step = fs * style.line_height
     glyph_h = (asc + desc) * fs
     height = (len(lines) - 1) * step + max(step, glyph_h)
