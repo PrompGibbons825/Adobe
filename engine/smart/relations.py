@@ -110,8 +110,10 @@ def elem_box(e: dict, ink: Optional[tuple] = None) -> Box:
     return el_visual_box(e)
 
 
-def units_of(d, elements: Iterable[dict], hidden: Set[str] = frozenset()) -> Dict[str, Unit]:
-    """Unit boxes of the design's items as laid out in ``elements`` (by id)."""
+def units_of(d, elements: Iterable[dict], hidden: Set[str] = frozenset(),
+             canvas: Optional[Box] = None) -> Dict[str, Unit]:
+    """Unit boxes of the design's items as laid out in ``elements`` (by id),
+    clipped to ``canvas`` when given."""
     by_id = {e["id"]: e for e in elements}
     inks: Dict[str, tuple] = {}
     for it in d.items:
@@ -128,8 +130,15 @@ def units_of(d, elements: Iterable[dict], hidden: Set[str] = frozenset()) -> Dic
         boxes = [b for b in boxes if b.w > 0 and b.h > 0]
         if not boxes:
             continue
+        box = union_all(boxes)
+        if canvas is not None:  # what bleeds off the canvas is not part of the layout
+            box = box.inter_box(canvas)
+            if box is None:
+                continue
+        if max(box.w, box.h) < 4.0:  # collapsed to a speck: as good as dropped
+            continue
         fs = max((float(e.get("font_size", 0) or 0) for e in els if e.get("type") == "text"), default=0.0)
-        out[it.key] = Unit(key=it.key, box=union_all(boxes), imp=float(it.importance), fs=fs,
+        out[it.key] = Unit(key=it.key, box=box, imp=float(it.importance), fs=fs,
                            text=it.kind == "text", art=it.kind in ("image", "composite"))
     return out
 
@@ -241,7 +250,9 @@ def reading_order(boxes: Dict[str, Box]) -> List[str]:
 
 
 def _pair_w(a: Unit, b: Unit) -> float:
-    return math.sqrt(max(1.0, a.imp) * max(1.0, b.imp)) / 100.0
+    """Relations between important units matter far more than ones among
+    ornaments (rules, icons): weight by the product of importances."""
+    return max(1.0, a.imp) * max(1.0, b.imp) / 1e4
 
 
 def _containers(d) -> Tuple[Dict[str, dict], Dict[str, float]]:
@@ -262,7 +273,7 @@ def _containers(d) -> Tuple[Dict[str, dict], Dict[str, float]]:
 
 def extract(d) -> Graph:
     W, H = d.W, d.H
-    units = units_of(d, d.elements)
+    units = units_of(d, d.elements, canvas=Box(0.0, 0.0, W, H))
     keys = list(units)
     tx, ty = max(1.5, 0.006 * W), max(1.5, 0.006 * H)
     rels: List[Rel] = []
@@ -311,12 +322,14 @@ def extract(d) -> Graph:
             g1 = _gap(units[ka].box, units[kb].box, axis)
             g2 = _gap(units[kb].box, units[kc].box, axis)
             if g1 > 0 and g2 > 0 and abs(g1 - g2) <= max(2.0, 0.12 * max(g1, g2)):
-                w = (units[ka].imp * units[kb].imp * units[kc].imp) ** (1 / 3) / 100.0
+                w = (units[ka].imp * units[kb].imp * units[kc].imp) ** (2 / 3) / 1e4
                 rels.append(Rel("gap", ka, kb, c=kc, sub=axis, w=w, axis=axis))
     # reading order
     order = reading_order({k: u.box for k, u in units.items()})
     for ka, kb in zip(order, order[1:]):
-        rels.append(Rel("read", ka, kb, w=_pair_w(units[ka], units[kb])))
+        a, b = units[ka].box, units[kb].box
+        if _before(a, b, "y") or _before(a, b, "x"):  # overlapping units have no order to keep
+            rels.append(Rel("read", ka, kb, w=_pair_w(units[ka], units[kb])))
     # element-level containment
     holders, imp = _containers(d)
     owner = {e["id"]: it.key for it in d.items for e in it.els}
@@ -369,7 +382,7 @@ def evaluate(g: Graph, d, elements: Sequence[dict], W: float, H: float,
              hidden: Set[str] = frozenset(), trace: Optional[list] = None) -> Dict[str, float]:
     """Survival of the source's relations in a layout, plus raw per-type shares.
     ``trace`` (a list) collects (relation, credit) pairs for debugging."""
-    units = units_of(d, elements, hidden)
+    units = units_of(d, elements, hidden, canvas=Box(0.0, 0.0, W, H))
     nec = necessity(g, W, H)
     tx, ty = max(1.5, 0.006 * W), max(1.5, 0.006 * H)
     tol = {"x": tx, "y": ty}
@@ -469,12 +482,14 @@ def evaluate(g: Graph, d, elements: Sequence[dict], W: float, H: float,
     out: Dict[str, float] = {"necessity": nec}
     out.update({"look_" + k: v for k, v in look(units, W, H).items()})
     out["n"] = len(g.rels)
-    tw = sum(TYPE_W[k] for k, s in acc.items() if s[0] > 0)
+    # a type backed by one minor relation should not swing the average
+    tws = {k: TYPE_W[k] * (1.0 - math.exp(-s[0] / 0.5)) for k, s in acc.items() if s[0] > 0}
+    tw = sum(tws.values())
     if tw <= 0:
         out.update(survival=1.0, raw=1.0)
         return out
-    out["survival"] = 1.0 - sum(TYPE_W[k] * s[1] / s[0] for k, s in acc.items() if s[0] > 0) / tw
-    out["raw"] = sum(TYPE_W[k] * s[2] / s[0] for k, s in acc.items() if s[0] > 0) / tw
+    out["survival"] = 1.0 - sum(tws[k] * s[1] / s[0] for k, s in acc.items() if k in tws) / tw
+    out["raw"] = sum(tws[k] * s[2] / s[0] for k, s in acc.items() if k in tws) / tw
     for k, s in acc.items():
         if s[0] > 0:
             out["held_" + k] = s[2] / s[0]
@@ -489,9 +504,9 @@ def look(units: Dict[str, Unit], W: float, H: float) -> Dict[str, float]:
     """Alignment crispness and simplicity, spacing regularity, margins, density.
 
     near_miss   share of units that sit slightly off the line of a unit in
-                the same column (or row): more than ~0.2% and less than 1.2%
-                of the canvas away, with no exact line shared on that axis.
-                The "almost aligned" look
+                the same column (or a like-sized unit in the same row): more
+                than ~0.2% and less than 1.2% of the canvas away, with no
+                exact line shared on that axis. The "almost aligned" look
     x_lines     distinct left/centre/right lines used, per unit (simplicity)
     gap_cv      coefficient of variation of the gaps between consecutive units
                 along the main axis (columns, or rows on strips)
@@ -508,9 +523,11 @@ def look(units: Dict[str, Unit], W: float, H: float) -> Dict[str, float]:
         for kb in ks[i + 1:]:
             a, b = units[ka].box, units[kb].box
             for axis, dim in (("x", W), ("y", H)):
-                share = _ov(a.x, a.r, b.x, b.r) if axis == "x" else _ov(a.y, a.b, b.y, b.b)
-                if share <= 0:  # only units in one column (row) read as aligned or not
-                    continue
+                if axis == "x":  # units stacked in one column read as aligned or not
+                    if _ov(a.x, a.r, b.x, b.r) <= 0:
+                        continue
+                elif not _band(a, b, "row") or max(a.h, b.h) > 1.5 * min(a.h, b.h):
+                    continue  # ... and like-sized units in one row (a tall photo beside a column is not)
                 pa, pb = _anchors(a, axis), _anchors(b, axis)
                 ds = [abs(pa[k] - pb[k]) for k in pa]
                 if min(ds) <= max(1.0, 0.002 * dim):
