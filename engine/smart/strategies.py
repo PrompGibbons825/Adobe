@@ -200,6 +200,23 @@ class Anchored:
                 gx = (b.x - a.r + 0.15 * min(a.w, b.w)) / max(a.w, b.w, 1.0)
                 if max(gx, gy) > 0:
                     self.before[i][j] = 1 if gy >= gx else 0
+        # the source gap between neighbours, kept (scaled with them) when they
+        # grow: growth fills free space, not the breathing room between them
+        self.gap = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            for j in range(n):
+                ax = self.before[i][j]
+                if ax is not None:
+                    a, b = units[i].src, units[j].src
+                    g = max(0.0, (b.y - a.b) if ax == 1 else (b.x - a.r))
+                    self.gap[i][j] = self.gap[j][i] = g
+
+    def need(self, i: int, j: int, scales: Optional[Sequence[float]]) -> float:
+        if self.src_ov[i][j]:
+            return 0.0
+        if scales is None or not self.gap[i][j]:
+            return self.pad
+        return min(4.0 * self.pad, max(self.pad, 0.8 * self.gap[i][j] * min(scales[i], scales[j])))
 
     def parts(self, i: int, s: float) -> Optional[Parts]:
         key = (i, round(s, 5))
@@ -249,15 +266,15 @@ class Anchored:
         for i in range(n):
             if not go(i):
                 return None
-        self._separate(boxes)
+        self._separate(boxes, scales)
         return boxes, reals
 
-    def _separate(self, boxes: List[Box]) -> None:
+    def _separate(self, boxes: List[Box], scales: Optional[Sequence[float]] = None) -> None:
         """Copy that grew to its legibility floor (or art that grew) can reach
         into a neighbour. Push such pairs apart along the axis they were apart
         on in the source, the later one first, the earlier one if the later
         has no room left in the safe area."""
-        z, pad, n = self.zone, self.pad, len(boxes)
+        z, n = self.zone, len(boxes)
         for _ in range(3 * n):
             moved = False
             for i in range(n):
@@ -266,6 +283,7 @@ class Anchored:
                     if ax is None:
                         continue
                     a, b = boxes[i], boxes[j]
+                    pad = self.need(i, j, scales)
                     if a.expanded(pad / 2.0).inter(b.expanded(pad / 2.0)) <= 0:
                         continue
                     if ax == 1:
@@ -293,7 +311,7 @@ class Anchored:
                 return None
         for i in range(len(boxes)):
             for j in range(i + 1, len(boxes)):
-                pad = 0.0 if self.src_ov[i][j] else self.pad
+                pad = self.need(i, j, scales)
                 if boxes[i].expanded(pad / 2.0).inter(boxes[j].expanded(pad / 2.0)) > 0:
                     return None
         for members, pad, edges, exempt in self.panels:  # nothing grows into a panel's reach
