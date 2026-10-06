@@ -2,6 +2,7 @@
 
     .venv/bin/python -m tools.tiny run --engine <repo root of an engine version> --tag now
     .venv/bin/python -m tools.tiny score --tags base,now
+    DEMOTE_SET=HIDE_SURCHARGE=1.0 .venv/bin/python -m tools.tiny run ... --split tune   # try a constant
 
 Runs every source design (the samples, tools/cases, the Crello families) at
 strip, skyscraper and other tiny ad sizes, and counts per design:
@@ -48,6 +49,9 @@ try:
     from engine.smart import demote as _dm
 except Exception:
     _dm = None
+for kv in filter(None, os.environ.get("DEMOTE_SET", "").split(",")):  # dev-only: try a constant
+    k, v = kv.split("=")
+    setattr(_dm, k, type(getattr(_dm, k))(v))
 for j in jobs:
     src = json.load(open(j["path"]))["source"]
     buf = io.StringIO()
@@ -78,6 +82,8 @@ def cmd_run(a):
     EVAL.mkdir(parents=True, exist_ok=True)
     jobs = []
     for name, path, split in sources():
+        if a.split != "all" and split != a.split:
+            continue
         for cls, sizes in FORMATS.items():
             for w, h in sizes:
                 jobs.append(dict(name=name, path=path, split=split, cls=cls, w=w, h=h))
@@ -185,6 +191,7 @@ def main():
     p.add_argument("--engine", required=True)
     p.add_argument("--tag", required=True)
     p.add_argument("--jobs", type=int, default=3)
+    p.add_argument("--split", default="all", choices=["tune", "held", "all"])
     p = sub.add_parser("score")
     p.add_argument("--tags", required=True)
     p.add_argument("--show", action="store_true", help="list fallbacks and rule errors")
