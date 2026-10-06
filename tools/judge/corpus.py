@@ -396,7 +396,7 @@ def cmd_pairs(a) -> None:
 
 
 def _measure_one(args):
-    cid, path, task_path = args
+    cid, path, task_path, old = args
     setup_kit()
     sys.path.insert(0, str(ROOT))
     import contextlib
@@ -404,11 +404,11 @@ def _measure_one(args):
 
     from tools.judge import terms as T
 
-    out = {}
+    out = {"old": old} if old else {}
     with contextlib.redirect_stderr(io.StringIO()):
         design = json.loads(Path(path).read_text())
         out["rep"] = T.measure(design)
-        if task_path:
+        if task_path and not old:
             from tools import proxy
 
             out["old"] = proxy.aggregate(path, task_path)
@@ -430,19 +430,23 @@ def cmd_measure(a) -> None:
     for p in load_pairs():
         need.add(p["a"])
         need.add(p["b"])
+    def cached_old(cid):
+        f = rdir / f"{cid}.json"
+        return json.loads(f.read_text()).get("old") if f.exists() else None
+
     for cid in sorted(need):
-        if (rdir / f"{cid}.json").exists():
+        if (rdir / f"{cid}.json").exists() and not a.refresh:
             continue
         case = cid.split("#")[0]
         task = tdir / f"{cases[case]['source']}.task.json"
         if not task.exists():
             task.write_text(json.dumps({"source": srcs[cases[case]["source"]]}))
-        jobs.append((cid, str(WORK / "cands" / f"{cid}.json"), str(task)))
+        jobs.append((cid, str(WORK / "cands" / f"{cid}.json"), str(task), cached_old(cid)))
     for name in sorted({cases[c.split("#")[0]]["source"] for c in need}):
-        if not (rdir / f"SRC_{name}.json").exists():
+        if not (rdir / f"SRC_{name}.json").exists() or a.refresh:
             sp = tdir / f"{name}.src.json"
             sp.write_text(json.dumps(srcs[name]))
-            jobs.append((f"SRC_{name}", str(sp), None))
+            jobs.append((f"SRC_{name}", str(sp), None, None))
     print(len(jobs), "to measure")
     with ProcessPoolExecutor(max_workers=a.workers) as ex:
         for k, (cid, res) in enumerate(ex.map(_measure_one, jobs, chunksize=2)):
@@ -557,6 +561,7 @@ def main() -> None:
     p.add_argument("--extra", type=int, default=40)
     p = sub.add_parser("measure")
     p.add_argument("--workers", type=int, default=3)
+    p.add_argument("--refresh", action="store_true", help="re-measure the terms (the old proxy stays cached)")
     p = sub.add_parser("asks")
     p.add_argument("--round", type=int, default=1)
     p.add_argument("--batch", type=int, default=24)
