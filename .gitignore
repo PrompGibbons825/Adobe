@@ -24,3 +24,4 @@ output/*
 # dev-only Crello sample (re-create with python -m tools.crello)
 tools/crello/cache/
 tools/crello/cases/assets/
+tools/crello/cases/
