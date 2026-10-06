@@ -78,7 +78,7 @@ class Leaf(Node):
         if self.fill:
             cap = max(self.cap_rel * s, self.cap_floor)
             r = realize(it, cap, ctx, max_w * self.max_w_frac, max_h)
-            if r is None or r.scale < self.min_rel * s * 0.999:
+            if r is None or (r.scale < self.min_rel * s * 0.999 and it.key not in ctx.pinned):  # pinned: at its floor
                 return None
         else:
             r = realize(it, s, ctx, max_w, max_h, relax=relax, k=self.k, mode=self.mode, nowrap=self.nowrap)

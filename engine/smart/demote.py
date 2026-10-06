@@ -51,7 +51,10 @@ from .items import Ctx, Real, font_for, pinned_scale, realize
 from .textfit import TextStyle
 
 ENABLED = True
-STATS: Dict[str, object] = {}  # per plan_design() call: log, dissolved, repair, core_hidden
+# hidden copy with no opaque background to hide under becomes a 1 px speck (the reference
+# renderer ignores text opacity, so opacity 0 alone still draws it in full)
+SPECK_HIDE = True
+STATS: Dict[str, object] = {}  # per plan_design() call: log, dissolved, trimmed, repair, core_hidden
 
 CORE = ("headline", "cta", "logo", "hero")
 # share of an item's value a demotion costs in score.py (hiding costs all of it)
@@ -130,6 +133,18 @@ def floor_area(it: Item, ctx: Ctx, zone: Box, chip: bool = False) -> Optional[fl
     return None if r is None else r.w * r.h
 
 
+def excess(it: Item, ctx: Ctx, zone: Box) -> float:
+    """How far an item at its floor overflows the content box, painted overhang included
+    (0: it fits)."""
+    r = _floor_real(it, ctx, zone.w, zone.h)
+    if r is None:  # does not fit at all: measure it as small as it goes (type clamps at its floor)
+        r = realize(it, 0.01, ctx)
+    if r is None:
+        return math.inf
+    l, t, rr, b = r.oh
+    return max(0.0, r.w + l + rr - zone.w) + max(0.0, r.h + t + b - zone.h)
+
+
 def _carries_copy(it: Item) -> bool:
     if it.kind == "group" and it.role == "panel" and len(it.parts) > 1:
         return any(p.kind == "text" for p in it.parts)
@@ -153,8 +168,10 @@ class Budget:
 
 
 def prepare(d: Design, ctx: Ctx) -> None:
-    """Before any archetype: dissolve every rigid unit that cannot fit the content box
-    even at its floor. Its copy goes back into the flow; its block becomes a backdrop."""
+    """Before any archetype: a rigid unit that cannot fit the content box even at its floor
+    first loses its lesser lines inside it (copy stays on the block it was designed on);
+    only if that is not enough, and its copy reads on the canvas without the block, is it
+    dissolved: the copy goes back into the flow, the block becomes a backdrop."""
     STATS.clear()
     STATS["log"] = []
     if not ENABLED:
@@ -163,9 +180,104 @@ def prepare(d: Design, ctx: Ctx) -> None:
     for it in list(d.items):
         if it.role in ("missing", "void") or not _carries_copy(it):
             continue
-        if _floor_real(it, ctx, zone.w, zone.h) is None and dissolve(d, it):
-            _log(f"feasibility: {it.key} ({it.role}) cannot fit the {zone.w:.0f}x{zone.h:.0f} content box "
-                 f"even at its floor: dissolved into its parts")
+        if excess(it, ctx, zone) <= 0.5:
+            continue
+        what = f"{it.key} ({it.role}) cannot fit the {zone.w:.0f}x{zone.h:.0f} content box even at its floor"
+        cut = trim(d, it, ctx, zone)
+        if cut:
+            _log(f"feasibility: {what}: its lesser lines hidden inside it ({', '.join(cut)})")
+        elif reads_off_block(d, it) and dissolve(d, it):
+            _log(f"feasibility: {what}: dissolved into its parts")
+        else:
+            _log(f"feasibility: {what}; its copy would not read off its block: kept whole")
+
+
+def _members(it: Item) -> List[Item]:
+    return list(it.parts[1:]) if it.kind == "group" else list(it.sats)
+
+
+def trim(d: Design, it: Item, ctx: Ctx, zone: Box) -> List[str]:
+    """Hide a rigid unit's lesser lines (and small art) inside it, least important first,
+    until it fits at its floor. Its headline and biggest line always stay. Returns the
+    keys hidden, or [] when no trim makes it fit (nothing is changed then)."""
+    mem = _members(it)
+    texts = [m for m in mem if m.kind == "text"]
+    if not texts:
+        return []
+    keep = max(texts, key=lambda m: (m.role == "headline", m.fs0))
+    cand = sorted((m for m in mem if m is not keep and m.role not in ("headline", "cta")),
+                  key=lambda m: (m.importance, m.fs0 if m.kind == "text" else 0.0))
+    cut: List[Item] = []
+    over = excess(it, ctx, zone)
+    while cand:
+        # the least important member whose removal shrinks the overflow (not just the least
+        # important one: a small sticker that is not in the way stays)
+        step = None
+        for m in cand:
+            new = _without(it, cut + [m])
+            e = excess(new, ctx, zone) if new is not None else math.inf
+            if e < over - 0.5:
+                step = (m, new, e)
+                break
+        if step is None:  # several lines are in the way together: the least important goes first
+            m = cand[0]
+            new = _without(it, cut + [m])
+            if new is None:
+                return []
+            step = (m, new, excess(new, ctx, zone))
+        m, new, over = step
+        cut.append(m)
+        cand.remove(m)
+        if over <= 0.5:
+            i = d.items.index(it)
+            for c in cut:
+                c.hidden_reason = f"trimmed from {it.key}"
+            d.items[i:i + 1] = [new] + cut
+            for bd in d.backdrops:
+                if any(x is it for x in bd.members):
+                    bd.members = [x for x in bd.members if x is not it] + [new]
+            STATS.setdefault("trimmed", []).extend(c.key for c in cut)  # type: ignore[union-attr]
+            return [c.key for c in cut]
+    return []
+
+
+def _without(it: Item, cut: List[Item]) -> Optional[Item]:
+    gone = {e["id"] for c in cut for e in c.els}
+    rest = [m for m in _members(it) if all(m is not c for c in cut)]
+    els = [e for e in it.els if e["id"] not in gone]
+    if it.kind == "group":
+        host = it.parts[0]
+        src = union_all([m.src_box for m in rest] + [el_box(host.els[0])])
+        return dataclasses.replace(it, els=els, src_box=src, parts=[host] + rest,
+                                   labels=[e for e in it.labels if e["id"] not in gone])
+    if it.host is None:
+        return None
+    src = union_all([it.host.src_box] + [m.src_box for m in rest])
+    return dataclasses.replace(it, els=els, src_box=src, sats=rest)
+
+
+def reads_off_block(d: Design, it: Item) -> bool:
+    """Would the unit's copy still read on the canvas background without its block?"""
+    from . import assets
+    from .color import contrast, luminance, parse_rgba
+
+    bg = 1.0  # the renderer's canvas is white
+    for b in sorted(d.backgrounds, key=lambda e: e["z_index"]):
+        if b.get("type") == "image":
+            a = assets.info(b.get("asset_id"))
+            if a.found:
+                bg = a.luminance ** 2.2
+        else:
+            r, g, bb, al = parse_rgba(b.get("fill_color"), default=(255, 255, 255, 1.0))
+            if al > 0.5:
+                bg = luminance((r, g, bb))
+    for m in _members(it):
+        if m.kind != "text":
+            continue
+        r, g, b, _ = parse_rgba(m.els[0].get("color"), default=(0, 0, 0, 1.0))
+        if contrast(luminance((r, g, b)), bg) < 2.5:
+            return False
+    return True
 
 
 def dissolve(d: Design, it: Item) -> bool:
@@ -375,13 +487,15 @@ def _rungs(role: str, n: int) -> Tuple[str, ...]:
     return ("hide",)
 
 
-def units(d: Design, core: bool = False) -> List[Unit]:
+def units(d: Design, core: bool = False, skip: Sequence[Item] = ()) -> List[Unit]:
     """Optional content as demotion units, least important first. Items of one role in one
     row (a set of badges) move together. With `core`, the last resort: hero and logo may
     shrink and, only then, go; the headline and CTA never do."""
     from .structure import rows_for
 
-    opt = [it for it in d.items if it.role not in CORE and it.role not in ("missing", "void") and not it.core]
+    gone = {id(it) for it in skip}
+    opt = [it for it in d.items if it.role not in CORE and it.role not in ("missing", "void") and not it.core
+           and not it.hidden_reason and id(it) not in gone]
     out: List[Unit] = []
     for row in rows_for(opt):
         by_role: Dict[str, List[Item]] = {}
@@ -391,7 +505,8 @@ def units(d: Design, core: bool = False) -> List[Unit]:
     out.sort(key=lambda u: (u.importance, -min(i.src_box.y for i in u.items)))
     if core:
         for role in ("hero", "logo"):
-            out += [Unit([it], role, ("floor", "hide")) for it in d.items if it.role == role and not it.core]
+            out += [Unit([it], role, ("floor", "hide")) for it in d.items
+                    if it.role == role and not it.core and not _carries_copy(it) and id(it) not in gone]
     return out
 
 
@@ -461,12 +576,12 @@ def clean(p) -> bool:
 def generate(d: Design, ctx: Ctx) -> list:
     from . import compose as C
 
-    missing = [it for it in d.items if it.role in ("missing", "void")]
+    missing = [it for it in d.items if it.role in ("missing", "void") or it.hidden_reason]
     if not C._visible(d, missing):  # nothing to lay out: every element is void or missing
         return [C.Plan(name="empty", placed=[], hidden=list(missing), s=1.0, zone=Box(0, 0, ctx.W, ctx.H))]
     plans = _climb(d, ctx, missing)
     if not plans:  # repair, not fit: dissolve every rigid unit carrying copy, then climb again
-        rigid = [it for it in d.items if _carries_copy(it)]
+        rigid = [it for it in d.items if _carries_copy(it) and reads_off_block(d, it)]
         for it in rigid:
             if dissolve(d, it):
                 _log(f"repair: no candidate fits; {it.key} ({it.role}) dissolved into its parts")
@@ -499,10 +614,29 @@ def _variants(d: Design, ctx: Ctx, force_all: bool, b: Budget):
 def _climb(d: Design, ctx: Ctx, missing: List[Item], core: bool = False) -> list:
     from . import compose as C
 
-    us = units(d, core=core)
+    # Google's conflict rule, up front: what cannot fit the content box even at its floor is
+    # out from the start if it may go, and ends this climb if it may not
+    zone = content_box(d, ctx)
+    gone = {id(m) for m in missing}
+    may_go = {id(it) for u in units(d, core=core) if "hide" in u.rungs for it in u.items}
+    stuck, out = [], []
+    for it in d.items:
+        if id(it) not in gone and it.role not in ("missing", "void") and \
+                _floor_real(it, ctx, zone.w, zone.h) is None:
+            (out if id(it) in may_go else stuck).append(it)
+    if stuck:
+        _log(f"feasibility: {', '.join(it.key for it in stuck)} cannot fit even at the floor")
+        return []
+    if out:
+        _log(f"feasibility: {', '.join(it.key for it in out)} cannot fit even at the floor: hidden")
+        missing = list(missing) + out
+    us = units(d, core=core, skip=out)
     seq = ladder(us)
     b = budget(d, ctx, us, seq, missing)
-    if b.start:
+    if core:  # states without a core rung already failed in the climb before this one
+        first = next((i for i, rs in enumerate(seq) if any(us[k].role in CORE for k in rs)), 0)
+        b.start = max(b.start, first)
+    if b.start and b.need[0] > b.avail:
         _log(f"feasibility: load {b.need[0]:.0f} px2 at the floors vs {b.avail:.0f} px2: "
              f"start at demotion state {b.start}/{len(seq) - 1}")
     if b.strip and (b.cols != 1 or b.thumb):
@@ -512,10 +646,14 @@ def _climb(d: Design, ctx: Ctx, missing: List[Item], core: bool = False) -> list
     done = set()  # archetypes that already reached their cap without relaxing type
     found = None  # index of the first state that gave a clean plan
     for force_all in (False, True):
+        skip_to, empty = b.start, 0
         for i in range(b.start, len(seq)):
+            if i < skip_to:
+                continue
             st = State(us, seq[i])
             if found is not None and (st.hides or i > found + EXTRA_STATES):
                 break
+            n_before = len(plans)
             sctx = dataclasses.replace(ctx, pinned=st.pinned)
             hidden = list(missing) + st.hidden
             flow_hidden = hidden + st.moved
@@ -538,6 +676,16 @@ def _climb(d: Design, ctx: Ctx, missing: List[Item], core: bool = False) -> list
                     done.add(name)
                 if found is None and clean(p):
                     found = i
+            empty = empty + 1 if len(plans) == n_before else 0
+            if empty and b.need[i] > b.avail:
+                # nothing fit and the load is over budget: states that do not lower it will not
+                # fit either, so go straight to the next one that does
+                skip_to = next((j for j in range(i + 1, len(seq)) if b.need[j] < b.need[i] - 1.0), len(seq))
+            elif empty >= 2 and not st.hides:
+                # the blocker is not the optional content's size: shrinking or moving more of it
+                # will not help, only hiding might
+                skip_to = next((j for j in range(i + 1, len(seq)) if any(r == "hide" for r in seq[j].values())),
+                               len(seq))
         if plans:
             break
     return plans
@@ -658,8 +806,15 @@ def _place_unit(items: List[Item], rung: str, d: Design, ctx: Ctx, obst: List[Bo
     for kind, parts, w, h in arr:
         if w > zone.w + 0.5 or h > zone.h + 0.5:
             continue
+        l = max((r.oh[0] - dx for r, dx, dy in parts), default=0.0)
+        t = max((r.oh[1] - dy for r, dx, dy in parts), default=0.0)
+        rr = max((r.oh[2] - (w - dx - r.w) for r, dx, dy in parts), default=0.0)
+        bb = max((r.oh[3] - (h - dy - r.h) for r, dx, dy in parts), default=0.0)
         for slot in _slots(kind, ctx, d, near):
             x, y = _slot_xy(slot, w, h, ctx, mx, my, align if slot in ("bottom", "top") else "center")
+            # painted overhang (rotation, transparent margins) stays on the canvas too
+            x = min(max(x, l), ctx.W - w - rr)
+            y = min(max(y, t), ctx.H - h - bb)
             box = Box(x, y, w, h)
             if any(box.expanded(gap).inter(o) > 0 for o in obst):
                 continue
@@ -677,7 +832,8 @@ def place_secondary(p, st: State, d: Design, ctx: Ctx, replan: Callable):
     todo = st.zoned()
     hid = {it.key for it in st.hidden}
     moved = {it.key for it in st.moved}
-    rescue = [it for it in p.hidden if it.key not in hid and it.key not in moved and it.role in RESCUE]
+    rescue = [it for it in p.hidden if it.key not in hid and it.key not in moved and it.role in RESCUE
+              and not it.hidden_reason]
     if not todo and not rescue:
         return p
     for attempt in (0, 1):
@@ -700,7 +856,8 @@ def place_secondary(p, st: State, d: Design, ctx: Ctx, replan: Callable):
             if q is None:
                 return None
             p = q
-            rescue = [it for it in p.hidden if it.key not in hid and it.key not in moved and it.role in RESCUE]
+            rescue = [it for it in p.hidden if it.key not in hid and it.key not in moved and it.role in RESCUE
+              and not it.hidden_reason]
             continue
         saved = []
         for it in rescue:
@@ -845,15 +1002,20 @@ def _free_spot(e: dict, els, unit_of, p, ctx: Ctx, d: Design) -> Optional[str]:
     other unit's footprint (inside the margins)."""
     from .compose import margins
 
+    from .geom import el_visual_box
+
     mx, my = margins(d, ctx)
     me = unit_of.get(e["id"])
     db = _drawn(e)
+    vb = el_visual_box(e).union(db)  # what finalize keeps on the canvas (rotated copy: both boxes)
     gap = 0.4 * ctx.base_fs
     obst = [_drawn(o) for o in els if o is not e and o.get("type") == "text"
             and float(o.get("opacity", 1) or 0) > 0 and str(o.get("content", "")).strip()]
     obst += [b for it, b in p.footprints() if it is not me]
-    x0, x1 = mx, ctx.W - mx - db.w
-    y0, y1 = my, ctx.H - my - db.h
+    x0 = max(mx, db.x - vb.x)
+    x1 = min(ctx.W - mx - db.w, ctx.W - (vb.r - db.x))
+    y0 = max(my, db.y - vb.y)
+    y1 = min(ctx.H - my - db.h, ctx.H - (vb.b - db.y))
     if x1 < x0 or y1 < y0:
         return None
     step = max(3.0, min(ctx.W, ctx.H) / 60.0)
