@@ -235,35 +235,65 @@ def _cached(path: Path, k: int, budget=None) -> dict:
     return per
 
 
+def _anchored_planner(path: Path, k: int):
+    """candidates() for family_pick's anchored re-plans, cached per design."""
+    from engine.api import candidates
+
+    cp = OUT / "cache" / f"{path.stem}_k{k}_anchor.json"
+    memo = json.loads(cp.read_text()) if cp.exists() else {}
+
+    def plan(source, tgt, cons, k=k, budget=None):
+        key = f"{tgt['width']}x{tgt['height']}|" + json.dumps(cons, sort_keys=True)
+        if key not in memo:
+            cs = candidates(source, tgt, cons, k=k, budget=budget)
+            memo[key] = [{kk: c.get(kk) for kk in ("score", "archetype", "strategy", "roles", "design", "highlights")}
+                         for c in cs]
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text(json.dumps(memo))
+        return memo[key]
+
+    return plan
+
+
 def cmd_metric(a) -> int:
+    from engine.api import family_pick
     from engine.smart import consistency as cs
 
     paths = designs(a.set, a.limit)
     _setup(paths)
-    weights = [float(w) for w in a.weights.split(",")]
-    rows = {w: [] for w in [0.0] + weights}
+    targets = {n: {"width": w, "height": h} for n, (w, h) in catalogue().items()}
+    ws = [float(w) for w in a.weights.split(",")]
+    modes = [("indep", 0.0, False)] + [(f"w={w:g}", w, False) for w in ws] + [(f"w={w:g}+anc", w, True) for w in ws]
+    rows = {m[0]: [] for m in modes}
     for p in paths:
         t = time.time()
         per = _cached(p, a.k)
-        for w in rows:
-            pick = {n: 0 for n in per} if w == 0 else cs.select(per, weight=w)
-            m = cs.metric({n: per[n][pick[n]] for n in per})
+        src = _source(p)
+        planner = _anchored_planner(p, a.k)
+        for label, w, anc in modes:
+            if label == "indep":
+                pool, pick = per, {n: 0 for n in per}
+            else:
+                with redirect_stderr(io.StringIO()):
+                    pool, pick, _ = family_pick(src, per, targets, k=a.k, weight=w, anchor=anc, plan=planner)
+            m = cs.metric({n: pool[n][pick[n]] for n in pool})
             loss = []
             for n in per:
-                s0, s = per[n][0]["score"], per[n][pick[n]]["score"]
+                s0, s = per[n][0]["score"], pool[n][pick[n]]["score"]
                 if s0 is not None and s is not None:
                     loss.append((s0 - s) / max(1e-6, abs(s0)))
-            m["switched"] = sum(1 for n in per if pick[n]) / len(per)
+            m["switched"] = sum(1 for n in per if pool[n][pick[n]]["design"] != per[n][0]["design"]) / len(per)
             m["loss_mean"] = sum(loss) / max(1, len(loss))
             m["loss_max"] = max(loss, default=0.0)
-            rows[w].append(m)
+            rows[label].append(m)
         print(f"  {p.stem}: {time.time() - t:.1f}s", file=sys.stderr)
     keys = ["similarity", "logo_same_class", "reading_order", "hero_same_side", "same_alignment",
             "type_ratio_log_sd", "switched", "loss_mean", "loss_max"]
-    print(f"set={a.set} designs={len(paths)} formats={len(catalogue())} k={a.k}")
-    print("weight".ljust(8) + "".join(k[:13].rjust(14) for k in keys))
-    for w, ms in rows.items():
-        line = ("indep" if w == 0 else f"{w:g}").ljust(8)
+    print(f"set={a.set} designs={len(paths)} formats={len(catalogue())} k={a.k}  "
+          f"(loss = share of the target's own best score given up; negative = the anchored option scored higher)")
+    print("mode".ljust(11) + "".join(k[:13].rjust(14) for k in keys))
+    for label, ms in rows.items():
+        line = label.ljust(11)
         for k in keys:
             vals = [m[k] for m in ms if m.get(k) is not None]
             line += (f"{sum(vals) / len(vals):14.3f}" if vals else "n/a".rjust(14))
@@ -338,7 +368,7 @@ def main() -> int:
     p.add_argument("--set", default="samples", choices=["samples", "tune", "held"])
     p.add_argument("--limit", type=int, default=8)
     p.add_argument("--k", type=int, default=5)
-    p.add_argument("--weights", default="0.5,1,2")
+    p.add_argument("--weights", default="1,2,4")
     p = sub.add_parser("budget")
     p.add_argument("--set", default="samples", choices=["samples", "tune", "held"])
     p.add_argument("--limit", type=int, default=4)
