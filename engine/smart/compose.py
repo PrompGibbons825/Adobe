@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from . import budget as _budget
 from . import constraints as _cons
 from .analyze import Design, Item
 from .geom import Box, el_visual_box, union_all
@@ -588,6 +589,8 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
             for name, fn, kw in variants(force_all):
                 if name in done:
                     continue
+                if _budget.exhausted(plans):  # finale-api: optional time budget (off by default)
+                    return plans
                 if _cons.has_pins():  # finale-api: plan around pinned items
                     p = _cons.plan_pinned(fn, d, ctx, hidden, name, kw, _with_insets, _zone)
                 else:
