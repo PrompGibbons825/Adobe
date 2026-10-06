@@ -771,5 +771,940 @@
   "n_el": 7,
   "wide": false,
   "tall": true
+ },
+ {
+  "sig": "beach\u001fbeach\u001fbeach\u001fcalifornia\u001fcalifornia\u001fest. 1979\u001fsurfing co.\u001fsurfing co.",
+  "src": "593012c895a7a863ddcdc05e",
+  "src_ar": 0.6669691470054446,
+  "tgts": [
+   "58b6d14d95a7a863ddccaabc"
+  ],
+  "tgt_ar": [
+   0.5
+  ],
+  "groups": [
+   [
+    "train",
+    "0004.parquet",
+    5
+   ],
+   [
+    "train",
+    "0029.parquet",
+    0
+   ]
+  ],
+  "photo": false,
+  "n_el": 16,
+  "wide": false,
+  "tall": true
+ },
+ {
+  "sig": "craft fair\u001fopen to all\u001fpittsburgh\nmarket\nsquare",
+  "src": "5888bd4595a7a863ddcc2044",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "592814be95a7a863ddcd93a1"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0000.parquet",
+    1
+   ],
+   [
+    "train",
+    "0029.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "$55\u001ffinal days\nto save\u001floonis\u001floonis.ca\u001fstore",
+  "src": "5de7cd119fea0cc37426bfa1",
+  "src_ar": 1.1928934010152283,
+  "tgts": [
+   "5e872f4c4b3890eb0712b783"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "train",
+    "0019.parquet",
+    1
+   ],
+   [
+    "train",
+    "0029.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "& healthy\u001ffresh\u001fthe\u001fveggies",
+  "src": "591d73d495a7a863ddcd8bd2",
+  "src_ar": 1.2,
+  "tgts": [
+   "59b13c801350e8329300c193"
+  ],
+  "tgt_ar": [
+   2.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0007.parquet",
+    5
+   ],
+   [
+    "train",
+    "0019.parquet",
+    1
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "live webinar for\nhandmade shop owners\u001fregister and confirm\nyour attendance on\u001fwww.fabwebinars.com",
+  "src": "5888dbec95a7a863ddcc2d65",
+  "src_ar": 1.0,
+  "tgts": [
+   "592c218d95a7a863ddcd9600"
+  ],
+  "tgt_ar": [
+   8.088888888888889
+  ],
+  "groups": [
+   [
+    "train",
+    "0007.parquet",
+    5
+   ],
+   [
+    "train",
+    "0019.parquet",
+    1
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "02.12\u001fcyber monday\u001ffree shipping on all orders\u001fmon",
+  "src": "5a21a1b3d8141396fe9a3d42",
+  "src_ar": 1.1928934010152283,
+  "tgts": [
+   "5a01762ed8141396fe987915"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "train",
+    "0000.parquet",
+    3
+   ],
+   [
+    "validation",
+    "0000.parquet",
+    2
+   ]
+  ],
+  "photo": false,
+  "n_el": 19,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "5 hot\u001fchocolate recipes\u001fwe approve!",
+  "src": "58aeb3eb95a7a863ddcc844b",
+  "src_ar": 2.843601895734597,
+  "tgts": [
+   "58aeb53295a7a863ddcc8532"
+  ],
+  "tgt_ar": [
+   4.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0000.parquet",
+    3
+   ],
+   [
+    "train",
+    "0029.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 14,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "august 4-20\u001finvites\nyou to\nspend\nthis\nsummer\nin\nlivonia\nwith\npastor\nliam\u001fjuly 2-18\u001fjune 8-24\u001fst. anthony church\u001fworship & bible study\u001fyouth camp",
+  "src": "595290a795a7a863ddcdfcde",
+  "src_ar": 0.7142857142857143,
+  "tgts": [
+   "599eca8c1350e832930076ca"
+  ],
+  "tgt_ar": [
+   0.5
+  ],
+  "groups": [
+   [
+    "test",
+    "0000.parquet",
+    2
+   ],
+   [
+    "train",
+    "0000.parquet",
+    3
+   ]
+  ],
+  "photo": false,
+  "n_el": 15,
+  "wide": false,
+  "tall": true
+ },
+ {
+  "sig": "788 columbia road,\nphiladelphia delaware 19146\u001fa series of performances in the theater of\nyouth based on william shakespeare's plays.\u001fenjoy modern interpretation\nof timeless dramas\u001fshake-\nspeare\ntoday",
+  "src": "590af5be95a7a863ddcd69b7",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "58b5698795a7a863ddcca571"
+  ],
+  "tgt_ar": [
+   2.843601895734597
+  ],
+  "groups": [
+   [
+    "train",
+    "0021.parquet",
+    4
+   ],
+   [
+    "train",
+    "0030.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 7,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "be in\ntrend\u001ffor beginners\u001fmakeup hacks",
+  "src": "5a032842d8141396fe98907a",
+  "src_ar": 2.7015873015873018,
+  "tgts": [
+   "5a0336dcd8141396fe9891af"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0001.parquet",
+    0
+   ],
+   [
+    "train",
+    "0030.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 6,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "all you need is\u001fsupport",
+  "src": "5df3964b9fea0cc374dbe707",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "5df3964b9fea0cc374dbe784"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "test",
+    "0000.parquet",
+    2
+   ],
+   [
+    "train",
+    "0013.parquet",
+    3
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "bicycles\u001fwhat to choose?\u001fyour ultimate guide\nin the world of",
+  "src": "592d6cff95a7a863ddcda225",
+  "src_ar": 2.7015873015873018,
+  "tgts": [
+   "5888ddbd95a7a863ddcc2ed1"
+  ],
+  "tgt_ar": [
+   2.843601895734597
+  ],
+  "groups": [
+   [
+    "train",
+    "0013.parquet",
+    3
+   ],
+   [
+    "train",
+    "0018.parquet",
+    1
+   ]
+  ],
+  "photo": true,
+  "n_el": 15,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "new\u001fseasonal menu",
+  "src": "5c7fb92d85ea3c16f94205ec",
+  "src_ar": 1.1928934010152283,
+  "tgts": [
+   "5f98305ba637ee11e3e40e51"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "train",
+    "0013.parquet",
+    3
+   ],
+   [
+    "train",
+    "0030.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 11,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "hairstyles\nfor men\u001frockabilly",
+  "src": "5ea01126499b85dcc781e7a2",
+  "src_ar": 0.5625,
+  "tgts": [
+   "5ea008dc499b85dcc7718e8b"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "train",
+    "0019.parquet",
+    1
+   ],
+   [
+    "train",
+    "0022.parquet",
+    5
+   ]
+  ],
+  "photo": false,
+  "n_el": 4,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "21 march\u001fjoint celebration & forest\ncleanup\u001fspecial event devoted\nto international day of\nforests\u001fto find out more about activities in your area visit www.aughtlins.com/forestday",
+  "src": "5a227705d8141396fe9a4657",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "58ab121e95a7a863ddcc75c1"
+  ],
+  "tgt_ar": [
+   2.843601895734597
+  ],
+  "groups": [
+   [
+    "test",
+    "0001.parquet",
+    3
+   ],
+   [
+    "train",
+    "0030.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 9,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "accessories\u001fhats\u001fscarves & gloves",
+  "src": "5a032655d8141396fe98901b",
+  "src_ar": 2.7015873015873018,
+  "tgts": [
+   "5a0335fdd8141396fe98917b"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0001.parquet",
+    3
+   ],
+   [
+    "train",
+    "0004.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 6,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "25\u001fby train\u001freasons\u001fto travel",
+  "src": "588a0e2a95a7a863ddcc4246",
+  "src_ar": 1.0,
+  "tgts": [
+   "592d6d0a95a7a863ddcda233"
+  ],
+  "tgt_ar": [
+   2.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0003.parquet",
+    3
+   ],
+   [
+    "train",
+    "0019.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "clean up\nthe planetannual\nevent\u001fmake your own contribution to a healthier world!\nwhen: 3rd weekend in september each year\nwhere: all over the us\u001fplenty of activities to help environment\nand wildlife of your area.",
+  "src": "590b0d8f95a7a863ddcd714e",
+  "src_ar": 0.7142857142857143,
+  "tgts": [
+   "590b0d2195a7a863ddcd70ee"
+  ],
+  "tgt_ar": [
+   2.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0003.parquet",
+    3
+   ]
+  ],
+  "photo": false,
+  "n_el": 9,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "curls\u001fkamelie.co.uk\u001frun\u001fthe\nworld",
+  "src": "5e8d87224b3890eb07020c6d",
+  "src_ar": 1.910828025477707,
+  "tgts": [
+   "5e8d87284b3890eb070215cf"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "test",
+    "0002.parquet",
+    1
+   ],
+   [
+    "test",
+    "0003.parquet",
+    3
+   ]
+  ],
+  "photo": true,
+  "n_el": 7,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "#flattenthecurve\n#stayathome\u001feven though\nwe are apart\u001fwe'll get through\nthis together",
+  "src": "5e8762404b3890eb0782ad22",
+  "src_ar": 1.0,
+  "tgts": [
+   "5e8d96cb4b3890eb071c683d"
+  ],
+  "tgt_ar": [
+   0.5625
+  ],
+  "groups": [
+   [
+    "test",
+    "0000.parquet",
+    4
+   ]
+  ],
+  "photo": false,
+  "n_el": 8,
+  "wide": false,
+  "tall": true
+ },
+ {
+  "sig": "find medicine information here\u001fmedicines & drugs",
+  "src": "59b7e99b1350e8329300f972",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "58e3691c95a7a863ddcd06bc"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0000.parquet",
+    4
+   ],
+   [
+    "test",
+    "0003.parquet",
+    3
+   ]
+  ],
+  "photo": true,
+  "n_el": 7,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "20\u001fto travel for free\u001ftravelive.net\u001fways",
+  "src": "593146d295a7a863ddcdcf85",
+  "src_ar": 0.7070707070707071,
+  "tgts": [
+   "59b7f3e41350e8329300fb38"
+  ],
+  "tgt_ar": [
+   1.1928934010152283
+  ],
+  "groups": [
+   [
+    "train",
+    "0009.parquet",
+    1
+   ],
+   [
+    "train",
+    "0021.parquet",
+    4
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "coming\u001ffurniture\u001fsoon\u001fvintage",
+  "src": "5952604095a7a863ddcde58d",
+  "src_ar": 2.7015873015873018,
+  "tgts": [
+   "59526a2495a7a863ddcdea9e"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0000.parquet",
+    4
+   ],
+   [
+    "train",
+    "0009.parquet",
+    1
+   ]
+  ],
+  "photo": true,
+  "n_el": 11,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "stanton\u001fsteel producer\u001fwe do it right",
+  "src": "5be942e041fdeab19f075884",
+  "src_ar": 1.2,
+  "tgts": [
+   "5be97b6c41fdeab19f972d4e"
+  ],
+  "tgt_ar": [
+   8.088888888888889
+  ],
+  "groups": [
+   [
+    "train",
+    "0000.parquet",
+    3
+   ],
+   [
+    "train",
+    "0009.parquet",
+    1
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "\"be the change you want to see in the world.\"\u001fjoin the kindest heart and\u001fthe kindest heart: charity work, volunteering & community service.",
+  "src": "5888cc7e95a7a863ddcc220b",
+  "src_ar": 1.0,
+  "tgts": [
+   "5888d91a95a7a863ddcc2a53"
+  ],
+  "tgt_ar": [
+   8.088888888888889
+  ],
+  "groups": [
+   [
+    "train",
+    "0020.parquet",
+    3
+   ],
+   [
+    "validation",
+    "0000.parquet",
+    2
+   ]
+  ],
+  "photo": true,
+  "n_el": 5,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "12.08.20\u001f7:00 pm\u001fcontact us\u001flet\u2019s make the best of it together\u001fopen\u001fpaloma hall\n1825 w bell rd, phoenix, az\n73-3726-3176\ninfo@palomaevents.com\u001fsun festival",
+  "src": "5a3789fe5b3acffff7dbd1fe",
+  "src_ar": 1.0,
+  "tgts": [
+   "5a3789a05b3acffff7dbd1e5"
+  ],
+  "tgt_ar": [
+   2.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0000.parquet",
+    4
+   ],
+   [
+    "train",
+    "0020.parquet",
+    3
+   ]
+  ],
+  "photo": true,
+  "n_el": 11,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "pumpkin\u001frecipes\u001fthe most amazing",
+  "src": "592d704e95a7a863ddcda487",
+  "src_ar": 2.7015873015873018,
+  "tgts": [
+   "592e782b95a7a863ddcda4d0"
+  ],
+  "tgt_ar": [
+   4.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0002.parquet",
+    1
+   ],
+   [
+    "train",
+    "0020.parquet",
+    3
+   ]
+  ],
+  "photo": true,
+  "n_el": 9,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "beauty begins\nthe moment\nyou decide to\nbe yourself\u001fcoco chanel",
+  "src": "5e8d810e4b3890eb07f896bd",
+  "src_ar": 0.5625,
+  "tgts": [
+   "5e8d810e4b3890eb07f896bb"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "train",
+    "0003.parquet",
+    2
+   ],
+   [
+    "train",
+    "0006.parquet",
+    4
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "become an important part of our church family!\u001ffor i know the plans i have for you,\u201d declares the lord, \u201cplans to prosper you and not to harm you, plans\nto give you hope and a future. jeremiah 29:11\u001flivingston evangelist catholic church 14550 florida blvd",
+  "src": "59528f9295a7a863ddcdfc43",
+  "src_ar": 2.7015873015873018,
+  "tgts": [
+   "58b56f5295a7a863ddcca88e"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0006.parquet",
+    4
+   ],
+   [
+    "train",
+    "0020.parquet",
+    3
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "owning a home\nis a keystone\nto wealth\u001fsuze orman",
+  "src": "5bb5cf5678e1194aa6db19cb",
+  "src_ar": 1.1928934010152283,
+  "tgts": [
+   "5bbcbfef78e1194aa6a7770c"
+  ],
+  "tgt_ar": [
+   0.5
+  ],
+  "groups": [
+   [
+    "train",
+    "0006.parquet",
+    4
+   ],
+   [
+    "train",
+    "0007.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 11,
+  "wide": false,
+  "tall": true
+ },
+ {
+  "sig": "a 4-day event held from 3d march\nto 7th march at bellini hotel &\nresort in copenhagen.\u001fbuy tickets online on\ncopen hagendesignfestival.org\u001fcopenhagen\nmodern furniture\ndesign festival\u001fthe most outstanding\nfurniture items will be\npresented at the festival.",
+  "src": "5909bb1795a7a863ddcd3286",
+  "src_ar": 0.7142857142857143,
+  "tgts": [
+   "5909d04895a7a863ddcd383a"
+  ],
+  "tgt_ar": [
+   2.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0006.parquet",
+    4
+   ],
+   [
+    "train",
+    "0017.parquet",
+    4
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "become\na volunteer today.\u001flife\u001fthis is your chance\u001fto save someone's",
+  "src": "592801c595a7a863ddcd8e97",
+  "src_ar": 1.0,
+  "tgts": [
+   "5900798f95a7a863ddcd25c4"
+  ],
+  "tgt_ar": [
+   4.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0017.parquet",
+    4
+   ],
+   [
+    "train",
+    "0022.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 13,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "courses\nstarted\u001fdresser\u001fhair\u001finfo@milanio.it\u001fmilanio\u001fregistration at",
+  "src": "5e15f4149fea0cc374e31fe9",
+  "src_ar": 1.1928934010152283,
+  "tgts": [
+   "5e8d86b64b3890eb070151d7"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "train",
+    "0004.parquet",
+    5
+   ],
+   [
+    "train",
+    "0017.parquet",
+    4
+   ]
+  ],
+  "photo": true,
+  "n_el": 11,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "but being \nremembered\u001felegance is not\u001fgiorgio armani\u001fstanding out",
+  "src": "5889bd1e95a7a863ddcc3cf5",
+  "src_ar": 0.75,
+  "tgts": [
+   "5889bbc295a7a863ddcc3aa3"
+  ],
+  "tgt_ar": [
+   2.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0006.parquet",
+    1
+   ],
+   [
+    "validation",
+    "0000.parquet",
+    2
+   ]
+  ],
+  "photo": true,
+  "n_el": 15,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "friday / december 1 / 2 pm - 9 pm\nweir national resort / 5002 killingsworth ln\u001fgeorgetown animal\nfestival\nlet the fun begin!\nfree entry",
+  "src": "59535f2e95a7a863ddce11fe",
+  "src_ar": 1.910828025477707,
+  "tgts": [
+   "59535e5c95a7a863ddce115b"
+  ],
+  "tgt_ar": [
+   2.843601895734597
+  ],
+  "groups": [
+   [
+    "train",
+    "0004.parquet",
+    5
+   ],
+   [
+    "train",
+    "0006.parquet",
+    1
+   ]
+  ],
+  "photo": false,
+  "n_el": 3,
+  "wide": true,
+  "tall": false
  }
 ]

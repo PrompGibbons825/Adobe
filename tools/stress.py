@@ -136,6 +136,9 @@ def check(src: dict, out: dict, tgt: dict) -> list:
                 errs.append(f"{e['id']}: content/font changed")
             if not isinstance(e.get("font_size"), int) or e["font_size"] < 1:
                 errs.append(f"{e['id']}: font_size {e.get('font_size')}")
+        if e["type"] == "image" and s.get("width", 0) > 0 and s.get("height", 0) > 0 and \
+                (e["width"] <= 0 or e["height"] <= 0):
+            errs.append(f"{e['id']}: image collapsed to {e['width']}x{e['height']}")
         if e["type"] == "image" and s.get("width", 0) > 0 and s.get("height", 0) > 0 and e["height"] > 0:
             full = e["x"] <= 0.5 and e["y"] <= 0.5 and e.get("fit") == "cover" and e["width"] >= W - 1
             ra = s["width"] / s["height"]

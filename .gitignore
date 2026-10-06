@@ -25,3 +25,4 @@ output/*
 tools/crello/cache/
 tools/crello/cases/assets/
 tools/crello/cases/
+tools/crello/eval/
