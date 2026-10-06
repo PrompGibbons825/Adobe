@@ -20,9 +20,20 @@ def plan_design(source: dict, target: dict):
     plans = prune_relaxed(generate(d, ctx))
     score_plans(plans, d, ctx)
     plans.sort(key=lambda p: -p.score)
+    _polish(plans, d, ctx)  # [relations-polish]
     _pixel_rerank(plans, d, ctx)
     _no_text_on_text(plans, d, ctx)
     return d, ctx, plans
+
+
+def _polish(plans, d: Design, ctx: Ctx) -> None:
+    """Snap, equalize and separate the best candidates (polish.py). [relations-polish]"""
+    from .polish import TOP_K, polish_plans
+
+    if polish_plans(plans, d, ctx):
+        head = plans[:TOP_K]
+        head.sort(key=lambda p: -p.score)
+        plans[:TOP_K] = head
 
 
 def _no_text_on_text(plans, d: Design, ctx: Ctx) -> None:
