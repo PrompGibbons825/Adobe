@@ -123,6 +123,19 @@ def normalize(el: dict, idx: int) -> dict:
     e["opacity"] = min(1.0, max(0.0, _num(e.get("opacity"), 1.0)))
     if not isinstance(e.get("z_index"), (int, float)):
         e["z_index"] = idx
+    if e.get("type") == "text":
+        # measure exactly what finalize() will emit and the renderer will draw
+        if e.get("text_align", "left") not in ("left", "center", "right"):
+            e["text_align"] = "left"
+        fw = e.get("font_weight")
+        if fw is not None and not isinstance(fw, str):
+            try:
+                e["font_weight"] = "bold" if float(fw) >= 600 else "regular"
+            except (TypeError, ValueError):
+                e["font_weight"] = "regular"
+        fst = e.get("font_style")
+        if fst is not None and fst not in ("normal", "italic"):
+            e["font_style"] = "italic" if str(fst).lower() == "italic" else "normal"
     e["_idx"] = idx
     return e
 

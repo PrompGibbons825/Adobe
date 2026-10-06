@@ -30,8 +30,11 @@ for f in sorted(os.listdir(cases)):
         continue
     fam = json.load(open(os.path.join(cases, f)))
     tgt = fam["targets"][0]
-    with contextlib.redirect_stderr(io.StringIO()):
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
         o = resize(fam["source"], {"width": tgt["canvas"]["width"], "height": tgt["canvas"]["height"]})
+    if "Traceback" in buf.getvalue():
+        open(os.path.join(out, "fallbacks.txt"), "a").write(f + " " + buf.getvalue().strip().splitlines()[-1] + "\n")
     json.dump(o, open(os.path.join(out, f), "w"))
     json.dump({"source": fam["source"]}, open(os.path.join(out, f.replace(".json", ".task.json")), "w"))
 """

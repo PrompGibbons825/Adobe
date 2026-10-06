@@ -15,7 +15,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from . import textfit
 from .analyze import Item
-from .geom import Box, el_box, rotated_aabb
+from .geom import Box, el_box, rotated_aabb, union_all
 from .textfit import TextBlock, TextStyle
 
 INF = float("inf")
@@ -39,14 +39,20 @@ class Ctx:
         """Smallest comfortably readable body size on this canvas, in px."""
         return max(10.0, 0.0115 * max(self.W, self.H), 0.016 * min(self.W, self.H))
 
+    @property
+    def judge_floor(self) -> int:
+        """No visible text below this: cap height >= 7 px when the judge sees the
+        canvas at 1024 px on the long side (research 04), and never under 10 px."""
+        return max(10, math.ceil(10.0 * max(self.W, self.H) / 1024.0))
+
     def floor(self, role: str, relax: float = 1.0) -> float:
-        return max(8.0, FLOOR_MULT.get(role, 1.0) * self.base_fs * relax)
+        return max(float(self.judge_floor), FLOOR_MULT.get(role, 1.0) * self.base_fs * relax)
 
 
 def font_for(fs0: float, s: float, role: str, ctx: Ctx, relax: float = 1.0) -> int:
     fs0 = max(1.0, float(fs0))
     floor = min(fs0 * max(1.0, s), ctx.floor(role, relax))
-    return max(1, int(round(max(fs0 * s, floor))))
+    return max(ctx.judge_floor, int(round(max(fs0 * s, floor))))
 
 
 @dataclass
@@ -272,45 +278,87 @@ def _scaled_member(m: dict, origin: Box, g: float, ox: float, oy: float, ctx: Ct
     return e
 
 
+def _separate(boxes: List[Box]) -> List[Box]:
+    """Push text boxes down (in reading order) until none overlaps another."""
+    order = sorted(range(len(boxes)), key=lambda i: (boxes[i].y, boxes[i].x))
+    done: List[Box] = []
+    out = list(boxes)
+    for i in order:
+        b = out[i].copy()
+        for _ in range(len(done) + 1):
+            hit = [d for d in done if min(b.r, d.r) - max(b.x, d.x) > 0.5 and min(b.b, d.b) - max(b.y, d.y) > 0.5]
+            if not hit:
+                break
+            b.y = max(d.b for d in hit) + 0.5
+        out[i] = b
+        done.append(b)
+    return out
+
+
 def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float) -> Optional[Real]:
-    """Uniformly scale the group's internal arrangement (fonts scale with it)."""
+    """Scale the group's internal arrangement uniformly. Every line stays at or
+    above the legibility floor; lines that grow push later lines down so copy
+    never overlaps copy, and the group's footprint grows to hold them."""
     src = it.src_box
     g = s
-    if it.labels:  # the biggest line on the group must stay legible; small print rides along
+    if it.labels:  # the biggest line on the group must stay legible
         lab = max(it.labels, key=lambda l: float(l.get("font_size", 16) or 16))
         fs0 = float(lab.get("font_size", 16) or 16)
         g = max(g, font_for(fs0, s, "body" if it.role == "panel" else it.role, ctx, relax) / fs0)
-    fw, fh = src.w * g, src.h * g
-    if fw > max_w + 0.5 or fh > max_h + 0.5:
-        f = min(max_w / max(1e-6, fw), max_h / max(1e-6, fh))
+
+    def layout(g: float):
+        local, fonts, blocks = {}, {}, {}
+        for m in it.els:
+            b = el_box(m)
+            local[m["id"]] = Box((b.x - src.x) * g, (b.y - src.y) * g, b.w * g, b.h * g)
+        texts = [m for m in it.els if m.get("type") == "text"]
+        for m in texts:
+            fs0 = float(m.get("font_size", 16) or 16)
+            fs = max(int(fs0 * g), ctx.judge_floor)  # rounded down, but never small print
+            lb = local[m["id"]]
+            w = lb.w * fs / max(1e-6, fs0 * g)
+            blk = textfit.measure(str(m.get("content", "")), TextStyle.of(m), fs, w, exact=True)
+            if blk.ink_width > w:
+                w = blk.ink_width + 1.0
+                blk = textfit.measure(str(m.get("content", "")), TextStyle.of(m), fs, w, exact=True)
+            a = m.get("text_align", "left")
+            x = lb.x if a == "left" else (lb.r - w if a == "right" else lb.cx - w / 2.0)
+            local[m["id"]] = Box(x, lb.y, w, blk.height)
+            fonts[m["id"]] = fs
+            blocks[m["id"]] = blk
+        if texts:
+            sep = _separate([local[m["id"]] for m in texts])
+            for m, b in zip(texts, sep):
+                local[m["id"]] = b
+        u = union_all(local.values())
+        return local, fonts, blocks, u
+
+    local, fonts, blocks, u = layout(g)
+    if u.w > max_w + 0.5 or u.h > max_h + 0.5:
+        f = min(max_w / max(1e-6, u.w), max_h / max(1e-6, u.h))
         g *= f
-        fw, fh = src.w * g, src.h * g
         if it.labels:
             fs0 = max(float(l.get("font_size", 16) or 16) for l in it.labels)
             if fs0 * g < ctx.floor("body", relax) * 0.999 and fs0 * g < fs0:
                 return None
-    fonts, blocks = {}, {}
-    for lab in it.labels:
-        fs = max(1, int(float(lab.get("font_size", 16) or 16) * g))  # rounded down: never an extra line
-        fonts[lab["id"]] = fs
-        blocks[lab["id"]] = textfit.measure(str(lab.get("content", "")), TextStyle.of(lab), fs, el_box(lab).w * g)
+        local, fonts, blocks, u = layout(g)
+        if u.w > max_w + 0.5 or u.h > max_h + 0.5:
+            return None
 
     def emit(x: float, y: float) -> List[dict]:
         out = []
         for m in it.els:
-            e = _scaled_member(m, src, g, x, y, ctx, it.role, relax)
+            b = local[m["id"]]
+            e = _copy(m)
+            e.update(x=x + b.x - u.x, y=y + b.y - u.y, width=b.w, height=b.h)
             if m.get("type") == "text":
-                blk = blocks[m["id"]]
-                e["font_size"] = blk.font_size
-                if blk.ink_width > e["width"]:
-                    grow = blk.ink_width + 1 - e["width"]
-                    e["x"] -= grow / 2.0
-                    e["width"] += grow
-                e["height"] = max(e["height"], blk.height)
+                e["font_size"] = fonts[m["id"]]
+            if m.get("type") == "shape" and m.get("corner_radius"):
+                e["corner_radius"] = float(m["corner_radius"]) * g
             out.append(e)
         return out
 
-    return Real(item=it, w=fw, h=fh, scale=g, fonts=fonts, blocks=blocks, emit_fn=emit)
+    return Real(item=it, w=u.w, h=u.h, scale=g, fonts=fonts, blocks=blocks, emit_fn=emit)
 
 
 def _composite_at(it: Item, t: float, ctx: Ctx, relax: float):
@@ -334,6 +382,11 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float):
         fx = (sat.src_box.cx - hb.x) / max(1e-6, hb.w)
         fy = (sat.src_box.cy - hb.y) / max(1e-6, hb.h)
         parts.append((rs, fx * rh.w - rs.w / 2.0, fy * rh.h - rs.h / 2.0))
+    tix = [i for i, (r, _, _) in enumerate(parts) if r.item.kind == "text"]
+    if len(tix) > 1:  # captions that grew to the floor must not run into each other
+        sep = _separate([Box(parts[i][1], parts[i][2], parts[i][0].w, parts[i][0].h) for i in tix])
+        for i, b in zip(tix, sep):
+            parts[i] = (parts[i][0], b.x, b.y)
     x0 = min(px for _, px, _ in parts)
     y0 = min(py for _, _, py in parts)
     x1 = max(px + r.w for r, px, _ in parts)
@@ -347,7 +400,7 @@ def _scaled_text(it: Item, k: float, ctx: Ctx) -> Real:
     el = it.els[0]
     style = it.style or TextStyle.of(el)
     fs0 = max(1.0, it.fs0)
-    fs = max(1, int(fs0 * k), int(min(fs0, ctx.floor("legal"))))
+    fs = max(int(fs0 * k), ctx.judge_floor)
     eb = el_box(el)
     width = max(1.0, eb.w * fs / fs0)
     blk = textfit.measure(str(el.get("content", "")), style, fs, width, exact=True)

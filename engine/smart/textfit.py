@@ -403,3 +403,47 @@ def fit_height(content: str, style: TextStyle, font_size: float, max_height: flo
 
 def has_descender(line: str) -> bool:
     return any(c in _DESCENDERS for c in line)
+
+
+def drawn_box(el: dict):
+    """Where a text element's glyphs actually land, as the renderer draws them:
+    exact wrap at the element width, real advances (fallback fonts included),
+    line boxes down from y, aligned within the width, rotation as a bounding box."""
+    from .geom import Box, rotated_aabb
+
+    style = TextStyle.of(el)
+    w = float(el.get("width", 0) or 0)
+    blk = measure(str(el.get("content", "")), style, float(el.get("font_size", 12) or 12), w, exact=True)
+    ink = blk.ink_width
+    a = el.get("text_align", "left")
+    x = float(el.get("x", 0) or 0)
+    x0 = x + w - ink if a == "right" else (x + (w - ink) / 2.0 if a == "center" else x)
+    b = Box(x0, float(el.get("y", 0) or 0), max(0.0, ink), blk.height)
+    rot = float(el.get("rotation", 0) or 0)
+    if rot:  # rotated labels: the rotated bounding box of the line box (conservative)
+        b = rotated_aabb(Box(x, b.y, w, blk.height), rot)
+    return b
+
+
+def text_overlaps(elements, exempt=frozenset(), tol: float = 1.0):
+    """Pairs of visible texts whose drawn glyph boxes overlap (beyond `tol` px)."""
+    texts = [e for e in elements if e.get("type") == "text" and float(e.get("opacity", 1) or 0) > 0
+             and str(e.get("content", "")).strip()]
+    boxes = [(e["id"], drawn_box(e)) for e in texts]
+    out = []
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            (ia, a), (ib, b) = boxes[i], boxes[j]
+            if (ia, ib) in exempt or (ib, ia) in exempt:
+                continue
+            ow = min(a.r, b.r) - max(a.x, b.x)
+            oh = min(a.b, b.b) - max(a.y, b.y)
+            if ow > tol and oh > tol:
+                out.append((ia, ib, ow * oh, ow * oh / max(1.0, min(a.area, b.area))))
+    return out
+
+
+def deliberate_overlaps(elements, share: float = 0.15):
+    """Text pairs that overlap substantially in the source: stacked display type
+    the designer meant (a word over a word), not two lines that merely touch."""
+    return frozenset((a, b) for a, b, _, f in text_overlaps(elements) if f >= share)

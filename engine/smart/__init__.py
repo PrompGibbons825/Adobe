@@ -21,7 +21,29 @@ def plan_design(source: dict, target: dict):
     score_plans(plans, d, ctx)
     plans.sort(key=lambda p: -p.score)
     _pixel_rerank(plans, d, ctx)
+    _no_text_on_text(plans, d, ctx)
     return d, ctx, plans
+
+
+def _no_text_on_text(plans, d: Design, ctx: Ctx) -> None:
+    """Hard check: the shipped plan has no copy drawn over other copy. Pairs that
+    overlapped deliberately in the source (stacked display type) are exempt.
+    Take the best plan that passes; if none does, give up (resize() then falls
+    back to the safe fit-and-centre layout)."""
+    from .textfit import deliberate_overlaps, text_overlaps
+
+    if not plans:
+        return
+    src_pairs = deliberate_overlaps(d.elements)
+    chosen = None
+    for i, p in enumerate(plans):
+        if not text_overlaps(emit(p, d, ctx), exempt=frozenset(src_pairs)):
+            chosen = i
+            break
+    if chosen is None:  # never ship copy over copy: the safe layout only scales the source
+        raise RuntimeError("every candidate draws copy over copy")
+    if chosen:
+        plans.insert(0, plans.pop(chosen))
 
 
 def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
@@ -82,7 +104,7 @@ def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
     for it in plan.hidden:
         for e in it.els:
             if e["id"] not in out:
-                out[e["id"]] = _proportional(e, d, ctx) if it.role == "void" else _hidden(e, d, ctx)
+                out[e["id"]] = _hidden(e, d, ctx)  # void text still paints its whole string
     for e in d.elements:  # anything not placed (should not happen) is mapped proportionally
         if e["id"] not in out:
             out[e["id"]] = _proportional(e, d, ctx)

@@ -111,8 +111,19 @@ def random_design(rng: random.Random) -> dict:
     return {"canvas": {"width": W, "height": H}, "elements": els}
 
 
-def check(src: dict, out: dict, tgt: dict) -> list:
+def check(src: dict, out: dict, tgt: dict, smart: bool = True) -> list:
     errs = []
+    if smart:  # what the layout engine promises (the safe fallback for impossible content does not)
+        from engine.smart.items import Ctx
+        from engine.smart.textfit import deliberate_overlaps, text_overlaps
+
+        floor = Ctx(W=tgt["width"], H=tgt["height"], W0=1, H0=1).judge_floor
+        for e in out["elements"]:
+            if e["type"] == "text" and float(e.get("opacity", 1) or 0) > 0 and str(e.get("content", "")).strip() \
+                    and e.get("font_size", 99) < floor:
+                errs.append(f"{e['id']}: small print {e.get('font_size')}px < {floor}px")
+        for a, b, area, _ in text_overlaps(out["elements"], exempt=deliberate_overlaps(src["elements"])):
+            errs.append(f"text over text: {a} x {b} ({area:.0f} px2)")
     W, H = tgt["width"], tgt["height"]
     if out.get("canvas") != {"width": W, "height": H}:
         errs.append("canvas")
@@ -175,10 +186,11 @@ def main() -> int:
         times.append(dt)
         if dt > worst[0]:
             worst = (dt, i)
-        if "Traceback" in buf.getvalue():
+        fell_back = "Traceback" in buf.getvalue()
+        if fell_back:
             fallbacks += 1
             print(f"[{i}] FALLBACK {src['canvas']} -> {tgt}\n" + buf.getvalue().strip().splitlines()[-1])
-        errs = check(src, out, tgt)
+        errs = check(src, out, tgt, smart=not fell_back)
         if a.render:
             try:
                 from renderer.converter.convert import render_design_to_png
