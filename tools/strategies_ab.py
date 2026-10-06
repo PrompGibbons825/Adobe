@@ -118,6 +118,7 @@ def cmd_sheet(a):
         p = Path(a.out).with_suffix(".tmp.png")
         render_design_to_png(design, assets, p, fonts_dir=ROOT / "brand_kit" / "fonts")
         im = Image.open(p).convert("RGB")
+        p.unlink(missing_ok=True)
         f = min(cell / im.width, cell * 0.8 / im.height)
         return im.resize((max(1, round(im.width * f)), max(1, round(im.height * f))))
 
