@@ -57,17 +57,27 @@ def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
     if not src:
         return
     head = plans[:top]
+    from . import judge  # calibrated judge re-rank, off unless judge.ENABLED
+
+    use_judge = judge.ENABLED and bool(judge.WEIGHTS)
+    src_rep = judge.box_report(d.elements, d.W, d.H, src) if use_judge else None
     for p in head:
         imp = {}
         for r, _, _ in p.placed + p.floaters:
             for e in r.item.els:
                 imp[e["id"]] = r.item.importance
         hidden = {e["id"] for it in p.hidden for e in it.els}
-        stats = pixels.measure(emit(p, d, ctx), ctx.W, ctx.H, skip=hidden)
+        els = emit(p, d, ctx)
+        stats = pixels.measure(els, ctx.W, ctx.H, skip=hidden)
         pen = pixel_penalty(stats, src, imp)
         p.breakdown["pixels"] = -pen
         p.score -= pen
-    head.sort(key=lambda p: -p.score)
+        if use_judge:
+            p.breakdown["judge"] = -judge.judge_penalty(src_rep, els, ctx.W, ctx.H, stats)
+    if use_judge:  # the calibrated judge orders the head; the engine score breaks ties
+        head.sort(key=lambda p: (-round(p.breakdown["judge"], 3), -p.score))
+    else:
+        head.sort(key=lambda p: -p.score)
     plans[:top] = head
 
 
