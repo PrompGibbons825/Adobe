@@ -11,8 +11,11 @@ numbers its elements e0..en), so elements are matched first:
 
 Then, over matched elements that are not full-canvas backgrounds:
 
-  iou    per-element IoU of the boxes normalised to the canvas (0..1 each
-         axis), weighted towards large elements; a hidden element scores 0
+  iou    per-element generalised IoU of the boxes normalised to the canvas
+         (0..1 each axis), mapped to 0..1 so that near misses still rank
+         above far ones; weighted towards large elements; a hidden element
+         scores 0. Text is compared by where its glyphs land (drawn box),
+         not by its often loose element box.
   rel    agreement of pairwise relative positions (left-of / right-of /
          overlapping horizontally, and the same vertically)
   font   font-size agreement, 1 - |log(ours / designer)| / log 2, floored at 0
@@ -25,7 +28,7 @@ Dev-only; the engine never imports this.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 W_IOU, W_REL, W_FONT = 0.5, 0.3, 0.2
 
@@ -42,6 +45,20 @@ def _iou(a, b) -> float:
     inter = ix * iy
     u = a[2] * a[3] + b[2] * b[3] - inter
     return inter / u if u > 1e-12 else 0.0
+
+
+def _giou01(a, b) -> float:
+    """Generalised IoU (Rezatofighi et al. 2019) mapped from [-1, 1] to [0, 1]."""
+    ix = max(0.0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    u = a[2] * a[3] + b[2] * b[3] - inter
+    cw = max(a[0] + a[2], b[0] + b[2]) - min(a[0], b[0])
+    ch = max(a[1] + a[3], b[1] + b[3]) - min(a[1], b[1])
+    c = cw * ch
+    if u <= 1e-12 or c <= 1e-12:
+        return 0.0
+    return 0.5 * (inter / u - (c - u) / c + 1.0)
 
 
 def _norm_text(e: dict) -> str:
@@ -119,10 +136,22 @@ def _visible(e: dict) -> bool:
     return float(e.get("opacity", 1) if e.get("opacity") is not None else 1) > 0.0
 
 
-def similarity(ours: List[dict], designer: dict, source: dict, mapping: Optional[Dict[str, dict]] = None) -> dict:
+def similarity(ours: List[dict], designer: dict, source: dict, mapping: Optional[Dict[str, dict]] = None,
+               text_box: Optional[Callable] = None) -> dict:
     """Similarity of `ours` (elements on the target canvas, source ids) to the
-    designer's version `designer` of `source`."""
+    designer's version `designer` of `source`. `text_box(el)` -> Box gives
+    where a text's glyphs land (engine.smart.textfit.drawn_box); without it
+    the element box is used."""
     W, H = float(designer["canvas"]["width"]), float(designer["canvas"]["height"])
+
+    def box(e):
+        if text_box is not None and e.get("type") == "text":
+            try:
+                b = text_box(e)
+                return (b.x / W, b.y / H, max(0.0, b.w) / W, max(0.0, b.h) / H)
+            except Exception:
+                pass
+        return _box(e, W, H)
     if mapping is None:
         mapping = match(source["elements"], designer["elements"])
     by_id = {e["id"]: e for e in ours}
@@ -140,12 +169,12 @@ def similarity(ours: List[dict], designer: dict, source: dict, mapping: Optional
     num = den = 0.0
     boxes = []
     for sid, oe, de in pairs:
-        db, ob = _box(de, W, H), _box(oe, W, H)
+        db, ob = box(de), box(oe)
         w = min(1.0, max(0.08, math.sqrt(db[2] * db[3])))
         if oe.get("type") == "text":
             w *= 1.5
         vis = _visible(oe)
-        num += w * (_iou(ob, db) if vis else 0.0)
+        num += w * (_giou01(ob, db) if vis else 0.0)
         den += w
         boxes.append((ob, db, vis))
     iou = num / den
