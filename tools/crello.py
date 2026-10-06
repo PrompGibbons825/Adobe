@@ -236,7 +236,7 @@ def cmd_sheet(a):
     from renderer.converter.convert import render_design_to_png
 
     def render(design, cell):
-        p = Path("/tmp/_crello_render.png")
+        p = Path(f"/tmp/_crello_render_{os.getpid()}.png")  # one per process: sessions run side by side
         render_design_to_png(design, CASES / "assets", p, fonts_dir=Path(__file__).resolve().parents[1] / "brand_kit" / "fonts")
         im = Image.open(p).convert("RGB")
         f = min(cell / im.width, cell * 0.75 / im.height)
