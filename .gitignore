@@ -26,3 +26,8 @@ tools/crello/cache/
 tools/crello/cases/assets/
 tools/crello/cases/
 tools/crello/eval/
+
+# dev-only Crello training families and ranker datasets (re-create with tools.crello_train / tools.ranker_data)
+tools/crello/train/
+tools/crello/ranker/
+.venv-dev/
