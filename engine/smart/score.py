@@ -125,6 +125,11 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         my = sum(bx.cy * bx.area for _, bx in boxes) / area
         b["balance"] = -25.0 * abs(mx - ctx.W / 2.0) / ctx.W - 12.0 * abs(my - ctx.H / 2.0) / ctx.H
     b["prior"] = _prior(p.name, ctx.W / ctx.H, d.W / d.H)
+    if ctx.system is not None:  # design system: drift from the source's own system, rebuilt here
+        from . import system as _ds
+
+        if _ds.CONFIG["score"]:
+            b["system"] = -_ds.CONFIG["score"] * _ds.consistency(p, d, ctx)
     return sum(b.values()), b
 
 
