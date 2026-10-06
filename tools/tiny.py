@@ -39,7 +39,7 @@ FORMATS = {
 }
 
 RUNNER = r"""
-import contextlib, io, json, os, sys
+import contextlib, io, json, os, sys, time
 sys.path.insert(0, os.getcwd())
 from engine.resize import resize
 jobs = json.load(open(sys.argv[1]))
@@ -53,10 +53,12 @@ for j in jobs:
     buf = io.StringIO()
     if _dm is not None:
         _dm.STATS.clear()
+    t0 = time.time()
     with contextlib.redirect_stderr(buf):
         o = resize(json.loads(json.dumps(src)), {"width": j["w"], "height": j["h"]})
+    dt = time.time() - t0
     err = buf.getvalue()
-    out.append(dict(j, out=o, fallback="Traceback" in err,
+    out.append(dict(j, out=o, fallback="Traceback" in err, secs=dt,
                     repair=bool(_dm is not None and _dm.STATS.get("repair")),
                     log=list(_dm.STATS.get("log", [])) if _dm is not None else []))
 json.dump(out, open(sys.argv[2], "w"))
@@ -136,7 +138,8 @@ def _measure(r: dict) -> dict:
     errs = check(src, r["out"], {"width": r["w"], "height": r["h"]}, smart=not r["fallback"])
     return dict(name=r["name"], split=r["split"], cls=r["cls"], w=r["w"], h=r["h"], hidden=dict(hidden),
                 n_hidden=sum(hidden.values()), hidden_text=hid_text, visible_text=vis_text,
-                fallback=r["fallback"], repair=r.get("repair", False), errors=errs, log=r.get("log", []))
+                fallback=r["fallback"], repair=r.get("repair", False), errors=errs, log=r.get("log", []),
+                secs=r.get("secs", 0.0))
 
 
 def cmd_score(a):
@@ -157,6 +160,11 @@ def cmd_score(a):
                       + f"{sum(r['hidden_text'] for r in rs):10d}" + f"{sum(1 for r in rs if r['n_hidden']):11d}"
                       + f"{sum(r['visible_text'] for r in rs):10d}" + f"{sum(r['fallback'] for r in rs):10d}"
                       + f"{sum(r['repair'] for r in rs):8d}" + f"{sum(1 for r in rs if r['errors']):10d}")
+    print("\nseconds per run (machine load varies: compare runs made together)")
+    for t in tags:
+        ss = sorted(r.get("secs", 0.0) for r in data[t])
+        if ss and ss[-1] > 0:
+            print(t.ljust(10) + f"median {ss[len(ss) // 2]:.2f}  p95 {ss[int(len(ss) * 0.95)]:.2f}  max {ss[-1]:.2f}")
     print("\nhidden elements by role (all splits)")
     for t in tags:
         c = Counter()
