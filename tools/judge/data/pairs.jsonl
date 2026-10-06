@@ -237,3 +237,20 @@
 {"pair": "8298d002b6", "case": "fam26@yt-thumb", "source": "fam26", "a": "fam26@yt-thumb#e1", "b": "fam26@yt-thumb#e2", "kind": "eng", "round": 2, "view": 512}
 {"pair": "9e1f072e16", "case": "fam26@yt-thumb", "source": "fam26", "a": "fam26@yt-thumb#e0", "b": "fam26@yt-thumb#e3", "kind": "eng", "round": 2, "view": 1024}
 {"pair": "9cd2dd4eaf", "case": "fam24@yt-thumb", "source": "fam24", "a": "fam24@yt-thumb#e0", "b": "fam24@yt-thumb#e2", "kind": "eng", "round": 2, "view": 1024}
+{"pair": "2096fdab1e", "case": "fam01@eval", "source": "fam01", "a": "fam01@eval#base", "b": "fam01@eval#judge", "kind": "check", "round": 3, "view": 512, "split": "held"}
+{"pair": "6e866890b2", "case": "fam02@eval", "source": "fam02", "a": "fam02@eval#base", "b": "fam02@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "tune"}
+{"pair": "e2e30d5b5e", "case": "fam03@eval", "source": "fam03", "a": "fam03@eval#base", "b": "fam03@eval#judge", "kind": "check", "round": 3, "view": 512, "split": "held"}
+{"pair": "2fada018c5", "case": "fam04@eval", "source": "fam04", "a": "fam04@eval#base", "b": "fam04@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "tune"}
+{"pair": "184ea563b8", "case": "fam06@eval", "source": "fam06", "a": "fam06@eval#base", "b": "fam06@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "tune"}
+{"pair": "549d4d6e8d", "case": "fam09@eval", "source": "fam09", "a": "fam09@eval#base", "b": "fam09@eval#judge", "kind": "check", "round": 3, "view": 512, "split": "held"}
+{"pair": "b895d56fac", "case": "fam11@eval", "source": "fam11", "a": "fam11@eval#base", "b": "fam11@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "held"}
+{"pair": "9c5c4629f1", "case": "fam14@eval", "source": "fam14", "a": "fam14@eval#base", "b": "fam14@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "tune"}
+{"pair": "ba421a8a86", "case": "fam17@eval", "source": "fam17", "a": "fam17@eval#base", "b": "fam17@eval#judge", "kind": "check", "round": 3, "view": 512, "split": "held"}
+{"pair": "e7ebdff8d9", "case": "fam20@eval", "source": "fam20", "a": "fam20@eval#base", "b": "fam20@eval#judge", "kind": "check", "round": 3, "view": 512, "split": "tune"}
+{"pair": "46d2400e1c", "case": "fam22@eval", "source": "fam22", "a": "fam22@eval#base", "b": "fam22@eval#judge", "kind": "check", "round": 3, "view": 512, "split": "tune"}
+{"pair": "4cf7504d73", "case": "fam23@eval", "source": "fam23", "a": "fam23@eval#base", "b": "fam23@eval#judge", "kind": "check", "round": 3, "view": 512, "split": "held"}
+{"pair": "d4fa4f465f", "case": "fam35@eval", "source": "fam35", "a": "fam35@eval#base", "b": "fam35@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "held"}
+{"pair": "9ba74a285d", "case": "fam41@eval", "source": "fam41", "a": "fam41@eval#base", "b": "fam41@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "held"}
+{"pair": "6199143e66", "case": "fam47@eval", "source": "fam47", "a": "fam47@eval#base", "b": "fam47@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "held"}
+{"pair": "d2dd85bc06", "case": "fam50@eval", "source": "fam50", "a": "fam50@eval#base", "b": "fam50@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "tune"}
+{"pair": "2541813638", "case": "fam55@eval", "source": "fam55", "a": "fam55@eval#base", "b": "fam55@eval#judge", "kind": "check", "round": 3, "view": 1024, "split": "held"}

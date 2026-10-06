@@ -63,7 +63,9 @@ def setup_kit() -> Path:
     return KIT
 
 
-def sources() -> Dict[str, dict]:
+def sources(held: bool = False) -> Dict[str, dict]:
+    """Calibration sources; held=True adds the odd (held-out) Crello families,
+    used only for the blind check of the engine's picks, never for fitting."""
     out = {}
     for f in sorted((ROOT / "input").glob("*.json")):
         name = {"level1": "L1", "level2": "L2", "level3": "L3"}[f.stem.split("_")[2]]
@@ -71,7 +73,7 @@ def sources() -> Dict[str, dict]:
     for f in sorted((ROOT / "tools" / "cases").glob("*.json")):
         out[f.stem] = json.loads(f.read_text())["source"]
     for f in sorted(CRELLO.glob("fam??.json")):
-        if int(f.stem[3:5]) % 2 == 0:  # tuning half only
+        if held or int(f.stem[3:5]) % 2 == 0:  # tuning half only
             out[f.stem] = json.loads(f.read_text())["source"]
     return out
 
@@ -521,7 +523,7 @@ def cmd_asks(a) -> None:
     setup_kit()
     sys.path.insert(0, str(ROOT))
 
-    srcs = sources()
+    srcs = sources(held=True)
     rng = random.Random(2000 + a.round)
     pairs = [p for p in load_pairs() if p["round"] == a.round]
     adir = WORK / "asks"
@@ -570,6 +572,34 @@ def cmd_asks(a) -> None:
     print(len(fresh), "asks in", k - k0, "batches", f"(batch_{k0:02d}..batch_{k - 1:02d})")
 
 
+def cmd_check(a) -> None:
+    """Blind check of an engine change: for every Crello family whose pick differs
+    between two tools.evalset tags, one pair (round 3, kind "check"), never used
+    for fitting."""
+    ev = ROOT / "tools" / "crello" / "eval"
+    t0, t1 = a.tags.split(",")
+    rng = random.Random(3000)
+    have = {p["pair"] for p in load_pairs()}
+    new = []
+    for f in sorted((ev / t0).glob("fam??.json")):
+        o0, o1 = json.loads(f.read_text()), json.loads((ev / t1 / f.name).read_text())
+        if o0 == o1:
+            continue
+        case = f"{f.stem}@eval"
+        for tag, o in ((t0, o0), (t1, o1)):
+            (WORK / "cands" / f"{case}#{tag}.json").write_text(json.dumps(o))
+        ca, cb = f"{case}#{t0}", f"{case}#{t1}"
+        rec = {"pair": _pid(ca, cb), "case": case, "source": f.stem, "a": ca, "b": cb, "kind": "check",
+               "round": a.round, "view": rng.choice([512, 1024]),
+               "split": "tune" if int(f.stem[3:5]) % 2 == 0 else "held"}
+        if rec["pair"] not in have:
+            new.append(rec)
+    with (DATA / "pairs.jsonl").open("a") as fh:
+        for r in new:
+            fh.write(json.dumps(r) + "\n")
+    print(len(new), "check pairs:", [r["source"] for r in new])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -587,8 +617,11 @@ def main() -> None:
     p = sub.add_parser("asks")
     p.add_argument("--round", type=int, default=1)
     p.add_argument("--batch", type=int, default=24)
+    p = sub.add_parser("check")
+    p.add_argument("--tags", required=True, help="two tools.evalset tags, e.g. base,judge")
+    p.add_argument("--round", type=int, default=3)
     a = ap.parse_args()
-    {"cases": cmd_cases, "pairs": cmd_pairs, "measure": cmd_measure, "asks": cmd_asks}[a.cmd](a)
+    {"cases": cmd_cases, "pairs": cmd_pairs, "measure": cmd_measure, "asks": cmd_asks, "check": cmd_check}[a.cmd](a)
 
 
 if __name__ == "__main__":
