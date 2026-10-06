@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from . import system as _ds
 from .analyze import Design, Item
 from .geom import Box, el_visual_box, union_all
 from .items import Ctx, Real, realize
@@ -64,6 +65,9 @@ def margins(d: Design, ctx: Ctx) -> Tuple[float, float]:
     fr = min(0.075, max(0.045, fr))
     short = min(ctx.W, ctx.H)
     floor = min(6.0, max(3.0, 0.08 * short))  # tiny banners cannot spare 6px a side
+    if ctx.system is not None and _ds.CONFIG["margins"]:  # design system: the source's margin unit
+        m = ctx.system.margin
+        return max(floor, m, 0.012 * ctx.W), max(floor, m)
     my = max(floor, fr * short)
     mx = max(floor, fr * short, 0.012 * ctx.W)
     return mx, my
@@ -123,10 +127,14 @@ def _row_node(row: Sequence[Item], hero_fill: bool, **kw) -> Node:
 
 
 def column(d: Design, rows: List[List[Item]], hero_fill: bool = False, force_align: Optional[str] = None,
-           gap_scale: float = 1.0, **kw) -> Tuple[VStack, List[Box]]:
+           gap_scale: float = 1.0, ctx: Optional[Ctx] = None, **kw) -> Tuple[VStack, List[Box]]:
     """A column of source rows. Gaps come from the source, except where something
-    that is not in this column used to sit between two rows (its space is gone)."""
+    that is not in this column used to sit between two rows (its space is gone).
+    With a design system, a gap inside one text group is kept in ems of its copy
+    and other gaps snap to the source's spacing rhythm."""
     nodes, gaps, aligns, boxes = [], [], [], []
+    tight: List[Optional[float]] = []
+    sysm = ctx.system if ctx is not None and _ds.CONFIG["gaps"] else None
     inside = {id(i) for r in rows for i in r}
     outside = [o for o in d.items if id(o) not in inside]
     dom = dominant_align(d.items)
@@ -153,8 +161,16 @@ def column(d: Design, rows: List[List[Item]], hero_fill: bool = False, force_ali
                 ref = min(prev.h, rb.h)
                 g = typical if typical is not None else 0.5 * ref
                 g = min(max(g, 0.3 * ref), 1.0 * ref)
-            gaps.append(g * gap_scale)
-    return VStack(nodes, gaps=gaps, align=aligns), boxes
+            lo = None
+            if sysm is not None:
+                if raw[i - 1] is not None and sysm.tight(rows[i - 1], row, boxes[i].y - boxes[i - 1].b):
+                    lo = _ds.TIGHT_MIN_EM * _ds._row_fs(rows[i - 1], "bottom")
+                    g = max(0.0, boxes[i].y - boxes[i - 1].b)
+                else:
+                    g = sysm.snap(g)
+            tight.append(lo)
+            gaps.append(g if lo is not None else g * gap_scale)
+    return VStack(nodes, gaps=gaps, align=aligns, tight=tight if any(t is not None for t in tight) else None), boxes
 
 
 def effective_zone(laid: Laid, ctx: Ctx, zone: Box) -> Box:
@@ -201,7 +217,11 @@ def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design,
     gaps: List[float] = laid.gap_list  # type: ignore[attr-defined]
     sizes = [p.h for p in parts]
     targets = [b.cy / d.H * ctx.H - h / 2.0 for b, h in zip(boxes, sizes)]
-    ys = chain_positions(targets, list(weights), sizes, gaps, zone.y, zone.b)
+    tight = getattr(laid, "tight_list", None)
+    if tight:
+        ys = _ds.chain_blocks(targets, list(weights), sizes, gaps, tight, zone.y, zone.b)
+    else:
+        ys = chain_positions(targets, list(weights), sizes, gaps, zone.y, zone.b)
     out = []
     for p, y, a in zip(parts, ys, aligns):
         x = zone.x if a == "start" else (zone.r - p.w if a == "end" else zone.cx - p.w / 2.0)
@@ -318,7 +338,7 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
     zone, mx, my = _zone(d, ctx, insets)
     if zone.w < 20 or zone.h < 20:
         return None
-    root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.45, force_align=force_align)
+    root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.45, force_align=force_align, ctx=ctx)
     weights = [3.0 if any(i.role == "headline" for i in r) else (1.5 if any(i.role == "hero" for i in r) else 1.0)
                for r in rows]
     for _ in range(4):
@@ -351,7 +371,7 @@ def plan_split(d: Design, ctx: Ctx, hidden: List[Item], hero_side: str = "left",
     if not rest:
         return None
     rows = rows_for(rest)
-    col, _ = column(d, rows)
+    col, _ = column(d, rows, ctx=ctx)
     lo, hi = scale_bounds(d, ctx, "split")
     zone, mx, my = _zone(d, ctx, insets)
     if zone.w < 20 or zone.h < 20:
@@ -401,7 +421,7 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
         kids.append(Leaf(hero, fill=True, cap_rel=1.6, min_rel=0.4, max_w_frac=0.3))
     if copy_rows or (stack_logo and logo is not None):
         rows = ([[logo]] if stack_logo and logo is not None else []) + copy_rows
-        col, _ = column(d, rows, force_align="center" if centred else "start", gap_scale=0.6)
+        col, _ = column(d, rows, force_align="center" if centred else "start", gap_scale=0.6, ctx=ctx)
         kids.append(col)
     gap = max(1.2 * ctx.base_fs, 0.022 * ctx.W)
     s = laid = None

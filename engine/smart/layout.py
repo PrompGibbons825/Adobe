@@ -29,6 +29,7 @@ class Laid:
     place: Callable[[float, float], List[Placement]]
     min_scale: float = 1.0  # smallest effective scale of any text inside (for scoring)
     oh: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)  # painted overhang l, t, r, b
+    tscale: Optional[Tuple[float, float]] = None  # realized type scale of the copy at its top, bottom edge
 
 
 def _oh_stack(parts, offsets, w: float, h: float):
@@ -84,8 +85,9 @@ class Leaf(Node):
             r = realize(it, s, ctx, max_w, max_h, relax=relax, k=self.k, mode=self.mode, nowrap=self.nowrap)
         if r is None:
             return None
+        ts = (r.scale, r.scale) if it.kind == "text" else None
         return Laid(r.w, r.h, lambda x, y, r=r: [(r, x, y)],
-                    min_scale=r.scale if it.kind not in ("image", "composite") else 9.0, oh=r.oh)
+                    min_scale=r.scale if it.kind not in ("image", "composite") else 9.0, oh=r.oh, tscale=ts)
 
 
 def _gap(base: float, s: float, ctx: Ctx, lo: float = 0.35) -> float:
@@ -95,13 +97,16 @@ def _gap(base: float, s: float, ctx: Ctx, lo: float = 0.35) -> float:
 class VStack(Node):
     def __init__(self, children: Sequence[Node], gaps: Optional[Sequence[float]] = None,
                  align: Optional[Sequence[str]] = None, default_align: str = "center",
-                 gap_min: float = 0.35):
+                 gap_min: float = 0.35, tight: Optional[Sequence[Optional[float]]] = None):
         self.children = list(children)
         n = len(self.children)
         self.gaps = list(gaps) if gaps is not None else [None] * max(0, n - 1)
         self.align = list(align) if align is not None else [default_align] * n
         self.gap_min = gap_min
         self.flex = any(c.flex for c in self.children)
+        # design system: a gap inside one text group follows the copy's own size (ems);
+        # tight[i] is that gap's smallest size in source px, None for a gap between groups
+        self.tight = list(tight) if tight is not None else None
 
     def items(self):
         return [i for c in self.children for i in c.items()]
@@ -130,6 +135,12 @@ class VStack(Node):
                 return None
             laids[i] = l
             total += l.h
+            lo = self.tight[i] if self.tight and i < len(self.tight) else None
+            if lo is not None and l.tscale and i + 1 not in fill:
+                # in-group gap: scales with the copy above it, not with the canvas
+                g = max(self.gaps[i], lo) * l.tscale[1]
+                total += g - gaps[i]
+                gaps[i] = g
             if total > max_h + 0.5:
                 return None
         for i in fill:  # heroes take what is left, shared evenly
@@ -157,9 +168,12 @@ class VStack(Node):
             a = align[i] if i < len(align) else "center"
             offs.append(((w - l.w) / 2.0 if a == "center" else (0.0 if a == "start" else w - l.w), cy))
             cy += l.h + (gaps[i] if i < len(gaps) else 0.0)
-        laid = Laid(w, total, place, min_scale=min(l.min_scale for l in laids), oh=_oh_stack(laids, offs, w, total))
+        ts = [l.tscale for l in laids if l.tscale]
+        laid = Laid(w, total, place, min_scale=min(l.min_scale for l in laids), oh=_oh_stack(laids, offs, w, total),
+                    tscale=(ts[0][0], ts[-1][1]) if ts else None)
         laid.parts = laids  # type: ignore[attr-defined]
         laid.gap_list = gaps  # type: ignore[attr-defined]
+        laid.tight_list = self.tight  # type: ignore[attr-defined]
         return laid
 
 
@@ -265,7 +279,9 @@ class HStack(Node):
             oy = (h - l.h) / 2.0 if valign == "center" else (0.0 if valign == "start" else h - l.h)
             offs.append((cx, oy))
             cx += l.w + (gaps[i] if i < len(gaps) else 0.0)
-        laid = Laid(w, h, place, min_scale=min(l.min_scale for l in ordered), oh=_oh_stack(ordered, offs, w, h))
+        ts = [l.tscale for l in ordered if l.tscale]
+        laid = Laid(w, h, place, min_scale=min(l.min_scale for l in ordered), oh=_oh_stack(ordered, offs, w, h),
+                    tscale=(max(t[0] for t in ts), max(t[1] for t in ts)) if ts else None)
         laid.parts = ordered  # type: ignore[attr-defined]
         laid.gap_list = gaps  # type: ignore[attr-defined]
         return laid

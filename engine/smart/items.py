@@ -33,6 +33,7 @@ class Ctx:
     H: float
     W0: float
     H0: float
+    system: Optional[object] = None  # design system rebuilt at this size (system.TargetSystem)
 
     @property
     def base_fs(self) -> float:
@@ -454,6 +455,8 @@ def realize_composite(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: f
 
 def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF,
             relax: float = 1.0, k: float = 1.0, mode: str = "stack", nowrap: bool = False) -> Optional[Real]:
+    if ctx.system is not None and it.kind in ("text", "group"):
+        s = s * ctx.system.item_mult(it, s, ctx)  # design system: copy sized from one type scale
     if it.kind == "composite":
         return realize_composite(it, s, ctx, max_w, max_h, relax=relax, k=k)
     if it.kind == "text":
