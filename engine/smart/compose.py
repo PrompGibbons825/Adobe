@@ -601,6 +601,8 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
                     plans.append(p)
                     if p.relax >= 1.0 and p.capped:
                         done.add(name)
+                if _cons.has_anchors():  # finale-api: anchored variants (constraints only)
+                    plans.extend(_cons.anchor_variants(fn, d, ctx, hidden, name, kw, _with_insets, _zone))
         if plans:
             break
     return plans

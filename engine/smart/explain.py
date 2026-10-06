@@ -109,6 +109,11 @@ def archetype_reason(plan, d, ctx) -> Tuple[str, str]:
     name = plan.name if plan is not None else "fallback"
     fam = family(name)
     dims, shp = _dims(ctx.W, ctx.H), shape_word(ctx.W, ctx.H)
+    if name.endswith("+anchor"):
+        import dataclasses
+
+        short, long = archetype_reason(dataclasses.replace(plan, name=name[:-len("+anchor")]), d, ctx)
+        return short, long + "; anchored to match the other formats"
     if name == "fallback":
         return "safe fit", "every candidate drew copy over copy, so the source is scaled to fit and centred"
     if fam == "adapt":
@@ -200,6 +205,9 @@ def _move_entry(it, F: Box, plan, d, ctx, idx: int, n: int, pinned: bool) -> Opt
     if pinned:
         return _entry("pin", before, after, "pinned by the user: kept in its box",
                       f"{it.role} pinned ({after})", it.importance * 0.6)
+    if it.key in (getattr(plan, "anchored", None) or ()):
+        return _entry("anchor", before, after, f"held {after} so it sits where it does in the other formats",
+                      f"{it.role} {after}, as in the other formats", it.importance * 0.6)
     if it.corner and any(r.item is it for r, _, _ in plan.floaters):
         names = {"tl": "top-left", "tr": "top-right", "bl": "bottom-left", "br": "bottom-right"}
         c = names.get(it.corner, it.corner)

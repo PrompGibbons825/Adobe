@@ -10,6 +10,10 @@
     safe_insets    [left, top, right, bottom] (or {left: ...} or one number); values
                    <= 1 are fractions of the canvas, larger ones px. Content stays
                    inside; backgrounds and decoration may still bleed.
+    anchors        id -> box: soft pins. Every archetype is also planned with the
+                   element held in that box ("+anchor" variants), and the score
+                   decides. resize_many() uses it to offer each format a layout
+                   with the logo in the family's corner.
     measured_text  id -> {font_size, width[, height]}: the element's natural one-line
                    width (and line height) as the host measured it at font_size.
                    Folded into per-font correction factors for the text measurer,
@@ -51,6 +55,7 @@ class Constraints:
     min_font_px: float = 0.0
     safe: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)  # px: left, top, right, bottom
     measured_text: Dict[str, dict] = field(default_factory=dict)
+    anchors: Dict[str, PinSpec] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
     @property
@@ -144,6 +149,10 @@ def parse(raw: Optional[dict], target: dict) -> Optional[Constraints]:
             c.priority[str(k)] = v
         else:
             c.warnings.append(f"priority {k}: {v!r} is not one of {PRIORITIES}; ignored")
+    for k, v in sorted((raw.get("anchors") or {}).items()):
+        p = _pin(v, c.warnings, k)
+        if p is not None and str(k) not in c.pinned:
+            c.anchors[str(k)] = p
     c.allow_drop = bool(raw.get("allow_drop", False))
     c.min_font_px = max(0.0, _num(raw.get("min_font_px"), 0.0) or 0.0)
     c.safe = _insets(raw.get("safe_insets"), W, H)
@@ -322,24 +331,26 @@ def realize_pin(it, spec: PinSpec, d, ctx):
     return r, box.x + (box.w - u.w) / 2.0 - u.x, box.y + (box.h - u.h) / 2.0 - u.y
 
 
-def pins_for(d, ctx) -> List[tuple]:
-    """Realized pins for this design and canvas, computed once per run."""
+def pins_for(d, ctx, anchors: bool = False) -> List[tuple]:
+    """Realized pins (or anchors) for this design and canvas, computed once per run."""
     c = _ACTIVE.get()
-    cache = getattr(d, "_pins", None)
+    attr = "_anchors" if anchors else "_pins"
+    cache = getattr(d, attr, None)
     if cache is not None and cache[0] == (ctx.W, ctx.H):
         return cache[1]
     out = []
     if c is not None:
+        table = c.anchors if anchors else c.pinned
         for it in d.items:
-            spec = _pin_for(it, c)
+            spec = next((table[i] for i in it.ids if i in table), None)
             if spec is None or it.role in ("missing", "void"):
                 continue
             p = realize_pin(it, spec, d, ctx)
             if p is None:
-                c.warnings.append(f"pin {it.key}: nothing fits the pinned box; laid out freely")
+                c.warnings.append(f"{'anchor' if anchors else 'pin'} {it.key}: nothing fits the box; laid out freely")
                 continue
             out.append(p)
-    d._pins = ((ctx.W, ctx.H), out)
+    setattr(d, attr, ((ctx.W, ctx.H), out))
     return out
 
 
@@ -376,6 +387,31 @@ def plan_pinned(fn, d, ctx, hidden, name: str, kw: dict, with_insets, zone_of):
     pins = pins_for(d, ctx)
     if not pins:
         return with_insets(fn, d, ctx, hidden, name=name, **kw)
+    return _plan_around(pins, fn, d, ctx, hidden, name, kw, with_insets, zone_of)
+
+
+def has_anchors() -> bool:
+    c = _ACTIVE.get()
+    return c is not None and bool(c.anchors)
+
+
+def anchor_variants(fn, d, ctx, hidden, name: str, kw: dict, with_insets, zone_of) -> list:
+    """The same archetype once more with the anchored items held in their boxes
+    (hard pins still apply). Empty when an anchored item is hidden at this level."""
+    anchors = pins_for(d, ctx, anchors=True)
+    hid = {id(h) for h in hidden}
+    anchors = [a for a in anchors if id(a[0].item) not in hid]
+    if not anchors:
+        return []
+    p = _plan_around(pins_for(d, ctx) + anchors, fn, d, ctx, hidden, name + "+anchor", kw, with_insets, zone_of)
+    if p is None:
+        return []
+    p.anchored = [r.item.key for r, _, _ in anchors]  # type: ignore[attr-defined]
+    p.pinned = [k for k in p.pinned if k not in p.anchored]  # type: ignore[attr-defined]
+    return [p]
+
+
+def _plan_around(pins, fn, d, ctx, hidden, name: str, kw: dict, with_insets, zone_of):
     pinned_items = [r.item for r, _, _ in pins]
     pid = {id(i) for i in pinned_items}
     hidden2 = list(hidden) + [i for i in pinned_items if id(i) not in {id(h) for h in hidden}]
