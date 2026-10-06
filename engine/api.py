@@ -321,7 +321,7 @@ def family_pick(source: dict, per: Dict[str, List[dict]], targets: Dict[str, dic
         for name, tgt in targets.items():
             if home is None:
                 break
-            if any(_cs.features(c).get("logo") == home for c in pool[name]):
+            if any(_cs.logo_match(_cs.features(c), {"logo": home}) == 1.0 for c in pool[name]):
                 continue
             ab = _cs.anchor_box(home, pool[name][0])
             if ab is None:

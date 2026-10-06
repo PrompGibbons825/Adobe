@@ -68,7 +68,7 @@ def features(cand: dict) -> dict:
         if e.get("type") == "text":
             fonts.setdefault(role, []).append(float(e.get("font_size", 0) or 0))
     boxes = {u: _union(bs) for u, bs in units.items()}
-    f: dict = {"archetype": cand.get("archetype")}
+    f: dict = {"archetype": cand.get("archetype"), "aspect": W / max(1.0, H)}
     logo = [boxes[u] for u in sorted(boxes) if unit_role[u] == "logo"]
     if logo:
         x, y, w, h = _union(logo)
@@ -139,13 +139,31 @@ def _spread(v: List[float]) -> float:
 
 
 _AXIS = {"left": "h", "right": "h", "above": "v", "below": "v", "behind": "z"}
+STRIP = 3.0  # a canvas this elongated has only one axis to place a logo along
+
+
+def logo_match(a: dict, b: dict) -> Optional[float]:
+    """1 when the logos sit in the same cell, judged only along the axis a strip
+    (or tower) has room on; 0.5 for half a match on ordinary canvases."""
+    if "logo" not in a or "logo" not in b:
+        return None
+    (va, ha), (vb, hb) = a["logo"], b["logo"]
+    ra, rb = a.get("aspect", 1.0), b.get("aspect", 1.0)
+    if max(ra, rb) >= STRIP and min(ra, rb) <= 1 / STRIP:
+        return None  # a strip and a tower share no axis
+    if max(ra, rb) >= STRIP:
+        return float(ha == hb)
+    if min(ra, rb) <= 1 / STRIP:
+        return float(va == vb)
+    return 0.5 * (va == vb) + 0.5 * (ha == hb)
 
 
 def similarity(a: dict, b: dict) -> Tuple[float, float]:
     """(similarity in [0, 1], total weight of the features both sides define)."""
     parts: List[Tuple[float, float]] = []
-    if "logo" in a and "logo" in b:
-        parts.append((2.0, 0.5 * (a["logo"][0] == b["logo"][0]) + 0.5 * (a["logo"][1] == b["logo"][1])))
+    lm = logo_match(a, b)
+    if lm is not None:
+        parts.append((2.0, lm))
     common = [u for u in a["order"] if u in set(b["order"])]
     if len(common) >= 2:
         pb = {u: i for i, u in enumerate(u for u in b["order"] if u in set(common))}
@@ -225,7 +243,7 @@ def metric(chosen: Dict[str, dict]) -> dict:
     """Family consistency of one pick per target, over all target pairs."""
     names = list(chosen)
     feats = {n: features(chosen[n]) for n in names}
-    sims, logo, order, side, align = [], [], [], [], []
+    sims, logo, logo_ax, order, side, align = [], [], [], [], [], []
     for i, a in enumerate(names):
         for b in names[i + 1:]:
             fa, fb = feats[a], feats[b]
@@ -234,6 +252,9 @@ def metric(chosen: Dict[str, dict]) -> dict:
                 sims.append(s)
             if "logo" in fa and "logo" in fb:
                 logo.append(float(fa["logo"] == fb["logo"]))
+            lm = logo_match(fa, fb)
+            if lm is not None:
+                logo_ax.append(float(lm >= 1.0))
             common = [u for u in fa["order"] if u in set(fb["order"])]
             if len(common) >= 2:
                 pb = {u: k for k, u in enumerate(u for u in fb["order"] if u in set(common))}
@@ -252,7 +273,8 @@ def metric(chosen: Dict[str, dict]) -> dict:
     if len(ratios) >= 2:
         m = sum(ratios) / len(ratios)
         sd = round(math.sqrt(sum((r - m) ** 2 for r in ratios) / len(ratios)), 4)
-    return {"similarity": mean(sims), "logo_same_class": mean(logo), "reading_order": mean(order),
+    return {"similarity": mean(sims), "logo_same_class": mean(logo), "logo_same_place": mean(logo_ax),
+            "reading_order": mean(order),
             "hero_same_side": mean(side), "same_alignment": mean(align), "type_ratio_log_sd": sd,
             "pairs": len(sims)}
 
@@ -309,11 +331,12 @@ def anchor_box(cell: Tuple[int, int], cand: dict) -> Optional[Tuple[str, dict]]:
         return None
     W, H = float(design["canvas"]["width"]), float(design["canvas"]["height"])
     x, y, w, h = _union([_box(e) for e in els])
-    if w >= 0.6 * W or h >= 0.6 * H:
+    r = W / H
+    if (r < STRIP and h >= 0.6 * H) or (r > 1 / STRIP and w >= 0.6 * W):
         return None
     m = max(6.0, 0.05 * min(W, H))
     v, hz = cell
-    bx = (m, (W - w) / 2.0, W - m - w)[hz]
-    by = (m, (H - h) / 2.0, H - m - h)[v]
+    bx = (m, (W - w) / 2.0, W - m - w)[hz] if r > 1 / STRIP else x  # a tower keeps its x
+    by = (m, (H - h) / 2.0, H - m - h)[v] if r < STRIP else y  # a strip keeps its y
     bx, by = min(max(0.0, bx), W - w), min(max(0.0, by), H - h)
     return sorted(ids)[0], {"x": round(bx, 2), "y": round(by, 2), "width": round(w, 2), "height": round(h, 2)}
