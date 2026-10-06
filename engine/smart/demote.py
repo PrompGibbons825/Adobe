@@ -64,6 +64,8 @@ RUNG_COST = {"floor": 0.25, "zone": 0.35, "chips": 0.3}
 RHO = 0.9  # packing efficiency of the area budget: optimistic, so only what clearly cannot fit is skipped
 SLACK = 1.12  # word-wrap slack on a text's area
 EXTRA_STATES = 3  # demotion states tried past the first that gives a clean plan
+HIDE_BRANCH = 6  # hide-k-least-important states offered to the scorer next to a clean plan
+HIDE_SURCHARGE = 0.5  # hiding costs (1 + this) x an item's importance: lost content reads as lost
 REPAIR_TRIES = 4  # candidates the copy-over-copy repair works on
 # implicitly hidden by an archetype (no slot for it): may still go to a free spot at its floor
 RESCUE = ("legal", "body", "subhead", "badge", "ribbon", "group", "watermark", "panel")
@@ -649,6 +651,32 @@ def _climb(d: Design, ctx: Ctx, missing: List[Item], core: bool = False) -> list
              + (f"; {b.thumb_cols} with a hero thumbnail" if b.thumb else ""))
     plans: list = []
     done = set()  # archetypes that already reached their cap without relaxing type
+
+    def run(st: State, force_all: bool) -> bool:
+        """Plan every archetype in this demotion state; True if one gave a clean plan."""
+        any_clean = False
+        sctx = dataclasses.replace(ctx, pinned=st.pinned)
+        flow_hidden = list(missing) + st.hidden + st.moved
+        for name, fn, kw in _variants(d, ctx, force_all, b):
+            if name in done:
+                continue
+            p = C._with_insets(fn, d, sctx, flow_hidden, name=name, **kw)
+            if p is None:
+                continue
+
+            def replan(base, fn=fn, name=name, kw=kw):
+                return C._with_insets(fn, d, sctx, flow_hidden, name=name, base=base, **kw)
+
+            p = place_secondary(p, st, d, sctx, replan)
+            if p is None:
+                continue
+            st.stamp(p)
+            plans.append(p)
+            if p.relax >= 1.0 and p.capped:
+                done.add(name)
+            any_clean = any_clean or clean(p)
+        return any_clean
+
     found = None  # index of the first state that gave a clean plan
     for force_all in (False, True):
         skip_to, empty = b.start, 0
@@ -659,28 +687,8 @@ def _climb(d: Design, ctx: Ctx, missing: List[Item], core: bool = False) -> list
             if found is not None and (st.hides or i > found + EXTRA_STATES):
                 break
             n_before = len(plans)
-            sctx = dataclasses.replace(ctx, pinned=st.pinned)
-            hidden = list(missing) + st.hidden
-            flow_hidden = hidden + st.moved
-            for name, fn, kw in _variants(d, ctx, force_all, b):
-                if name in done:
-                    continue
-                p = C._with_insets(fn, d, sctx, flow_hidden, name=name, **kw)
-                if p is None:
-                    continue
-
-                def replan(base, fn=fn, name=name, kw=kw):
-                    return C._with_insets(fn, d, sctx, flow_hidden, name=name, base=base, **kw)
-
-                p = place_secondary(p, st, d, sctx, replan)
-                if p is None:
-                    continue
-                st.stamp(p)
-                plans.append(p)
-                if p.relax >= 1.0 and p.capped:
-                    done.add(name)
-                if found is None and clean(p):
-                    found = i
+            if run(st, force_all) and found is None:
+                found = i
             empty = empty + 1 if len(plans) == n_before else 0
             if empty and b.need[i] > b.avail:
                 # nothing fit and the load is over budget: states that do not lower it will not
@@ -691,6 +699,15 @@ def _climb(d: Design, ctx: Ctx, missing: List[Item], core: bool = False) -> list
                 # will not help, only hiding might
                 skip_to = next((j for j in range(i + 1, len(seq)) if any(r == "hide" for r in seq[j].values())),
                                len(seq))
+        if found is not None and not any(r == "hide" for r in seq[found].values()):
+            # the hide branch: the scorer judges every size against the best any candidate
+            # reached, so it must see what hiding the least important units would buy. Hiding
+            # pays a surcharge in score.py and so has to win clearly.
+            may_go = [k for k, u in enumerate(us) if "hide" in u.rungs]
+            for n in range(1, min(len(may_go), HIDE_BRANCH) + 1):
+                rungs = dict(seq[found])
+                rungs.update({k: "hide" for k in may_go[:n]})
+                run(State(us, rungs), force_all)
         if plans:
             break
     return plans

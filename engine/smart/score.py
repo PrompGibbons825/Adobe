@@ -108,7 +108,11 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
                 if chars < 14:
                     lines_pen += it.importance * 0.25 * (14 - chars) / 14
     b["visible"] = vis
-    b["hidden"] = -sum(h.importance for h in p.hidden if h.role != "missing")
+    from .demote import ENABLED as _dem, HIDE_SURCHARGE
+
+    # hiding by choice (a demotion rung) pays a surcharge: lost content reads as lost brand content
+    b["hidden"] = -sum(h.importance * (1.0 + (HIDE_SURCHARGE if _dem and p.demoted.get(h.key) == "hide" else 0.0))
+                       for h in p.hidden if h.role != "missing")
     b["small_text"] = -small
     b["lines"] = -lines_pen
 
