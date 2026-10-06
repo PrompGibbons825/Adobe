@@ -202,7 +202,6 @@ def select(per: Dict[str, List[dict]], weight: Optional[float] = None, sweeps: i
             unit = max(1.0, SCALE * abs(s0))
             q.append((s - s0) / unit if s >= s0 - MAX_LOSS * abs(s0) else None)
         qual[n] = q
-    pick = {n: 0 for n in names}
     sim_cache: Dict[tuple, Tuple[float, float]] = {}
 
     def sim(n, i, m, j):
@@ -211,7 +210,7 @@ def select(per: Dict[str, List[dict]], weight: Optional[float] = None, sweeps: i
             sim_cache[key] = similarity(feats[n][i], feats[m][j])
         return sim_cache[key]
 
-    def local(n, i):
+    def local(pick, n, i):
         tot = wsum = 0.0
         for m in names:
             if m == n:
@@ -221,22 +220,51 @@ def select(per: Dict[str, List[dict]], weight: Optional[float] = None, sweeps: i
             wsum += w
         return (tot / wsum) if wsum > 0 else 0.0
 
-    for _ in range(sweeps):
-        changed = False
+    def icm(pick):
+        for _ in range(sweeps):
+            changed = False
+            for n in names:
+                best_i, best_v = pick[n], None
+                for i, q in enumerate(qual[n]):
+                    if q is None:
+                        continue
+                    v = q + lam * local(pick, n, i)
+                    if best_v is None or v > best_v + 1e-9:
+                        best_i, best_v = i, v
+                if best_i != pick[n]:
+                    pick[n] = best_i
+                    changed = True
+            if not changed:
+                break
+        return pick
+
+    def total(pick):
+        return sum(qual[n][pick[n]] + lam * local(pick, n, pick[n]) for n in names)
+
+    # Restarts: from the per-target winners, then from every distinct family
+    # "prototype" (art side, logo cell, alignment) any candidate shows, so a
+    # family split 50/50 between two styles can still settle on one.
+    best_pick = icm({n: 0 for n in names})
+    best_v = total(best_pick)
+    protos = []
+    for n in names:
+        for i, f in enumerate(feats[n]):
+            if qual[n][i] is None:
+                continue
+            key = (f.get("hero_side"), f.get("logo"), f.get("align"))
+            if key not in [k for k, _ in protos]:
+                protos.append((key, f))
+    for _, proto in protos:
+        start = {}
         for n in names:
-            best_i, best_v = pick[n], None
-            for i, q in enumerate(qual[n]):
-                if q is None:
-                    continue
-                v = q + lam * local(n, i)
-                if best_v is None or v > best_v + 1e-9:
-                    best_i, best_v = i, v
-            if best_i != pick[n]:
-                pick[n] = best_i
-                changed = True
-        if not changed:
-            break
-    return pick
+            opts = [(qual[n][i] + lam * similarity(feats[n][i], proto)[0], -i) for i in range(len(per[n]))
+                    if qual[n][i] is not None]
+            start[n] = -max(opts)[1]
+        pick = icm(start)
+        v = total(pick)
+        if v > best_v + 1e-9:
+            best_pick, best_v = pick, v
+    return best_pick
 
 
 def metric(chosen: Dict[str, dict]) -> dict:
