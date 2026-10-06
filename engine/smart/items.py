@@ -278,21 +278,53 @@ def _scaled_member(m: dict, origin: Box, g: float, ox: float, oy: float, ctx: Ct
     return e
 
 
-def _separate(boxes: List[Box]) -> List[Box]:
-    """Push text boxes down (in reading order) until none overlaps another."""
+def _separate(boxes: List[Box], keep=frozenset()) -> List[Box]:
+    """Push text boxes down (in reading order) until none overlaps another.
+
+    Pairs of indices in ``keep`` overlapped on purpose in the source (a word set
+    over a big numeral): they keep their relative placement. [relations-polish]"""
     order = sorted(range(len(boxes)), key=lambda i: (boxes[i].y, boxes[i].x))
-    done: List[Box] = []
+    done: List[Tuple[int, Box]] = []
     out = list(boxes)
     for i in order:
         b = out[i].copy()
         for _ in range(len(done) + 1):
-            hit = [d for d in done if min(b.r, d.r) - max(b.x, d.x) > 0.5 and min(b.b, d.b) - max(b.y, d.y) > 0.5]
+            hit = [d for j, d in done if (min(i, j), max(i, j)) not in keep and
+                   min(b.r, d.r) - max(b.x, d.x) > 0.5 and min(b.b, d.b) - max(b.y, d.y) > 0.5]
             if not hit:
                 break
             b.y = max(d.b for d in hit) + 0.5
         out[i] = b
-        done.append(b)
+        done.append((i, b))
     return out
+
+
+def _ink(b: Box, blk: TextBlock, el: dict) -> Box:
+    """The glyph box of a text laid out in box ``b`` (its lines are aligned within it)."""
+    ink = min(b.w, blk.ink_width)
+    a = el.get("text_align", "left")
+    x = b.x if a == "left" else (b.r - ink if a == "right" else b.cx - ink / 2.0)
+    return Box(x, b.y, ink, b.h)
+
+
+def _kept_pairs(it: Item, texts: List[dict]) -> frozenset:
+    """Index pairs of texts the source deliberately overlapped (same rule as the
+    final copy-over-copy check, which exempts them too). Cached on the item:
+    realize() runs thousands of times per design."""
+    ids = tuple(m["id"] for m in texts)
+    cache = it.__dict__.setdefault("_kept_cache", {})
+    if ids not in cache:
+        cache[ids] = frozenset(tuple(sorted((ids.index(a), ids.index(b))))
+                               for a, b in textfit.deliberate_overlaps(texts))
+    return cache[ids]
+
+
+def _separate_texts(it: Item, boxes: List[Box], blocks: List[TextBlock], els: List[dict]) -> List[float]:
+    """Vertical shifts that keep copy off copy, judged on glyph boxes (a wide text
+    box beside a short word is not a collision). [relations-polish]"""
+    inks = [_ink(b, blk, e) for b, blk, e in zip(boxes, blocks, els)]
+    sep = _separate(inks, _kept_pairs(it, els))
+    return [s.y - i.y for s, i in zip(sep, inks)]
 
 
 def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float) -> Optional[Real]:
@@ -327,9 +359,9 @@ def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, r
             fonts[m["id"]] = fs
             blocks[m["id"]] = blk
         if texts:
-            sep = _separate([local[m["id"]] for m in texts])
-            for m, b in zip(texts, sep):
-                local[m["id"]] = b
+            dys = _separate_texts(it, [local[m["id"]] for m in texts], [blocks[m["id"]] for m in texts], texts)
+            for m, dy in zip(texts, dys):
+                local[m["id"]] = local[m["id"]].moved(0.0, dy)
         u = union_all(local.values())
         return local, fonts, blocks, u
 
@@ -384,9 +416,11 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float):
         parts.append((rs, fx * rh.w - rs.w / 2.0, fy * rh.h - rs.h / 2.0))
     tix = [i for i, (r, _, _) in enumerate(parts) if r.item.kind == "text"]
     if len(tix) > 1:  # captions that grew to the floor must not run into each other
-        sep = _separate([Box(parts[i][1], parts[i][2], parts[i][0].w, parts[i][0].h) for i in tix])
-        for i, b in zip(tix, sep):
-            parts[i] = (parts[i][0], b.x, b.y)
+        rs = [parts[i][0] for i in tix]
+        dys = _separate_texts(it, [Box(parts[i][1], parts[i][2], r.w, r.h) for i, r in zip(tix, rs)],
+                              [next(iter(r.blocks.values())) for r in rs], [r.item.els[0] for r in rs])
+        for i, dy in zip(tix, dys):
+            parts[i] = (parts[i][0], parts[i][1], parts[i][2] + dy)
     x0 = min(px for _, px, _ in parts)
     y0 = min(py for _, _, py in parts)
     x1 = max(px + r.w for r, px, _ in parts)
