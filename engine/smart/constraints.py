@@ -474,19 +474,53 @@ def _clear_corners(plan, pins, d, ctx) -> list:
 # scoring
 
 
-def score_terms(p, d, ctx, boxes) -> Dict[str, float]:
-    """Extra score terms under constraints: content outside the safe area."""
+def relax_musts(d) -> bool:
+    """No layout keeps every must item: demote them (pins stay) and say so."""
     c = _ACTIVE.get()
-    if c is None or not c.has_safe:
+    if c is None:
+        return False
+    hit = [it for it in d.items if getattr(it, "priority", None) == "must" and _pin_for(it, c) is None]
+    for it in hit:
+        it.priority = "must-relaxed"  # type: ignore[attr-defined]
+        it.core = False
+        c.warnings.append(f"must {it.key}: no layout keeps every must item; it may be dropped")
+    return bool(hit)
+
+
+def row_keep_musts(badges: list, floaters: list, others: list):
+    """A one-line banner drops secondary art and corner items that collide; a
+    must item joins the copy column instead."""
+    c = _ACTIVE.get()
+    if c is None or not (c.priority or c.pinned):
+        return badges, floaters, others
+    must = [i for i in floaters + others if getattr(i, "priority", None) == "must"]
+    if not must:
+        return badges, floaters, others
+    return badges + must, [i for i in floaters if i not in must], [i for i in others if i not in must]
+
+
+def score_terms(p, d, ctx, boxes) -> Dict[str, float]:
+    """Extra score terms under constraints: content outside the safe area, and
+    must items a planner had to leave out."""
+    c = _ACTIVE.get()
+    if c is None:
         return {}
+    out: Dict[str, float] = {}
+    lost = sum(1 for h in p.hidden if getattr(h, "priority", None) == "must" and h.role not in ("missing", "void"))
+    if lost:
+        out["must_hidden"] = -300.0 * lost
+    if not c.has_safe:
+        return out
     l, t, r, b = c.safe
     safe = Box(l, t, ctx.W - l - r, ctx.H - t - b)
-    out = 0.0
+    pen = 0.0
     for it, bx in boxes:
         if bx.area <= 0:
             continue
-        out += (bx.area - bx.inter(safe)) / bx.area * it.importance / 50.0
-    return {"safe_area": -60.0 * out} if out > 0 else {}
+        pen += (bx.area - bx.inter(safe)) / bx.area * it.importance / 50.0
+    if pen > 0:
+        out["safe_area"] = -60.0 * pen
+    return out
 
 
 # ----------------------------------------------------------------------------

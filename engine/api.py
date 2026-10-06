@@ -236,6 +236,16 @@ def _candidates(source: dict, target: dict, c, k: int, explain: bool) -> List[di
     out = []
     for i, (p, design, _) in enumerate(chosen):
         hidden_ids = [e["id"] for it in p.hidden for e in it.els]
+        notes = []
+        if c is not None:
+            for it in p.hidden:
+                pin = next((x for x in it.ids if x in c.pinned), None)
+                if it.role == "missing" and (pin or getattr(it, "priority", None) == "must"):
+                    notes.append(f"{pin or it.key}: asset missing from the brand kit; hidden")
+                elif pin:
+                    notes.append(f"pin {pin}: no layout could keep it on {target['width']}x{target['height']}; hidden")
+                elif getattr(it, "priority", None) == "must" and it.role != "void":
+                    notes.append(f"must {it.key}: no layout could keep it on {target['width']}x{target['height']}; hidden")
         dropped = []
         for it in p.hidden:
             for e in it.els:
@@ -254,7 +264,7 @@ def _candidates(source: dict, target: dict, c, k: int, explain: bool) -> List[di
             "dropped": dropped,
             "design": design,
             "duplicates": dups.get(i, 0),
-            "warnings": list(c.warnings) if c else [],
+            "warnings": (list(c.warnings) if c else []) + notes,
         }
         if explain:
             dec, plan_level = _explain.explain(p, plans, d, ctx, design, allow_drop=bool(c and c.allow_drop))

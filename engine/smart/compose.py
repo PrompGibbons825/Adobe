@@ -393,6 +393,7 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
     floaters = [i for i in vis if i.corner and i.role != "logo"]
     others = [i for i in vis if i not in texts and i not in ctas and i not in badges and i not in floaters
               and i is not logo and i is not hero]
+    badges, floaters, others = _cons.row_keep_musts(badges, floaters, others)  # finale-api: must items stay
     hid += others  # secondary art does not fit a one-line banner
     copy_rows = rows_for(texts + badges)
     lo, hi = scale_bounds(d, ctx, "row")
@@ -605,4 +606,6 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
                     plans.extend(_cons.anchor_variants(fn, d, ctx, hidden, name, kw, _with_insets, _zone))
         if plans:
             break
+    if not plans and _cons.relax_musts(d):  # finale-api: no layout keeps every must item
+        return generate(d, ctx)
     return plans

@@ -48,7 +48,8 @@ def _prior(name: str, r: float, r0: float = 1.0) -> float:
 
 
 def _core_hidden(p: Plan) -> int:
-    return sum(1 for h in p.hidden if h.role in ("headline", "cta", "logo", "hero"))
+    return sum(1 for h in p.hidden if h.role in ("headline", "cta", "logo", "hero")
+               or getattr(h, "priority", None) == "must")  # finale-api: user must-haves count as core
 
 
 def prune_relaxed(plans: List[Plan]) -> List[Plan]:
