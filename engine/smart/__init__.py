@@ -19,6 +19,9 @@ def plan_design(source: dict, target: dict):
     ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
     plans = prune_relaxed(generate(d, ctx))
     score_plans(plans, d, ctx)
+    from . import ranker  # learned-ranker: blend designer-trained preference (no-op without weights)
+
+    ranker.apply(plans, d, ctx)
     plans.sort(key=lambda p: -p.score)
     _pixel_rerank(plans, d, ctx)
     _no_text_on_text(plans, d, ctx)
