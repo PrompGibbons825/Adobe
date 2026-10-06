@@ -227,6 +227,17 @@ def _hidden(e: dict, d: Design, ctx: Ctx) -> dict:
     floor = _opaque_bg_z(d)
     if floor is not None:
         o["z_index"] = int(floor) - 1
+    elif o.get("type") == "text":
+        from . import demote
+
+        if demote.ENABLED and demote.SPECK_HIDE:
+            # nothing opaque to hide under and the renderer ignores text opacity, so hidden copy
+            # would still be drawn: make it a 1 px speck in the corner, under everything
+            from .textfit import TextStyle, natural_width
+
+            w = natural_width(str(o.get("content", "")), TextStyle.of(o), 1) + 2.0
+            zmin = min((int(x.get("z_index", 0)) for x in d.elements), default=0)
+            o.update(x=0.0, y=0.0, width=min(ctx.W, w), height=2.0, font_size=1, z_index=zmin - 1)
     return o
 
 
