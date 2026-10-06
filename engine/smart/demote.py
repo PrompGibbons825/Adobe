@@ -30,10 +30,12 @@ This module replaces both.
 
 3. Repair instead of fit-and-centre (`repair`, `generate`). When every candidate draws
    copy over copy, the best candidate is repaired: the lower-priority text of each clash
-   goes to its floor, then to a free spot, and only a non-core one is hidden. When no
-   candidate exists at all, every rigid unit carrying copy is dissolved and the ladder
-   climbed again; core art (hero, then logo) is given up only after that. Fit-and-centre
-   is left for content that cannot fit at all; STATS counts what happened.
+   goes to its floor, then to a free spot, and only a non-core one is hidden. A rigid
+   unit that cannot fit at its floor first loses its lesser lines inside it (copy stays
+   on its block); it is dissolved only if its copy reads on the canvas without the
+   block. When no candidate exists at all, the ladder is climbed once more with the hero,
+   logo and then the CTA allowed to go (never the headline, never art carrying copy).
+   Fit-and-centre is left for content that cannot fit at all; STATS counts what happened.
 """
 
 from __future__ import annotations
@@ -103,9 +105,12 @@ def content_box(d: Design, ctx: Ctx) -> Box:
 
 
 def _floor_real(it: Item, ctx: Ctx, max_w: float = math.inf, max_h: float = math.inf,
-                mode: str = "stack", nowrap: bool = False) -> Optional[Real]:
+                mode: str = "stack", nowrap: bool = False, relax: float = 1.0) -> Optional[Real]:
     pc = ctx if it.key in ctx.pinned else dataclasses.replace(ctx, pinned=ctx.pinned | {it.key})
-    return realize(it, 1.0, pc, max_w, max_h, mode=mode, nowrap=nowrap)
+    return realize(it, 1.0, pc, max_w, max_h, mode=mode, nowrap=nowrap, relax=relax)
+
+
+RELAX_MIN = 0.6  # the most compression.solve() allows type before giving up
 
 
 def chip_real(it: Item, ctx: Ctx, max_w: float, max_h: float) -> Optional[Real]:
@@ -489,8 +494,8 @@ def _rungs(role: str, n: int) -> Tuple[str, ...]:
 
 def units(d: Design, core: bool = False, skip: Sequence[Item] = ()) -> List[Unit]:
     """Optional content as demotion units, least important first. Items of one role in one
-    row (a set of badges) move together. With `core`, the last resort: hero and logo may
-    shrink and, only then, go; the headline and CTA never do."""
+    row (a set of badges) move together. With `core`, the last resort before fit-and-centre:
+    hero, logo and then the CTA may shrink and, only then, go; the headline never does."""
     from .structure import rows_for
 
     gone = {id(it) for it in skip}
@@ -504,7 +509,7 @@ def units(d: Design, core: bool = False, skip: Sequence[Item] = ()) -> List[Unit
         out += [Unit(its, role, _rungs(role, len(its))) for role, its in by_role.items()]
     out.sort(key=lambda u: (u.importance, -min(i.src_box.y for i in u.items)))
     if core:
-        for role in ("hero", "logo"):
+        for role in ("hero", "logo", "cta"):
             out += [Unit([it], role, ("floor", "hide")) for it in d.items
                     if it.role == role and not it.core and not _carries_copy(it) and id(it) not in gone]
     return out
@@ -587,11 +592,11 @@ def generate(d: Design, ctx: Ctx) -> list:
                 _log(f"repair: no candidate fits; {it.key} ({it.role}) dissolved into its parts")
         if rigid:
             plans = _climb(d, ctx, missing)
-    if not plans:  # the last resort before fit-and-centre: core art may go, copy never
+    if not plans:  # the last resort before fit-and-centre: hero, logo, then CTA may go; the headline never
         plans = _climb(d, ctx, missing, core=True)
         if plans:
             _bump("core_hidden")
-            _log("repair: core art demoted (hero, then logo): nothing else fits")
+            _log("repair: core items demoted (hero, logo, then CTA): nothing else fits")
     return plans
 
 
@@ -622,7 +627,7 @@ def _climb(d: Design, ctx: Ctx, missing: List[Item], core: bool = False) -> list
     stuck, out = [], []
     for it in d.items:
         if id(it) not in gone and it.role not in ("missing", "void") and \
-                _floor_real(it, ctx, zone.w, zone.h) is None:
+                _floor_real(it, ctx, zone.w, zone.h, relax=RELAX_MIN) is None:
             (out if id(it) in may_go else stuck).append(it)
     if stuck:
         _log(f"feasibility: {', '.join(it.key for it in stuck)} cannot fit even at the floor")
