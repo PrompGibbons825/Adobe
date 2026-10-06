@@ -11,6 +11,7 @@ import argparse
 import io
 import json
 import math
+import os
 import random
 import sys
 import time
@@ -196,7 +197,7 @@ def main() -> int:
                 from renderer.converter.convert import render_design_to_png
                 with redirect_stderr(io.StringIO()):
                     render_design_to_png(out, Path(__file__).resolve().parents[1] / "brand_kit" / "assets",
-                                         "/tmp/_stress_render.png")
+                                         f"/tmp/_stress_render_{os.getpid()}.png")
             except Exception as ex:  # noqa: BLE001
                 errs.append(f"RENDER CRASH {type(ex).__name__}: {str(ex)[:120]}")
         if errs:
