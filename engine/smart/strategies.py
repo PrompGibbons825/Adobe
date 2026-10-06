@@ -36,6 +36,7 @@ score._prior) and switched off by ENABLED = False.
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -45,7 +46,7 @@ from .items import Ctx, Real, realize
 from .layout import Flow, HStack, Leaf, Node, VStack
 from .structure import dominant_align, row_align, text_edges, xy_tree
 
-ENABLED = True
+ENABLED = os.environ.get("CHAMELEON_STRATEGIES", "1") != "0"  # A/B switch for the dev tools
 GENERATORS = ("pin", "springs", "propfit", "flow")  # drop a name to switch one generator off
 STEPS = 10  # springs-and-struts: the artboard moves in 10% increments
 
@@ -907,9 +908,32 @@ def _build(t, d: Design, ctx: Ctx, parent: Optional[str], dom: str, tl: float, t
     return HStack(kids, gaps=gaps)
 
 
+def _solve_full(root: Node, ctx: Ctx, zone: Box, lo: float, hi: float):
+    """compose.solve at full legibility only: a flip is an option, not a rescue
+    (relaxed type is pruned whenever any candidate keeps full legibility)."""
+    from .compose import effective_zone
+    from .layout import search_scale
+
+    def fits(s):
+        w, h = zone.w, zone.h
+        for _ in range(3):
+            laid = root.measure(s, ctx, w, h, 1.0)
+            if laid is None:
+                return None
+            ez = effective_zone(laid, ctx, zone)
+            if laid.w <= ez.w + 0.5 and laid.h <= ez.h + 0.5:
+                laid.zone = ez  # type: ignore[attr-defined]
+                return laid
+            w, h = min(w, ez.w), min(h, ez.h)
+        return None
+
+    s, laid = search_scale(fits, lo, hi)
+    return s, laid, 1.0
+
+
 def plan_flow(d: Design, ctx: Ctx, hidden: List[Item], name: str = "flow", insets=(0, 0, 0, 0),
               op: tuple = ("keep",)):
-    from .compose import Plan, _settle_floaters, _visible, _zone, place_column, place_row, scale_bounds, solve
+    from .compose import Plan, _settle_floaters, _visible, _zone, place_column, place_row, scale_bounds
 
     vis = _visible(d, hidden)
     floaters = [it for it in vis if it.corner]
@@ -939,7 +963,7 @@ def plan_flow(d: Design, ctx: Ctx, hidden: List[Item], name: str = "flow", inset
     weights = [3.0 if any(i.role == "headline" for i in _fleaves(c)) else
                (1.5 if any(i.role == "hero" for i in _fleaves(c)) else 1.0) for c in tree.kids]
     for _ in range(4):
-        s, laid, relax = solve(root, ctx, zone, lo, hi)
+        s, laid, relax = _solve_full(root, ctx, zone, lo, hi)
         if laid is None:
             return None
         if isinstance(root, VStack):
