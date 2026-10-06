@@ -46,7 +46,7 @@ TERMS = [
     "dropped_text", "dropped_art", "contrast_loss", "busy_gain", "abs_low_contrast", "abs_busy",
     "coll_text_art", "coll_text_text", "coll_art", "spill", "cut_text", "cut_art",
     "tiny512", "tiny1024", "text_shrink", "art_shrink", "hierarchy", "align_lost", "near_miss",
-    "tight_margin", "imbalance", "underfill", "overfill", "aspect",
+    "tight_margin", "imbalance", "underfill", "overfill", "aspect", "order_flip", "bare_canvas",
 ]
 
 # Hand-set starting weights (research 04 §4.4, adapted to the source-relative terms).
@@ -55,7 +55,7 @@ HAND_WEIGHTS = {
     "abs_busy": 0.0, "coll_text_art": 3.0, "coll_text_text": 3.0, "coll_art": 1.0, "spill": 1.5,
     "cut_text": 2.0, "cut_art": 1.0, "tiny512": 1.0, "tiny1024": 2.0, "text_shrink": 1.0,
     "art_shrink": 0.5, "hierarchy": 1.0, "align_lost": 0.5, "near_miss": 0.5, "tight_margin": 0.5,
-    "imbalance": 0.5, "underfill": 0.5, "overfill": 0.5, "aspect": 3.0,
+    "imbalance": 0.5, "underfill": 0.5, "overfill": 0.5, "aspect": 3.0, "order_flip": 0.5, "bare_canvas": 1.0,
 }
 
 
@@ -291,6 +291,11 @@ def measure(design: dict, limit: int = LIMIT) -> dict:
             rep["pairs"][f"{a_}|{b_}"] = [round(inter / max(1, min(na, nb)), 4), round(inter / max(1, na), 4),
                                          round(inter / max(1, nb), 4)]
 
+    painted = np.zeros((H, W), bool)
+    for e in els:
+        painted |= masks[e["id"]]
+    rep["bare"] = round(1.0 - float(painted.mean()), 4)  # canvas no element paints (white bands, voids)
+
     occ_live = np.zeros((H, W), bool)
     for i in live:
         occ_live |= masks[i]
@@ -489,6 +494,22 @@ def terms(src: dict, out: dict) -> Dict[str, float]:
         lost += min(1.0, max(0.0, px - tol) / (0.02 * Lo))
     t["align_lost"] = lost / n if n else 0.0
     t["near_miss"] = max(0.0, _near_miss_rate(out, keep) - _near_miss_rate(src, keep))
+
+    # the source's reading order: what sat left of / above what still does (where the
+    # arrangement survived); a mirrored layout reads as a different design
+    flips = n = 0
+    for x in range(len(keep)):
+        for y in range(x + 1, len(keep)):
+            a, b = keep[x], keep[y]
+            if "bbox" not in S[a] or "bbox" not in S[b] or "bbox" not in O[a] or "bbox" not in O[b]:
+                continue
+            sa, sb, oa, ob = S[a]["bbox"], S[b]["bbox"], O[a]["bbox"], O[b]["bbox"]
+            for axis, lo, hi in ((0, 0, 2), (1, 1, 3)):
+                if _stacked(sa, sb, axis) and _stacked(oa, ob, axis):
+                    n += 1
+                    flips += (sa[hi] <= sb[lo]) != (oa[hi] <= ob[lo])
+    t["order_flip"] = flips / n if n else 0.0
+    t["bare_canvas"] = max(0.0, out.get("bare", 0.0) - src.get("bare", 0.0))
 
     # whitespace and balance, relative to the source
     t["tight_margin"] = sum(1 for m0, m1 in zip(src["margins"], out["margins"]) if m1 < 0.02 and m0 >= 0.02) / 4.0
