@@ -863,7 +863,12 @@ def _apply_op(t: FNode, op: tuple, want: Optional[str]):
     if op[0] == "wrap":  # a column wrapped into two columns side by side (or a row into two rows)
         if t.kind != src_kind or len(t.kids) < 3:
             return None
-        areas = [_fbox(c).area for c in t.kids]
+        # the art | copy split is the split and row archetypes' job, and they size
+        # the hero to the full cross axis; a wrap that carries the hero in a
+        # half-column shrinks it into a corner (seen on the kit at 1.9:1)
+        if any(i.role == "hero" for i in _fleaves(t)):
+            return None
+        areas =[_fbox(c).area for c in t.kids]
         tot = sum(areas)
         cuts = sorted(range(1, len(t.kids)), key=lambda c: abs(sum(areas[:c]) - tot / 2.0))
         if op[1] >= len(cuts):
