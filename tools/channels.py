@@ -3,7 +3,7 @@
     .venv/bin/python -m tools.channels sheet input/chameleon_sample_level3_advanced.json -o output/channels.png
     .venv/bin/python -m tools.channels sheet <task.json> --independent        # each target's own winner
     .venv/bin/python -m tools.channels metric --set tune --limit 8 --weights 0.5,1,2
-    .venv/bin/python -m tools.channels budget --set samples --ms 1500
+    .venv/bin/python -m tools.channels budget --set samples --specs bound,ms=1000,work=8000
 
 `sheet` renders the source plus the ~20-format catalogue (tools/sheet.py) as a
 contact sheet; each tile says its archetype and its top two decisions, the
@@ -40,7 +40,14 @@ def _is_crello(path: Path) -> bool:
     return CRELLO in path.resolve().parents
 
 
-def designs(which: str, limit: int):
+def designs(which: str, limit: int, only: str = ""):
+    out = _designs(which, limit)
+    if only:
+        out = [p for p in out if any(o in p.stem for o in only.split(","))]
+    return out
+
+
+def _designs(which: str, limit: int):
     if which == "samples":
         return sorted((ROOT / "input").glob("*.json")) + sorted((ROOT / "tools" / "cases").glob("*.json"))
     fams = sorted(CRELLO.glob("fam??.json"))
@@ -173,7 +180,8 @@ def _fmt_metric(m: dict) -> str:
     def f(k):
         v = m.get(k)
         return "n/a" if v is None else f"{v:.2f}"
-    return (f"similarity {f('similarity')}, logo same class {f('logo_same_class')}, reading order {f('reading_order')}, "
+    return (f"similarity {f('similarity')}, logo same cell {f('logo_same_class')} (same place {f('logo_same_place')}), "
+            f"reading order {f('reading_order')}, "
             f"art same side {f('hero_same_side')}, alignment {f('same_alignment')}, type-ratio sd {f('type_ratio_log_sd')}")
 
 
@@ -287,7 +295,7 @@ def cmd_metric(a) -> int:
             m["loss_max"] = max(loss, default=0.0)
             rows[label].append(m)
         print(f"  {p.stem}: {time.time() - t:.1f}s", file=sys.stderr)
-    keys = ["similarity", "logo_same_class", "reading_order", "hero_same_side", "same_alignment",
+    keys = ["similarity", "logo_same_class", "logo_same_place", "reading_order", "hero_same_side", "same_alignment",
             "type_ratio_log_sd", "switched", "loss_mean", "loss_max"]
     print(f"set={a.set} designs={len(paths)} formats={len(catalogue())} k={a.k}  "
           f"(loss = share of the target's own best score given up; negative = the anchored option scored higher)")
@@ -305,49 +313,62 @@ def cmd_metric(a) -> int:
 # budget
 
 
+def _spec(t: str) -> dict:
+    if t == "bound":
+        return {"bound": True}
+    k, v = t.split("=")
+    return {k: float(v) if k == "ms" else int(v)}
+
+
 def cmd_budget(a) -> int:
     from engine.api import candidates
     from engine.smart import textfit
 
-    paths = designs(a.set, a.limit)
+    paths = designs(a.set, a.limit, a.only)
     _setup(paths)
-    budget = {"ms": a.ms} if a.ms else {"work": a.work}
-    rows = []
+    specs = [s for s in a.specs.split(",") if s]
+    rows = {s: [] for s in specs}
+    full_t, full_w = [], 0
     for p in paths:
         src = _source(p)
         for name, (w, h) in catalogue().items():
             tgt = {"width": w, "height": h}
             t = time.time()
             w0 = textfit.measure_calls()
-            full = candidates(src, tgt, k=a.k)
-            t_full, work = time.time() - t, textfit.measure_calls() - w0
-            t = time.time()
-            fast = candidates(src, tgt, k=a.k, budget=budget)
-            t_fast = time.time() - t
-            same = json.dumps(full[0]["design"], sort_keys=True) == json.dumps(fast[0]["design"], sort_keys=True)
-            s0, s1 = full[0]["score"], fast[0]["score"]
-            rows.append((p.stem, name, t_full, t_fast, work, same, s0, s1, fast[0]["budget"]["hit"]))
+            with redirect_stderr(io.StringIO()):
+                full = candidates(src, tgt, k=a.k)
+            full_t.append(time.time() - t)
+            full_w += textfit.measure_calls() - w0
+            for sp in specs:
+                t = time.time()
+                with redirect_stderr(io.StringIO()):
+                    fast = candidates(src, tgt, k=a.k, budget=_spec(sp))
+                dt = time.time() - t
+                same = json.dumps(full[0]["design"], sort_keys=True) == json.dumps(fast[0]["design"], sort_keys=True)
+                rows[sp].append((p.stem, name, full_t[-1], dt, same, full[0]["score"], fast[0]["score"],
+                                 fast[0]["budget"]["hit"]))
             if a.verbose:
-                print(f"  {p.stem[:24]:24s} {name:14s} full {t_full:5.2f}s fast {t_fast:5.2f}s work {work:7d} "
-                      f"same={same} {s0} {s1}", file=sys.stderr)
+                print(f"  {p.stem[:24]:24s} {name:14s} full {full_t[-1]:5.2f}s " +
+                      " ".join(f"{sp} {rows[sp][-1][3]:5.2f}s{'' if rows[sp][-1][4] else '*'}" for sp in specs),
+                      file=sys.stderr)
 
     def pct(v, q):
         v = sorted(v)
         return v[min(len(v) - 1, int(q * len(v)))]
 
-    tf, tb = [r[2] for r in rows], [r[3] for r in rows]
-    hit = [r for r in rows if r[8]]
-    changed = [r for r in rows if not r[5]]
-    rel = [(r[6] - r[7]) / abs(r[6]) for r in changed if r[6] is not None and r[7] is not None and r[6]]
-    print(f"set={a.set} designs={len(paths)} targets={len(rows)} budget={budget}")
-    print(f"time full: p50 {pct(tf, .5):.2f}s p95 {pct(tf, .95):.2f}s max {max(tf):.2f}s total {sum(tf):.0f}s")
-    print(f"time budget: p50 {pct(tb, .5):.2f}s p95 {pct(tb, .95):.2f}s max {max(tb):.2f}s total {sum(tb):.0f}s")
-    print(f"budget hit on {len(hit)} targets; top-1 changed on {len(changed)}; "
-          f"score loss when changed: mean {100 * sum(rel) / max(1, len(rel)):.1f}% max {100 * max(rel, default=0):.1f}%")
-    work_rate = sum(r[4] for r in rows) / max(1e-6, sum(tf))
-    print(f"text measurements per second (full runs): {work_rate:.0f}")
-    for r in changed:
-        print(f"  changed: {r[0]} {r[1]} {r[6]} -> {r[7]}")
+    n = len(full_t)
+    print(f"set={a.set} designs={len(paths)} targets={n} k={a.k}  (* = top-1 differs from the unbudgeted run)")
+    print(f"{'budget':12s}{'p50 s':>8s}{'p95 s':>8s}{'max s':>8s}{'total s':>9s}{'hit':>6s}{'top1 same':>11s}"
+          f"{'mean loss':>11s}{'max loss':>10s}")
+    print(f"{'none':12s}{pct(full_t, .5):8.2f}{pct(full_t, .95):8.2f}{max(full_t):8.2f}{sum(full_t):9.0f}"
+          f"{0:6d}{n:11d}{0:10.1f}%{0:9.1f}%")
+    for sp, rs in rows.items():
+        tb = [r[3] for r in rs]
+        rel = [(r[5] - r[6]) / abs(r[5]) if r[5] and r[6] is not None and not r[4] else 0.0 for r in rs]
+        print(f"{sp:12s}{pct(tb, .5):8.2f}{pct(tb, .95):8.2f}{max(tb):8.2f}{sum(tb):9.0f}"
+              f"{sum(1 for r in rs if r[7]):6d}{sum(1 for r in rs if r[4]):11d}"
+              f"{100 * sum(rel) / max(1, len(rel)):10.1f}%{100 * max(rel, default=0):9.1f}%")
+    print(f"text measurements per second (unbudgeted): {full_w / max(1e-6, sum(full_t)):.0f}")
     return 0
 
 
@@ -373,8 +394,9 @@ def main() -> int:
     p.add_argument("--set", default="samples", choices=["samples", "tune", "held"])
     p.add_argument("--limit", type=int, default=4)
     p.add_argument("--k", type=int, default=5)
-    p.add_argument("--ms", type=float, default=0.0)
-    p.add_argument("--work", type=int, default=0)
+    p.add_argument("--specs", default="bound,ms=1000,ms=500,work=8000",
+                   help="budgets to compare: bound | ms=<ms> | work=<text measurements>")
+    p.add_argument("--only", default="", help="comma-separated substrings of design names")
     p.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
     return {"sheet": cmd_sheet, "metric": cmd_metric, "budget": cmd_budget}[a.cmd](a)
