@@ -31,7 +31,7 @@ SPREAD_TARGET = {
     "landscape": 3.3, "square": 3.3, "portrait": 4.5, "tall": 4.5,
 }
 # Module switches (CHAMELEON_DS="type=floor,gaps=1,margins=1,score=1" overrides them, for experiments).
-CONFIG = {"enabled": 1, "type": "floor", "gaps": 1, "margins": 1, "score": 1.0, "surfaces": 1}
+CONFIG = {"enabled": 1, "type": "off", "gaps": 1, "margins": 1, "score": 1.0, "surfaces": 1}
 for _kv in __import__("os").environ.get("CHAMELEON_DS", "").split(","):
     if "=" in _kv:
         _k, _v = _kv.split("=", 1)
