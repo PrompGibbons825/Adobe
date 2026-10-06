@@ -29,3 +29,25 @@ STRIP_BOOST = 1.4  # ... get type this much above the sqrt-area prior
 
 def snapshot() -> dict:
     return {k: v for k, v in globals().items() if k.isupper()}
+
+
+def _override() -> None:
+    """Dev hook: CHAMELEON_THRESHOLDS='{"ADAPT_TOL": 1.5}' replays other values
+    (tools/evalset runs an engine in a subprocess, so module edits cannot)."""
+    import json
+    import os
+
+    raw = os.environ.get("CHAMELEON_THRESHOLDS")
+    if not raw:
+        return
+    try:
+        vals = json.loads(raw)
+    except ValueError:
+        return
+    g = globals()
+    for k, v in vals.items():
+        if k.isupper() and k in g and isinstance(v, (int, float)):
+            g[k] = float(v)
+
+
+_override()

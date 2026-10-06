@@ -208,7 +208,7 @@ def apply(plans, d, ctx) -> None:
     feats = all_features(plans, d, ctx)
     rs = [predict(f, m) for f in feats]
     top = max(rs)
-    lam = float(m.get("blend", 0.0))
+    lam = float(os.environ.get("CHAMELEON_RANKER_BLEND") or m.get("blend", 0.0))  # env: dev sweeps only
     for p, r in zip(plans, rs):
         bonus = lam * (r - top)
         p.breakdown["ranker"] = bonus
