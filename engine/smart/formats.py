@@ -105,8 +105,8 @@ _STORY = dict(safe=(0.04, 0.14, 0.96, 0.80), in_safe=True,
 _YA_Y0, _YA_Y1 = (1440 - 423) / 2 / 1440, 1 - (1440 - 423) / 2 / 1440
 _YA_TAB, _YA_PHONE = (2560 - 1855) / 2 / 2560, (2560 - 1546) / 2 / 2560
 _YT_ART = dict(safe=(_YA_TAB, _YA_Y0, 1 - _YA_TAB, _YA_Y1), in_safe=True, cls="banner",
-               avoid=(("channel-art-top", (0.0, 0.0, 1.0, _YA_Y0), 2.0),
-                      ("channel-art-bottom", (0.0, _YA_Y1, 1.0, 1.0), 2.0),
+               avoid=(("channel-art-top", (0.0, 0.0, 1.0, _YA_Y0), 3.0),
+                      ("channel-art-bottom", (0.0, _YA_Y1, 1.0, 1.0), 3.0),
                       ("channel-art-phone-left", (0.0, _YA_Y0, _YA_PHONE, _YA_Y1), 0.5),
                       ("channel-art-phone-right", (1 - _YA_PHONE, _YA_Y0, 1.0, _YA_Y1), 0.5)))
 _YT_THUMB = dict(avoid=(("yt-duration-badge", (0.80, 0.84, 1.0, 1.0), 1.0),))
