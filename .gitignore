@@ -20,3 +20,7 @@ venv/
 # Generated run artifacts
 output/*
 !output/.gitkeep
+
+# dev-only Crello sample (re-create with python -m tools.crello)
+tools/crello/cache/
+tools/crello/cases/assets/

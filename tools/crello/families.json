@@ -1,0 +1,775 @@
+[
+ {
+  "sig": "for yourself\u001fin your industry\u001fmake a name",
+  "src": "5a21998ad8141396fe9a3b1e",
+  "src_ar": 2.7015873015873018,
+  "tgts": [
+   "5a219a6cd8141396fe9a3b9e"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0004.parquet",
+    5
+   ],
+   [
+    "train",
+    "0018.parquet",
+    2
+   ]
+  ],
+  "photo": true,
+  "n_el": 6,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "13\u001f2017\u001f2050 n san fernando rd\u001f87-211-433-2122\u001fcalligraphy\u001fjan\u001fparticipant@writeitwell.us\u001fseats are limited,\nplease register in advance by email\u001fworkshop",
+  "src": "5889aa7a95a7a863ddcc3610",
+  "src_ar": 2.843601895734597,
+  "tgts": [
+   "5889912e95a7a863ddcc345d"
+  ],
+  "tgt_ar": [
+   4.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0021.parquet",
+    4
+   ],
+   [
+    "validation",
+    "0000.parquet",
+    2
+   ]
+  ],
+  "photo": true,
+  "n_el": 13,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "a series of performances in the theater of\nyouth based on william shakespeare's plays.\u001fenjoy modern interpretation\nof timeless dramas\u001fshake-\nspeare\ntoday",
+  "src": "590af65895a7a863ddcd6a51",
+  "src_ar": 2.0,
+  "tgts": [
+   "590af76b95a7a863ddcd6b78"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0021.parquet",
+    4
+   ],
+   [
+    "validation",
+    "0002.parquet",
+    2
+   ]
+  ],
+  "photo": true,
+  "n_el": 6,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "aha studio\u001fdesign camp",
+  "src": "592d19d095a7a863ddcd9746",
+  "src_ar": 3.0,
+  "tgts": [
+   "59526e3f95a7a863ddcdeb0f"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "validation",
+    "0000.parquet",
+    2
+   ],
+   [
+    "validation",
+    "0002.parquet",
+    2
+   ]
+  ],
+  "photo": true,
+  "n_el": 11,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "classroom\u001frules",
+  "src": "592e7a2f95a7a863ddcda6e7",
+  "src_ar": 1.0,
+  "tgts": [
+   "58a1e75495a7a863ddcc6364"
+  ],
+  "tgt_ar": [
+   1.7777777777777777
+  ],
+  "groups": [
+   [
+    "train",
+    "0011.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 7,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "20\u001f4599 bollowing street\u001fbusiness faster,\u001fdecember\u001fdenver, colorado\u001feasier and better\u001fhow to build\u001freal\nestate\u001fth\u001fyour",
+  "src": "589dcf6a95a7a863ddcc5a05",
+  "src_ar": 0.7142857142857143,
+  "tgts": [
+   "589d905d95a7a863ddcc5957"
+  ],
+  "tgt_ar": [
+   0.5
+  ],
+  "groups": [
+   [
+    "test",
+    "0001.parquet",
+    0
+   ],
+   [
+    "train",
+    "0030.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 13,
+  "wide": false,
+  "tall": true
+ },
+ {
+  "sig": "effective\nand easy\u001fself-education",
+  "src": "589d8b7495a7a863ddcc5647",
+  "src_ar": 0.6666666666666666,
+  "tgts": [
+   "592e791195a7a863ddcda585"
+  ],
+  "tgt_ar": [
+   0.5
+  ],
+  "groups": [
+   [
+    "train",
+    "0007.parquet",
+    5
+   ],
+   [
+    "train",
+    "0009.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 9,
+  "wide": false,
+  "tall": true
+ },
+ {
+  "sig": "health\u001finfo\u001fmaternal & child",
+  "src": "5a6f31568c32ec6f8bcc5e19",
+  "src_ar": 2.7015873015873018,
+  "tgts": [
+   "592e7d8b95a7a863ddcdaa88"
+  ],
+  "tgt_ar": [
+   4.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0001.parquet",
+    0
+   ],
+   [
+    "train",
+    "0009.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "mom\u001fproud",
+  "src": "5b76846a1cc8aa5429748e28",
+  "src_ar": 2.843601895734597,
+  "tgts": [
+   "5b76accb1cc8aa54299b25b8"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0009.parquet",
+    0
+   ],
+   [
+    "train",
+    "0018.parquet",
+    2
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "%\u001f25\u001fall makeup\u001fcosmetics\u001fcroinen\u001fcroinen.com\u001foff",
+  "src": "5e8c736b4b3890eb074eca76",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "5e8c736c4b3890eb074ece80"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "train",
+    "0002.parquet",
+    1
+   ],
+   [
+    "train",
+    "0009.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 13,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "blankets, sheets, pillowcases, towels,\ntablecloths, curtains\u001fsilk\ncotton\nlinen\nwool\u001fwarner &\nroth house\ntextiles\u001fwarnerandroth.org\n+45 8223 6483",
+  "src": "592d1e6795a7a863ddcd9c26",
+  "src_ar": 0.75,
+  "tgts": [
+   "58dbb7de95a7a863ddccf7b5"
+  ],
+  "tgt_ar": [
+   0.5
+  ],
+  "groups": [
+   [
+    "train",
+    "0002.parquet",
+    1
+   ],
+   [
+    "validation",
+    "0000.parquet",
+    2
+   ]
+  ],
+  "photo": true,
+  "n_el": 13,
+  "wide": false,
+  "tall": true
+ },
+ {
+  "sig": "class of 2018\u001fcongratulations\u001fgraduates",
+  "src": "59b7faa71350e8329300fc09",
+  "src_ar": 1.1928934010152283,
+  "tgts": [
+   "59368aa395a7a863ddcdd421"
+  ],
+  "tgt_ar": [
+   2.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0002.parquet",
+    1
+   ],
+   [
+    "train",
+    "0019.parquet",
+    0
+   ]
+  ],
+  "photo": false,
+  "n_el": 5,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "hosted by boyd house & juno foundation 5 caldwell st\u001fmovie club\nmeeting\u001four mission is to unite movie lovers and have a\ngood time while watching cult movies. in\ncinematography we trust!\u001frec",
+  "src": "590af59a95a7a863ddcd6989",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "58b569ad95a7a863ddcca5a3"
+  ],
+  "tgt_ar": [
+   2.843601895734597
+  ],
+  "groups": [
+   [
+    "train",
+    "0019.parquet",
+    0
+   ],
+   [
+    "validation",
+    "0002.parquet",
+    2
+   ]
+  ],
+  "photo": false,
+  "n_el": 7,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "12 pm - 3 pm\u001fanimal hospital\u001ffree exam and consultation\u001fjarrell\u001fjune 1-10\u001fmake your appointment\u001ftoday. call 71-279-095-2772",
+  "src": "59535dd995a7a863ddce10eb",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "595360a995a7a863ddce1370"
+  ],
+  "tgt_ar": [
+   8.088888888888889
+  ],
+  "groups": [
+   [
+    "train",
+    "0007.parquet",
+    4
+   ],
+   [
+    "train",
+    "0030.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 11,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "for kids\u001fkarate",
+  "src": "58a3085395a7a863ddcc66a3",
+  "src_ar": 1.910828025477707,
+  "tgts": [
+   "592e7c6395a7a863ddcda993"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0007.parquet",
+    4
+   ],
+   [
+    "train",
+    "0019.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "cosmetics\u001fsale\u001fzetadot\u001fzetadot.net",
+  "src": "5e2a9d2e9fea0cc374b352e9",
+  "src_ar": 1.1928934010152283,
+  "tgts": [
+   "5e8c77684b3890eb0757653b"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "train",
+    "0003.parquet",
+    2
+   ],
+   [
+    "train",
+    "0007.parquet",
+    4
+   ]
+  ],
+  "photo": true,
+  "n_el": 9,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "beach\u001ftherapy",
+  "src": "5c34b54f048d064dbcc06fc1",
+  "src_ar": 1.0,
+  "tgts": [
+   "58a4176f95a7a863ddcc6f46"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0002.parquet",
+    1
+   ],
+   [
+    "train",
+    "0003.parquet",
+    2
+   ]
+  ],
+  "photo": true,
+  "n_el": 5,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "19 top best nail colors you can wear now\u001fannette diana\nhorner\u001fbeauty\nconversations\u001fbeautyconversations.online\u001finvited guest:",
+  "src": "59532c1a95a7a863ddce0c77",
+  "src_ar": 0.7142857142857143,
+  "tgts": [
+   "595357d395a7a863ddce0de6"
+  ],
+  "tgt_ar": [
+   4.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0019.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 11,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "best ties in chicago\u001fmen's accessories\u001fmy tie\u001fspring 2018 collection\nin stores now",
+  "src": "5889bc4695a7a863ddcc3b84",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "5889bcd095a7a863ddcc3c5e"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0018.parquet",
+    2
+   ],
+   [
+    "train",
+    "0019.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "news & articles\u001frobotics",
+  "src": "5c0aaa76133a785392a0012c",
+  "src_ar": 1.1928934010152283,
+  "tgts": [
+   "5f886765a637ee11e385d2ed"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "test",
+    "0001.parquet",
+    0
+   ],
+   [
+    "train",
+    "0019.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "candidates\u001fhiring best\u001fsince 1980",
+  "src": "58a40a3295a7a863ddcc6d21",
+  "src_ar": 1.910828025477707,
+  "tgts": [
+   "5889aa9b95a7a863ddcc3627"
+  ],
+  "tgt_ar": [
+   4.0
+  ],
+  "groups": [
+   [
+    "test",
+    "0000.parquet",
+    2
+   ],
+   [
+    "train",
+    "0019.parquet",
+    5
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "10\u001ffor a\u001fitems\u001fperfect\u001fworkspace",
+  "src": "58a4149e95a7a863ddcc6d72",
+  "src_ar": 1.0,
+  "tgts": [
+   "5f475606a637ee11e33e68e7"
+  ],
+  "tgt_ar": [
+   0.5625
+  ],
+  "groups": [
+   [
+    "validation",
+    "0000.parquet",
+    2
+   ],
+   [
+    "validation",
+    "0001.parquet",
+    3
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": false,
+  "tall": true
+ },
+ {
+  "sig": "10/ 09/ 2018\u001f11th international\ntransport conference\u001finvestment\nin transport\ninfrastructure",
+  "src": "593688a295a7a863ddcdd28e",
+  "src_ar": 0.7142857142857143,
+  "tgts": [
+   "59b16f1a1350e8329300c78f"
+  ],
+  "tgt_ar": [
+   2.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0007.parquet",
+    4
+   ],
+   [
+    "validation",
+    "0001.parquet",
+    3
+   ]
+  ],
+  "photo": true,
+  "n_el": 8,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "5 pm - 6.30 pm\u001fjan 9\u001flearn great tips on making flowers and animals!\u001fmore information available on\nour official website\u001fmyorigami.net\u001forigami class",
+  "src": "5a23f05bd8141396fe9a9c05",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "592c21c195a7a863ddcd961c"
+  ],
+  "tgt_ar": [
+   8.088888888888889
+  ],
+  "groups": [
+   [
+    "train",
+    "0011.parquet",
+    0
+   ],
+   [
+    "validation",
+    "0001.parquet",
+    3
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "best\nprice\u001fonly this week",
+  "src": "5e8b41c54b3890eb077bde00",
+  "src_ar": 0.5625,
+  "tgts": [
+   "5e8b41c14b3890eb077bd0cc"
+  ],
+  "tgt_ar": [
+   1.7777777777777777
+  ],
+  "groups": [
+   [
+    "train",
+    "0000.parquet",
+    1
+   ],
+   [
+    "train",
+    "0019.parquet",
+    0
+   ]
+  ],
+  "photo": true,
+  "n_el": 5,
+  "wide": false,
+  "tall": false
+ },
+ {
+  "sig": "curls\u001frun the world",
+  "src": "59bb95421350e83293011198",
+  "src_ar": 1.0,
+  "tgts": [
+   "5e8d86e94b3890eb0701b002"
+  ],
+  "tgt_ar": [
+   2.7015873015873018
+  ],
+  "groups": [
+   [
+    "test",
+    "0002.parquet",
+    1
+   ],
+   [
+    "train",
+    "0000.parquet",
+    1
+   ]
+  ],
+  "photo": true,
+  "n_el": 5,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "buy handmade\u001fgive handmade\u001flive handmade\u001fmake handmade",
+  "src": "58b823b795a7a863ddccaeac",
+  "src_ar": 1.7777777777777777,
+  "tgts": [
+   "592d6ad495a7a863ddcd9ff6"
+  ],
+  "tgt_ar": [
+   4.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0000.parquet",
+    1
+   ],
+   [
+    "train",
+    "0018.parquet",
+    1
+   ]
+  ],
+  "photo": true,
+  "n_el": 17,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "day of forests\u001finvesting in forests is an insurance policy for the planet\u001fsecretary-general ban ki-moon\u001fspecial event devoted to international",
+  "src": "590b0c7b95a7a863ddcd704b",
+  "src_ar": 2.7015873015873018,
+  "tgts": [
+   "5952787a95a7a863ddcdf2b8"
+  ],
+  "tgt_ar": [
+   3.0
+  ],
+  "groups": [
+   [
+    "train",
+    "0004.parquet",
+    5
+   ],
+   [
+    "train",
+    "0018.parquet",
+    1
+   ]
+  ],
+  "photo": true,
+  "n_el": 10,
+  "wide": true,
+  "tall": false
+ },
+ {
+  "sig": "pray\u001fpray\u001fwhen life is great\u001fwhen life is rough",
+  "src": "5a2303b7d8141396fe9a83d8",
+  "src_ar": 1.910828025477707,
+  "tgts": [
+   "599ecb061350e83293007738"
+  ],
+  "tgt_ar": [
+   0.26666666666666666
+  ],
+  "groups": [
+   [
+    "test",
+    "0000.parquet",
+    2
+   ],
+   [
+    "train",
+    "0018.parquet",
+    1
+   ]
+  ],
+  "photo": true,
+  "n_el": 7,
+  "wide": false,
+  "tall": true
+ }
+]
