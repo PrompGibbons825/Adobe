@@ -569,6 +569,9 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
         if r >= 1.7 or force_all:
             for stack_logo in (False, True):
                 yield "row" + ("-logo-stacked" if stack_logo else ""), plan_row, dict(stack_logo=stack_logo)
+        # ws/strategies: Adobe's strategy portfolio + flow flip as more candidates
+        from . import strategies
+        yield from strategies.variants(d, ctx, force_all)
 
     if not _visible(d, missing):  # nothing to lay out: every element is void or missing
         return [Plan(name="empty", placed=[], hidden=list(missing), s=1.0, zone=Box(0, 0, ctx.W, ctx.H))]

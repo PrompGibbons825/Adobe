@@ -27,6 +27,11 @@ LINE_CAP = {"headline": 4, "subhead": 5, "body": 6, "legal": 3}
 
 
 def _prior(name: str, r: float, r0: float = 1.0) -> float:
+    from . import strategies  # ws/strategies: priors for the strategy-portfolio candidates
+
+    sp = strategies.prior(name, r, r0)
+    if sp is not None:
+        return sp
     lr = math.log(r)
     if name.startswith("adapt"):
         # the designer's own arrangement, when the shape barely changes
