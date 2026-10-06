@@ -239,6 +239,8 @@ def analyze(source: dict) -> Design:
             style = TextStyle.of(e)
             tight, blk = text_tight_box(e, style)
             fs0 = float(e.get("font_size", 16) or 16)
+            if abs(e["rotation"]) > 1e-3:  # rotated copy occupies its drawn (rotated) box
+                tight = textfit.drawn_box(e)
             items.append(Item(
                 key=e["id"], kind="text", role="text", els=[e], src_box=tight,
                 rotation=e["rotation"], style=style, fs0=fs0,

@@ -103,6 +103,13 @@ def realize_text(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float = INF,
     style = it.style or TextStyle.of(el)
     if fs is None:
         fs = font_for(it.fs0, s, it.role, ctx, relax)
+    # rotated copy is wrapped in its own frame (a quarter turn swaps the slot's sides) and
+    # reserves its rotated bounding box, which is what the renderer paints
+    rot = float(el.get("rotation", 0) or 0)
+    turned = abs(math.sin(math.radians(rot))) > 1e-3
+    slot_w, slot_h = max_w, max_h
+    if abs(math.sin(math.radians(rot))) > 0.7:
+        max_w, max_h = max_h, max_w
     if max_w < fs:
         return None
     if mode == "fit":
@@ -128,13 +135,20 @@ def realize_text(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float = INF,
         if blk.height > max_h + 0.5 or blk.ink_width > max_w + 0.5:
             return None
     w, h = float(blk.wrap_width), float(blk.height)
+    fw, fh = w, h
+    if turned:
+        rb = rotated_aabb(Box(0.0, 0.0, w, h), rot)
+        fw, fh = rb.w, rb.h
+        if fw > slot_w + 0.5 or fh > slot_h + 0.5:
+            return None
 
     def emit(x: float, y: float) -> List[dict]:
         e = _copy(el)
-        e.update(x=x, y=y, width=w, height=h, font_size=blk.font_size)
+        cx, cy = x + fw / 2.0, y + fh / 2.0
+        e.update(x=cx - w / 2.0, y=cy - h / 2.0, width=w, height=h, font_size=blk.font_size)
         return [e]
 
-    return Real(item=it, w=w, h=h, scale=fs / max(1.0, it.fs0), fonts={el["id"]: blk.font_size},
+    return Real(item=it, w=fw, h=fh, scale=fs / max(1.0, it.fs0), fonts={el["id"]: blk.font_size},
                 blocks={el["id"]: blk}, emit_fn=emit)
 
 
