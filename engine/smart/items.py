@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import textfit
+from .constraints import min_font as _min_font
 from .analyze import Item
 from .geom import Box, el_box, rotated_aabb, union_all
 from .textfit import TextBlock, TextStyle
@@ -43,7 +44,7 @@ class Ctx:
     def judge_floor(self) -> int:
         """No visible text below this: cap height >= 7 px when the judge sees the
         canvas at 1024 px on the long side (research 04), and never under 10 px."""
-        return max(10, math.ceil(10.0 * max(self.W, self.H) / 1024.0))
+        return max(10, math.ceil(10.0 * max(self.W, self.H) / 1024.0), _min_font())  # finale-api: min_font_px
 
     def floor(self, role: str, relax: float = 1.0) -> float:
         return max(float(self.judge_floor), FLOOR_MULT.get(role, 1.0) * self.base_fs * relax)

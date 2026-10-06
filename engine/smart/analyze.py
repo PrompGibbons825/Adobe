@@ -282,6 +282,9 @@ def analyze(source: dict) -> Design:
     _make_composites(design)
     _make_backdrops(design, pending_backdrops)
     _assign_corners(design)
+    from .constraints import apply_priorities  # finale-api: user priorities and pins (no-op by default)
+
+    apply_priorities(design)
     return design
 
 

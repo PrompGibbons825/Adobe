@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from . import constraints as _cons
 from .analyze import Design, Item
 from .geom import Box, el_visual_box, union_all
 from .items import Ctx, Real, realize
@@ -247,10 +248,11 @@ def place_floater(it: Item, s: float, ctx: Ctx, mx: float, my: float, relax: flo
     if r is None:
         return None
     c = it.corner or "tr"
+    ml, mt, mr, mb = _cons.safe_margins(mx, my)  # finale-api: safe area (identity without constraints)
     # keep the painted elements (not just the footprint) inside the margins
     u = union_all(el_visual_box(e) for e in r.emit(0.0, 0.0)) or Box(0, 0, r.w, r.h)
-    x = mx - min(0.0, u.x) if c[1] == "l" else ctx.W - mx - max(r.w, u.r)
-    y = my - min(0.0, u.y) if c[0] == "t" else ctx.H - my - max(r.h, u.b)
+    x = ml - min(0.0, u.x) if c[1] == "l" else ctx.W - mr - max(r.w, u.r)
+    y = mt - min(0.0, u.y) if c[0] == "t" else ctx.H - mb - max(r.h, u.b)
     return (r, x, y)
 
 
@@ -303,6 +305,9 @@ def _visible(d: Design, hidden: Sequence[Item]) -> List[Item]:
 def _zone(d: Design, ctx: Ctx, insets) -> Tuple[Box, float, float]:
     mx, my = margins(d, ctx)
     il, it_, ir, ib = insets
+    if _cons.has_safe():  # finale-api: safe area (constraints only)
+        ml, mt, mr, mb = _cons.safe_margins(mx, my)
+        return Box(ml + il, mt + it_, ctx.W - ml - mr - il - ir, ctx.H - mt - mb - it_ - ib), mx, my
     return Box(mx + il, my + it_, ctx.W - 2 * mx - il - ir, ctx.H - 2 * my - it_ - ib), mx, my
 
 
@@ -466,6 +471,7 @@ def plan_adapt(d: Design, ctx: Ctx, hidden: List[Item], name: str = "adapt", ins
                 x = b.r * sx - r.w
         x = min(max(x, mx if it.corner is None else 0.0), ctx.W - r.w - (mx if it.corner is None else 0.0))
         y = min(max(y, my if it.corner is None else 0.0), ctx.H - r.h - (my if it.corner is None else 0.0))
+        x, y = _cons.clamp_safe(x, y, r.w, r.h, ctx.W, ctx.H)  # finale-api: safe area
         # art that hung off the source canvas is nudged back on
         l, t, rr, bb = overflow([(r, x, y)], ctx)
         x += l - rr
@@ -507,7 +513,7 @@ def drop_orders(d: Design) -> List[List[Item]]:
         if extra:
             acc = acc + extra
             out.append(list(acc))
-    return out
+    return _cons.adjust_drop_orders(d, out)  # finale-api: priorities (identity without constraints)
 
 
 def _shift(p: Plan, dx: float, dy: float) -> Plan:
@@ -515,14 +521,14 @@ def _shift(p: Plan, dx: float, dy: float) -> Plan:
     return p
 
 
-def _with_insets(fn, d: Design, ctx: Ctx, *args, **kw) -> Optional[Plan]:
+def _with_insets(fn, d: Design, ctx: Ctx, *args, base=(0.0, 0.0, 0.0, 0.0), **kw) -> Optional[Plan]:
     """Run a planner and make sure every painted box stays on the canvas.
 
     Images carry transparent margins, so content that sits right at the safe
     edge can still poke out. First try sliding the content (there is often
     spare room on the other side); otherwise give that side more room and plan
     again."""
-    ins = [0.0, 0.0, 0.0, 0.0]
+    ins = list(base)  # finale-api: pins plan inside a sub-zone
     for _ in range(5):
         p = fn(d, ctx, *args, insets=tuple(ins), **kw)
         if p is None:
@@ -577,12 +583,15 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
     for force_all in (False, True):
         for drop in drop_orders(d):
             hidden = missing + drop
-            if any(h.role in CORE_ROLES for h in drop) and plans:
+            if any(_cons.is_core(h, CORE_ROLES) for h in drop) and plans:
                 break  # core items are only given up when nothing else worked
             for name, fn, kw in variants(force_all):
                 if name in done:
                     continue
-                p = _with_insets(fn, d, ctx, hidden, name=name, **kw)
+                if _cons.has_pins():  # finale-api: plan around pinned items
+                    p = _cons.plan_pinned(fn, d, ctx, hidden, name, kw, _with_insets, _zone)
+                else:
+                    p = _with_insets(fn, d, ctx, hidden, name=name, **kw)
                 if p:
                     plans.append(p)
                     if p.relax >= 1.0 and p.capped:

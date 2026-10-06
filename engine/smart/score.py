@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 from typing import Dict, List
 
+from . import constraints as _cons
 from .analyze import Design
 from .compose import Plan
 from .geom import Box
@@ -125,6 +126,7 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         my = sum(bx.cy * bx.area for _, bx in boxes) / area
         b["balance"] = -25.0 * abs(mx - ctx.W / 2.0) / ctx.W - 12.0 * abs(my - ctx.H / 2.0) / ctx.H
     b["prior"] = _prior(p.name, ctx.W / ctx.H, d.W / d.H)
+    b.update(_cons.score_terms(p, d, ctx, boxes))  # finale-api: constraint terms ({} by default)
     return sum(b.values()), b
 
 
