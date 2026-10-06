@@ -8,9 +8,11 @@ designer re-making the design at another size keeps them uniform:
 * one shared font size for every label (the largest any of them needs, so no
   label drops below its legibility floor);
 * equal chip heights (and, stacked, equal widths), equal gaps;
-* a uniform arrangement: a single row, a balanced grid (3+3, 4+3, never an
-  orphan), or a column. Wide targets prefer a row, tall targets fall back to a
-  column, the source arrangement goes first where the class allows it.
+* a uniform arrangement: a single row (with the designer's padding, else one
+  em a side), a balanced grid (3+3, 4+3, no orphan), or a column. Wide targets
+  prefer a row, tall targets fall back to a column, the source arrangement
+  goes first where the class allows it. A ragged grid (2+2+1) is the last
+  resort before the set would have to be dropped.
 
 ``detect`` (end of analyze) marks the sets; ``merge_rows`` (in rows_for) keeps a
 set that the reading order split over several rows together; ``node`` (in
@@ -178,8 +180,9 @@ class FragmentNode(Node):
         return list(self.items_)
 
     # -- realizing the chips uniformly
-    def _reals(self, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float) -> Optional[List[Real]]:
-        reals = []
+    def _reals(self, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float):
+        """(reals, per-item scales) with one shared label size, or None."""
+        reals, scales = [], []
         for it in self.items_:
             r = realize(it, s, ctx, max_w, max_h, relax=relax, nowrap=True)
             if r is None:
@@ -187,58 +190,93 @@ class FragmentNode(Node):
             if r is None:
                 return None
             reals.append(r)
+            scales.append(s)
         fonts = [max(r.fonts.values()) if r.fonts else 0 for r in reals]
         F = max(fonts)
         if F and len(set(f for f in fonts if f)) > 1:  # one shared size: the largest anyone needs
-            out = []
-            for it, r, f in zip(self.items_, reals, fonts):
+            for i, (it, f) in enumerate(zip(self.items_, fonts)):
                 fs0 = it.main_fs()
                 if f == F or not f or fs0 <= 0:
-                    out.append(r)
                     continue
                 r2 = realize(it, F / fs0, ctx, max_w, max_h, relax=relax, nowrap=True) or \
                     realize(it, F / fs0, ctx, max_w, max_h, relax=relax)
                 if r2 is None:
                     return None
-                out.append(r2)
-            reals = out
-        return reals
+                reals[i], scales[i] = r2, F / fs0
+        return reals, scales
 
-    def _arrangements(self, ctx: Ctx) -> List[List[int]]:
+    def _tight(self, reals, scales, ctx, max_h, relax) -> Optional[List[Real]]:
+        """The same chips with one em of side padding each (a uniform pill),
+        for when the designer's generous padding no longer fits a row."""
+        out = []
+        for it, r, sc in zip(self.items_, reals, scales):
+            if it.container is None or not it.labels or len(it.labels) != 1 or not r.blocks:
+                return None
+            blk = next(iter(r.blocks.values()))
+            w = blk.ink_width + 2.0 * blk.font_size
+            if w >= r.w - 0.5:
+                out.append(r)
+                continue
+            r2 = realize(it, sc, ctx, w, max_h, relax=relax, nowrap=True)
+            if r2 is None:
+                return None
+            out.append(r2)
+        return out
+
+    def _arrangements(self, ctx: Ctx) -> List[Tuple[List[int], bool]]:
+        """(row lengths, tight padding) in order of preference."""
         from .formats import TALL_CLASSES, WIDE_CLASSES, aspect_class
 
         n = len(self.items_)
         row, col = [n], [1] * n
         grids = [_balanced(n, k) for k in range(2, n) if min(_balanced(n, k)) >= 2]
+        ragged = [_balanced(n, k) for k in range(2, n) if min(_balanced(n, k)) < 2]  # last resort
         cls = aspect_class(ctx.W / max(ctx.H, 1e-6))
+        rows_first = [(row, False), (row, True)]
         if cls in WIDE_CLASSES:
-            order = [row] + grids + [col]
+            order = rows_first + [(g, t) for g in grids for t in (False, True)] + [(col, False)]
         elif cls in TALL_CLASSES:
-            order = [row, col] + grids if self.src_arr == "row" else [col] + grids + [row]
+            order = (rows_first + [(col, False)] + [(g, False) for g in grids]) if self.src_arr == "row" else \
+                ([(col, False)] + [(g, False) for g in grids] + rows_first)
         else:
-            order = ([row] + grids + [col]) if self.src_arr == "row" else ([col] + grids + [row])
+            order = (rows_first + [(g, t) for g in grids for t in (False, True)] + [(col, False)]) \
+                if self.src_arr == "row" else ([(col, False)] + [(g, False) for g in grids] + rows_first)
+        order += [(g, True) for g in ragged]
         seen, out = set(), []
-        for a in order:
-            if tuple(a) not in seen:
-                seen.add(tuple(a))
-                out.append(a)
+        for a, t in order:
+            if (tuple(a), t) not in seen:
+                seen.add((tuple(a), t))
+                out.append((a, t))
         return out
 
     def measure(self, s, ctx, max_w, max_h, relax):
-        reals = self._reals(s, ctx, max_w, max_h, relax)
-        if reals is None:
+        got = self._reals(s, ctx, max_w, max_h, relax)
+        if got is None:
             return None
+        base, scales = got
+        tight = None
         g = _gap(self.gap, s, ctx, 0.5) if self.gap is not None else 0.8 * ctx.base_fs
         chips = [it.container is not None and abs(it.rotation) < 1 for it in self.items_]
-        Hc = max((float(el_box(e).h) for r, it, c in zip(reals, self.items_, chips) if c
-                  for e in r.emit(0.0, 0.0) if e.get("id") == it.container.get("id")), default=None)
-        widths = [r.w for r in reals]
-        for rows in self._arrangements(ctx):
+
+        def shape_box(r, it):
+            return next((el_box(e) for e in r.emit(0.0, 0.0) if e.get("id") == it.container.get("id")), None)
+
+        for rows, use_tight in self._arrangements(ctx):
+            if use_tight:
+                if tight is None:
+                    tight = self._tight(base, scales, ctx, max_h, relax) or []
+                if not tight:
+                    continue
+                reals = tight
+            else:
+                reals = base
+            boxes = [shape_box(r, it) if c else None for r, it, c in zip(reals, self.items_, chips)]
+            Hc = max((b.h for b in boxes if b is not None), default=None)
             stacked = len(rows) > 1
             Wc = None
-            if stacked and all(chips) and max(widths) / max(1e-6, min(widths)) <= 1.8:
-                Wc = max(float(el_box(e).w) for r, it in zip(reals, self.items_)
-                         for e in r.emit(0.0, 0.0) if e.get("id") == it.container.get("id"))
+            ws = [b.w for b in boxes if b is not None]
+            if stacked and all(chips) and ws and max(ws) / max(1e-6, min(ws)) <= 1.8:
+                Wc = max(ws)
             rs = [_resized(r, it, Hc, Wc) if c else r for r, it, c in zip(reals, self.items_, chips)]
             lines, i = [], 0
             for k in rows:
@@ -264,7 +302,7 @@ class FragmentNode(Node):
             oh = tuple(max(r.oh[k] for r in rs) for k in range(4))
             texts = [r.scale for r in rs if r.item.kind not in ("image", "composite")]
             laid = Laid(w, h, place, min_scale=min(texts) if texts else 9.0, oh=oh)  # type: ignore[arg-type]
-            laid.arrangement = rows  # type: ignore[attr-defined]
+            laid.arrangement = (rows, use_tight)  # type: ignore[attr-defined]
             return laid
         return None
 
