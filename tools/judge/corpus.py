@@ -26,7 +26,6 @@ import json
 import math
 import os
 import random
-import shutil
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional

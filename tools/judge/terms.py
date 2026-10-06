@@ -25,13 +25,11 @@ it sat on, or overlaps more than it did, is not.
 
 from __future__ import annotations
 
-import io
 import json
-import math
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List
 
 import numpy as np
 from PIL import Image
