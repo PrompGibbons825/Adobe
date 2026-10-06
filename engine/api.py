@@ -120,10 +120,10 @@ def _pins_kept(design: dict, c: Optional[_cons.Constraints], d) -> Dict[str, boo
             out[eid] = float(e.get("opacity", 1) or 0) > 0
             continue
         bx = spec.box
-        tol = 0.02 * max(bx.w, bx.h) + 1.0
-        cx, cy = e["x"] + e["width"] / 2.0, e["y"] + e["height"] / 2.0
-        out[eid] = abs(cx - bx.cx) <= tol + 0.5 * abs(e["width"] - bx.w) and \
-            abs(cy - bx.cy) <= tol + 0.5 * abs(e["height"] - bx.h) and float(e.get("opacity", 1) or 0) > 0
+        tol = 0.02 * max(bx.w, bx.h) + 1.5
+        inside = e["x"] >= bx.x - tol and e["y"] >= bx.y - tol and \
+            e["x"] + e["width"] <= bx.r + tol and e["y"] + e["height"] <= bx.b + tol
+        out[eid] = inside and float(e.get("opacity", 1) or 0) > 0
     return out
 
 
