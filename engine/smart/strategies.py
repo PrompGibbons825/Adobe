@@ -129,7 +129,9 @@ def _h_anchor(it: Item) -> float:
 
 
 def _src_overlap(a: Sequence[Item], b: Sequence[Item]) -> bool:
-    return any(i.src_box.inter(j.src_box) > 0 for i in a for j in b)
+    """Deliberate overlap in the source (copy on art), not a sliver between
+    neighbours whose loose boxes touch."""
+    return any(i.src_box.inter(j.src_box) > 0.1 * min(i.src_box.area, j.src_box.area) for i in a for j in b)
 
 
 def realize_unit(u: Unit, s: float, ctx: Ctx, max_w: float, max_h: float) -> Optional[Parts]:
@@ -185,6 +187,18 @@ class Anchored:
         self.src_ov = [[_src_overlap(units[i].items, units[j].items) for j in range(n)] for i in range(n)]
         self.pad = 0.4 * ctx.base_fs
         self.panels = _panels(d, units) if d is not None else []
+        # the axis along which unit i comes before unit j in the source (1: above, 0: left of)
+        self.before: List[List[Optional[int]]] = [[None] * n for _ in range(n)]
+        for i in range(n):
+            for j in range(n):
+                a, b = units[i].src, units[j].src
+                if i == j or self.src_ov[i][j]:
+                    continue
+                # a sliver of overlap is still an order (as in the XY-cut)
+                gy = (b.y - a.b + 0.15 * min(a.h, b.h)) / max(a.h, b.h, 1.0)
+                gx = (b.x - a.r + 0.15 * min(a.w, b.w)) / max(a.w, b.w, 1.0)
+                if max(gx, gy) > 0:
+                    self.before[i][j] = 1 if gy >= gx else 0
 
     def parts(self, i: int, s: float) -> Optional[Parts]:
         key = (i, round(s, 5))
@@ -234,7 +248,38 @@ class Anchored:
         for i in range(n):
             if not go(i):
                 return None
+        self._separate(boxes)
         return boxes, reals
+
+    def _separate(self, boxes: List[Box]) -> None:
+        """Copy that grew to its legibility floor (or art that grew) can reach
+        into a neighbour. Push such pairs apart along the axis they were apart
+        on in the source, the later one first, the earlier one if the later
+        has no room left in the safe area."""
+        z, pad, n = self.zone, self.pad, len(boxes)
+        for _ in range(3 * n):
+            moved = False
+            for i in range(n):
+                for j in range(n):
+                    ax = self.before[i][j]
+                    if ax is None:
+                        continue
+                    a, b = boxes[i], boxes[j]
+                    if a.expanded(pad / 2.0).inter(b.expanded(pad / 2.0)) <= 0:
+                        continue
+                    if ax == 1:
+                        need = a.b + pad - b.y
+                        mv = max(0.0, min(need, z.b - b.b))
+                        b.y += mv
+                        a.y -= max(0.0, min(need - mv, a.y - z.y))
+                    else:
+                        need = a.r + pad - b.x
+                        mv = max(0.0, min(need, z.r - b.r))
+                        b.x += mv
+                        a.x -= max(0.0, min(need - mv, a.x - z.x))
+                    moved = True
+            if not moved:
+                return
 
     def ok(self, scales: Sequence[float]):
         got = self.layout(scales)
