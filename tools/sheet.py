@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -36,7 +37,7 @@ CATALOGUE = {
 
 
 def render(design: dict, max_side: int = 480) -> Image.Image:
-    path = Path("/tmp/_sheet_render.png")
+    path = Path(f"/tmp/_sheet_render_{os.getpid()}.png")  # per process: sessions run in parallel
     render_design_to_png(design, ASSETS, path)
     im = Image.open(path).convert("RGB")
     w, h = im.size
