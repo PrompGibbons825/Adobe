@@ -51,7 +51,7 @@ def cmd_infer(a):
 
 
 KEYS = ["type_dev", "type_dev_c", "type_dev_des", "type_inv", "margin", "margin_dev", "margin_des", "tight_dev",
-        "split_groups", "rhythm_cv", "axes", "axes_src", "chip_dev", "on_surface"]
+        "split_groups", "rhythm_cv", "gap_infl", "gaps_gt3", "axes", "axes_src", "chip_dev", "on_surface"]
 
 
 def cmd_compare(a):
@@ -97,7 +97,7 @@ def cmd_compare(a):
     if a.verbose:
         for line in per_fam:
             print("  ".join(line))
-    print(f"split={a.split}  n={len(rows['designer'])}  (means; split_groups, type_inv summed)")
+    print(f"split={a.split}  n={len(rows['designer'])}  (means; split_groups, type_inv, gaps_gt3 summed)")
     print("".ljust(10) + "".join(k[:11].rjust(12) for k in KEYS))
     for c in cols:
         rs = rows[c]
@@ -106,7 +106,7 @@ def cmd_compare(a):
         vals = []
         for k in KEYS:
             xs = [r[k] for r in rs if not (isinstance(r[k], float) and math.isnan(r[k]))]
-            v = sum(xs) if k in ("split_groups", "type_inv") else (sum(xs) / len(xs) if xs else float("nan"))
+            v = sum(xs) if k in ("split_groups", "type_inv", "gaps_gt3") else (sum(xs) / len(xs) if xs else float("nan"))
             vals.append(v)
         print(c.ljust(10) + "".join(f"{v:12.3f}" for v in vals))
         if a.median:

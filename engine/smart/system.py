@@ -523,6 +523,9 @@ def measure(sys: DesignSystem, elements: List[dict], W: float, H: float,
         return union_all(bs)
 
     tdev, split, n_tight = [], 0, 0
+    infl: List[float] = []  # loose gaps relative to the source gap at the type's own scale
+    ks = sorted(fs[i] / (sys.ratio[i] * sys.head_fs) for i in fs if sys.ratio.get(i, 0) > 0)
+    k_type = ks[len(ks) // 2] if ks else 0.0
     loose_now = []
     stepgap: Dict[float, List[float]] = {}
     for g in sys.gaps:
@@ -542,6 +545,8 @@ def measure(sys: DesignSystem, elements: List[dict], W: float, H: float,
         else:
             loose_now.append(now)
             stepgap.setdefault(g.step, []).append(now)
+            if g.px > 0 and k_type > 0:
+                infl.append(now / (g.px * k_type))
     for g in sys.gaps:  # a pair that belonged together is now further apart than groups are
         if not g.tight:
             continue
@@ -559,6 +564,8 @@ def measure(sys: DesignSystem, elements: List[dict], W: float, H: float,
             mu = sum(vals) / len(vals)
             cvs.append(math.sqrt(sum((v - mu) ** 2 for v in vals) / len(vals)) / max(1e-6, mu))
     out["rhythm_cv"] = sum(cvs) / len(cvs) if cvs else 0.0
+    out["gap_infl"] = max(infl) if infl else float("nan")  # worst loose gap, x its type-scaled size
+    out["gaps_gt3"] = float(sum(1 for v in infl if v > 3.0))
 
     # alignment axes used by the copy
     decl = []
