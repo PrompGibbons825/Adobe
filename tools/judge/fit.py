@@ -57,7 +57,7 @@ def cmd_features(_a) -> None:
             for side in ("a", "b"):
                 case, kind = p[side].split("#")
                 c = cases[case]["cands"].get(kind, {})
-                rec[side] = {"terms": ft[side]["terms"], "old": ft[side]["old"],
+                rec[side] = {"terms": ft[side]["terms"], "box": ft[side]["box"], "old": ft[side]["old"],
                              "engine": c.get("score") if kind.startswith("e") else None,
                              "plan": c.get("plan")}
             f.write(json.dumps(rec) + "\n")
@@ -66,6 +66,9 @@ def cmd_features(_a) -> None:
 
 
 # ----------------------------------------------------------------------------- data
+
+
+TERMSET = "terms"  # "terms": render-measured (dev proxy); "box": what the engine measures
 
 
 def dataset(criterion: str = "overall"):
@@ -82,8 +85,8 @@ def dataset(criterion: str = "overall"):
         if pid not in feats:
             continue
         p, ft = pairs[pid], feats[pid]
-        ta = np.array([ft["a"]["terms"][k] for k in TERMS])
-        tb = np.array([ft["b"]["terms"][k] for k in TERMS])
+        ta = np.array([ft["a"][TERMSET][k] for k in TERMS])
+        tb = np.array([ft["b"][TERMSET][k] for k in TERMS])
         rows.append({"pair": pid, "case": p["case"], "source": p["source"], "kind": p["kind"], "view": p["view"],
                      "a": p["a"], "b": p["b"], "x": tb - ta, "y": float(np.mean(v)), "n": len(v),
                      "conf": len(v) == 2 and v[0] == v[1], "votes": v,
@@ -224,7 +227,8 @@ def margins(rows, how: str, w=None) -> np.ndarray:
 
 
 def cmd_report(a) -> None:
-    global PRIOR
+    global PRIOR, TERMSET
+    TERMSET = a.terms
     if a.prior == "hand":
         PRIOR = np.array([HAND_WEIGHTS[k] for k in TERMS])
     rows = dataset("overall")
@@ -317,12 +321,14 @@ def cmd_report(a) -> None:
         print(f"  {c:12s} " + ", ".join(f"{k} {v:.2f}" for v, k in top if v > 0))
 
     out = {"weights": {k: round(float(v), 4) for k, v in zip(TERMS, w_all)}, "lambda": lam, "prior": a.prior,
+           "terms": a.terms,
            "pairs": len(rows), "asks": int(sum(r["n"] for r in rows)),
            "cv_agreement_confident": round(agreement(rows, pr - 0.5)[0], 4), "per_criterion_top": per_crit,
            "note": "P(a beats b) = sigmoid(sum_k w_k * (t_b,k - t_a,k)); terms from tools/judge/terms.py"}
     if a.write:
-        (DATA / "weights.json").write_text(json.dumps(out, indent=1) + "\n")
-        print("\nwrote", DATA / "weights.json")
+        dest = DATA / ("weights.json" if a.terms == "terms" else "weights_box.json")
+        dest.write_text(json.dumps(out, indent=1) + "\n")
+        print("\nwrote", dest)
 
 
 def cmd_disagree(a) -> None:
@@ -348,6 +354,8 @@ def main() -> None:
     p = sub.add_parser("report")
     p.add_argument("--write", action="store_true")
     p.add_argument("--prior", default="zero", choices=["zero", "hand"])
+    p.add_argument("--terms", default="terms", choices=["terms", "box"],
+                   help="render-measured terms (dev proxy) or box-measured ones (engine re-rank)")
     sub.add_parser("disagree")
     a = ap.parse_args()
     {"features": cmd_features, "report": cmd_report, "disagree": cmd_disagree}[a.cmd](a)

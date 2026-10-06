@@ -455,16 +455,38 @@ def cmd_measure(a) -> None:
                 print(k, cid, flush=True)
 
 
+def box_report(cid: str) -> dict:
+    """What the engine itself can measure for a candidate (or a source, cid
+    "SRC_<name>"): element geometry plus the pixel stats under each text."""
+    from engine.smart import judge, pixels
+
+    f = WORK / "reports" / f"box_{cid}.json"
+    if f.exists():
+        return json.loads(f.read_text())
+    if cid.startswith("SRC_"):
+        design = sources()[cid[4:]]
+    else:
+        design = json.loads((WORK / "cands" / f"{cid}.json").read_text())
+    W, H = design["canvas"]["width"], design["canvas"]["height"]
+    els = design["elements"]
+    hidden = {e["id"] for e in els if e.get("opacity") is not None and float(e["opacity"]) <= 0}
+    rep = judge.box_report(els, W, H, pixels.measure(els, W, H, skip=hidden))
+    f.write_text(json.dumps(rep))
+    return rep
+
+
 def features(pair: dict) -> dict:
-    """Term vectors (and the old proxy) for both sides of a pair."""
+    """Term vectors (render-measured and box-measured) and the old proxy for both sides of a pair."""
     from tools.judge import terms as T
 
     rdir = WORK / "reports"
     src = json.loads((rdir / f"SRC_{pair['source']}.json").read_text())["rep"]
+    bsrc = box_report(f"SRC_{pair['source']}")
     res = {}
     for side in ("a", "b"):
         r = json.loads((rdir / f"{pair[side]}.json").read_text())
-        res[side] = {"terms": T.terms(src, r["rep"]), "old": r.get("old", {}).get("score")}
+        res[side] = {"terms": T.terms(src, r["rep"]), "box": T.terms(bsrc, box_report(pair[side])),
+                     "old": r.get("old", {}).get("score")}
     return res
 
 
