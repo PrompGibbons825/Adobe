@@ -15,20 +15,32 @@ __all__ = ["layout_design", "finalize", "plan_design"]
 
 
 def plan_design(source: dict, target: dict):
-    d = analyze(source)
-    ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
     from . import system  # design system: the source's own system, rebuilt at the target size
 
     if system.CONFIG["enabled"]:
+        d = analyze(source)
+        ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
         ctx.system = system.instantiate(system.infer(d), ctx)
         if system.CONFIG.get("surfaces", 1):
             system.adopt(d)
+        try:
+            plans = _plan(d, ctx)
+            if plans:
+                return d, ctx, plans
+        except RuntimeError:
+            pass  # the system is a preference: without it, before the safe layout
+    d = analyze(source)
+    ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
+    return d, ctx, _plan(d, ctx)
+
+
+def _plan(d: Design, ctx: Ctx):
     plans = prune_relaxed(generate(d, ctx))
     score_plans(plans, d, ctx)
     plans.sort(key=lambda p: -p.score)
     _pixel_rerank(plans, d, ctx)
     _no_text_on_text(plans, d, ctx)
-    return d, ctx, plans
+    return plans
 
 
 def _no_text_on_text(plans, d: Design, ctx: Ctx) -> None:
