@@ -68,6 +68,7 @@ def score_plans(plans: List[Plan], d: Design, ctx: Ctx) -> None:
     src_cov = sum(it.src_box.area for it in d.items if it.role != "missing") / max(1.0, d.W * d.H)
     for p in plans:
         p.score, p.breakdown = _score(p, best, d, ctx, src_cov)
+    relation_terms(plans, d, ctx)  # [relations-polish]
 
 
 def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float):
@@ -142,3 +143,39 @@ def pixel_penalty(stats, src_stats, importance) -> float:
         if busy > calm:
             pen += imp * 0.6 * min(1.0, (busy - calm) / 0.1)
     return pen
+
+
+# ----------------------------------------------------------------------------
+# [relations-polish] relation survival (tier B) and look (tier C)
+
+RELATIONS = True
+REL_W = 30.0  # a candidate that keeps none of the source's relations
+
+
+def look_terms(ev: Dict[str, float], src: Dict[str, float]) -> Dict[str, float]:
+    """Crisp alignment, even spacing and even outer margins, judged against the
+    source's own (a design with deliberate rhythm keeps it)."""
+    t = {"align": -6.0 * ev["look_near_miss"],
+         "spacing": -5.0 * max(0.0, ev["look_gap_cv"] - max(0.25, src.get("gap_cv", 0.0))),
+         "margins": -20.0 * (max(0.0, ev["look_margin_x"] - src.get("margin_x", 0.0) - 0.03) +
+                             max(0.0, ev["look_margin_y"] - src.get("margin_y", 0.0) - 0.03))}
+    return t
+
+
+def relation_terms(plans: List[Plan], d: Design, ctx: Ctx) -> None:
+    """How much of the source's relation graph each candidate keeps (relations.py),
+    below the gross failures, plus the look terms."""
+    if not RELATIONS or not plans:
+        return
+    from . import emit
+    from .relations import evaluate, extract
+
+    g = extract(d)
+    for p in plans:
+        hidden = {e["id"] for it in p.hidden for e in it.els}
+        ev = evaluate(g, d, emit(p, d, ctx), ctx.W, ctx.H, hidden)
+        t = look_terms(ev, g.look)
+        t["relations"] = -REL_W * (1.0 - ev["survival"])
+        p.breakdown.update(t)
+        p.score += sum(t.values())
+        p.relations = ev  # type: ignore[attr-defined]
