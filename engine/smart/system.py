@@ -132,7 +132,7 @@ class DesignSystem:
     W: float
     H: float
     margins: Tuple[float, float, float, float]  # l, t, r, b as fractions of S (nan: nothing near)
-    margin_unit: float  # fraction of S
+    margin_unit: float  # fraction of S: the second-tightest side
     levels: List[Level]
     head_id: Optional[str]
     head_fs: float
@@ -228,8 +228,11 @@ def infer(d) -> DesignSystem:
             if dist > eps:
                 ds.append(dist)
         sides.append(min(ds) / S if ds else float("nan"))
-    known = [v for v in sides if not math.isnan(v)]
-    unit = min(known) if known else 0.05
+    # the unit is what at least two sides agree on: one stray item near an edge
+    # does not set it (on the Crello tuning half this tracks the designers'
+    # own target margins better than the single tightest side)
+    known = sorted(v for v in sides if not math.isnan(v))
+    unit = known[1] if len(known) > 1 else (known[0] if known else 0.05)
 
     # --- spacing rhythm, read down the stack rows -----------------------------------
     body = [it for it in live if it.corner is None]
