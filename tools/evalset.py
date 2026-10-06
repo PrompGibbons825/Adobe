@@ -106,6 +106,8 @@ def cmd_score(a):
     for tag, res in rows.items():
         n = max(1, len(res))
         print(tag.ljust(8) + "".join(f"{sum(r[k] for r in res) / n:13.3f}" for k in keys))
+    if a.judge:
+        judge_table(rows, a)
     print("\nrelative to the source (counts over all designs in the split)")
     print("tag".ljust(8) + "visible-texts".rjust(15) + "wcag<3".rjust(9) + "contrast-lost".rjust(15)
           + "busy-gained".rjust(13) + "new-collisions".rjust(16) + "all-collisions".rjust(16))
@@ -113,6 +115,38 @@ def cmd_score(a):
         g = lambda k: sum(r[k] for r in res)  # noqa: E731
         print(tag.ljust(8) + f"{g('visible_texts'):15d}{g('low_contrast_texts'):9d}{g('contrast_lost'):15d}"
               f"{g('busy_gained'):13d}{g('new_collisions'):16d}{g('collisions_gt10'):16d}")
+
+
+def judge_table(rows, a):
+    """The calibrated source-relative proxy (tools/judge): mean penalty per design,
+    and how often it prefers each tag's output over the first tag's."""
+    import math
+
+    os.environ["CHAMELEON_BRAND_KIT"] = str(CASES)
+    from tools.judge import terms as T
+
+    w = T.calibrated_weights()
+    cache = EVAL / "judge_source_reports.json"
+    src = json.loads(cache.read_text()) if cache.exists() else {}
+    pens = {}
+    for tag in rows:
+        pens[tag] = {}
+        for f in sorted((EVAL / tag).glob("fam??.json")):
+            if a.split != "all" and split_of(f.stem) != a.split:
+                continue
+            if f.stem not in src:
+                src[f.stem] = T.measure(json.loads(Path(str(f).replace(".json", ".task.json")).read_text())["source"])
+                cache.write_text(json.dumps(src))
+            pens[tag][f.stem] = T.penalty(T.terms(src[f.stem], T.measure(json.loads(f.read_text()))), w)
+    first = next(iter(rows))
+    print("\ncalibrated judge (tools/judge/data/weights.json; lower penalty is better)")
+    print("tag".ljust(8) + "penalty".rjust(10) + "  P(judge prefers it over " + first + "), mean   better/worse/same designs")
+    for tag, pp in pens.items():
+        common = [k for k in pp if k in pens[first]]
+        d = [pens[first][k] - pp[k] for k in common]
+        pw = sum(1 / (1 + math.exp(-x)) for x in d) / max(1, len(d))
+        print(tag.ljust(8) + f"{sum(pp.values()) / max(1, len(pp)):10.3f}  {pw:.3f}"
+              f"{sum(x > 1e-6 for x in d):24d}/{sum(x < -1e-6 for x in d)}/{sum(abs(x) <= 1e-6 for x in d)}")
 
 
 def main():
@@ -124,6 +158,7 @@ def main():
     p = sub.add_parser("score")
     p.add_argument("--tags", required=True)
     p.add_argument("--split", default="held", choices=["held", "tune", "all"])
+    p.add_argument("--judge", action="store_true", help="also score with the calibrated judge (tools/judge)")
     a = ap.parse_args()
     {"run": cmd_run, "score": cmd_score}[a.cmd](a)
 
