@@ -1,6 +1,7 @@
 """Finale API: explained candidates, user constraints, and one design -> every channel.
 
     candidates(source, target, constraints=None, k=5, budget=None) -> [candidate, ...]
+    resize_many(source, targets, constraints=None, k=5, consistency=True, budget=...) -> {...}
 
 A candidate is plain JSON:
 
@@ -27,7 +28,7 @@ import io
 import sys
 import traceback
 from contextlib import redirect_stderr
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from engine.smart import budget as _budget
 from engine.smart import constraints as _cons
@@ -275,3 +276,56 @@ def _candidates(source: dict, target: dict, c, k: int, explain: bool) -> List[di
 def best(source: dict, target, constraints: Optional[dict] = None, *, budget=None) -> dict:
     """The single best layout (the resize() output format)."""
     return candidates(source, target, constraints, k=1, budget=budget, explain=False)[0]["design"]
+
+
+# ----------------------------------------------------------------------------
+# one design -> every channel
+
+
+def _targets(targets) -> List[Tuple[str, Dict[str, int]]]:
+    if isinstance(targets, dict):
+        items = list(targets.items())
+    else:
+        items = []
+        for t in targets:
+            if isinstance(t, dict) and "name" in t:
+                items.append((str(t["name"]), t))
+            else:
+                cv = _canvas(t)
+                items.append((f"{cv['width']}x{cv['height']}", cv))
+    return [(str(n), _canvas(t)) for n, t in items]
+
+
+def resize_many(source: dict, targets, constraints: Optional[dict] = None, *, k: int = 5,
+                consistency: bool = True, budget=None, constraints_by_target: Optional[dict] = None,
+                weight: Optional[float] = None) -> dict:
+    """Lay one design out for many canvases, consistently.
+
+    Each target gets its top-k candidates; then one candidate per target is
+    picked so the set reads as one family (same logo corner class, reading
+    order, type-scale ratio and arrangement where the formats allow), trading
+    off at most a few percent of each target's own score. Returns
+
+        results       name -> the chosen candidate (see candidates())
+        choice        name -> rank of the chosen candidate (1 = the target's own best)
+        consistency   the family metric for independent (top-1) and joint picks
+    """
+    from engine.smart import consistency as _cs
+
+    per: Dict[str, List[dict]] = {}
+    for name, tgt in _targets(targets):
+        cons = dict(constraints or {})
+        if constraints_by_target and name in constraints_by_target:
+            cons.update(constraints_by_target[name])
+        per[name] = candidates(source, tgt, cons or None, k=k, budget=budget)
+    pick = {n: 0 for n in per}
+    if consistency and len(per) > 1:
+        pick = _cs.select(per, weight=weight)
+    results = {n: per[n][pick[n]] for n in per}
+    return {
+        "results": results,
+        "choice": {n: pick[n] + 1 for n in per},
+        "consistency": {"independent": _cs.metric({n: per[n][0] for n in per}),
+                        "joint": _cs.metric(results)},
+        "style": _cs.house_style(results),
+    }
