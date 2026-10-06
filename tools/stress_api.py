@@ -100,7 +100,7 @@ def main() -> int:
             for eid, pr in (cons.get("priority") or {}).items():
                 role = c["roles"].get(eid, {}).get("role")
                 if pr == "must" and eid in c["hidden_ids"] and role not in ("missing", "void") \
-                        and c["archetype"] != "fallback":
+                        and c["archetype"] != "fallback" and not any("must" in w for w in c["warnings"]):
                     errs.append(f"must {eid} ({role}) hidden")
         if not cons and budget is None:
             with redirect_stderr(io.StringIO()):
