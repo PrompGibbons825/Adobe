@@ -33,6 +33,7 @@ class Ctx:
     H: float
     W0: float
     H0: float
+    pinned: frozenset = frozenset()  # keys of items demoted to their floor (demote.py)
 
     @property
     def base_fs(self) -> float:
@@ -452,16 +453,32 @@ def realize_composite(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: f
     return Real(item=it, w=w, h=h, scale=rh.scale, fonts=fonts, blocks=blocks, emit_fn=emit)
 
 
+def pinned_scale(it: Item, ctx: Ctx) -> float:
+    """The scale of an item demoted to its floor: copy at its legibility floor,
+    art as a thumbnail, captions on art just at the floor."""
+    if it.kind == "composite":
+        caps = [float(e.get("font_size", 16) or 16) for e in it.els if e.get("type") == "text"]
+        if caps:
+            return ctx.judge_floor / max(1.0, min(caps))
+    if it.kind in ("image", "composite") and it.role != "logo":
+        side = 0.42 * min(ctx.W, ctx.H) if it.role == "hero" else 2.6 * ctx.base_fs
+        return side / max(1e-6, it.src_box.w, it.src_box.h)
+    return 0.01  # type clamps to the role's floor
+
+
 def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF,
             relax: float = 1.0, k: float = 1.0, mode: str = "stack", nowrap: bool = False) -> Optional[Real]:
+    pinned = it.key in ctx.pinned
+    if pinned:  # demoted to its floor, whatever the global scale
+        s = min(s, pinned_scale(it, ctx) / max(1e-6, k))
     if it.kind == "composite":
         return realize_composite(it, s, ctx, max_w, max_h, relax=relax, k=k)
     if it.kind == "text":
         return realize_text(it, s, ctx, max_w, max_h, mode=mode, relax=relax)
     if it.kind == "image":
         if it.role == "logo":
-            # a logo smaller than this stops reading as a logo
-            min_h = 3.2 * ctx.base_fs
+            # a logo smaller than this stops reading as a logo (2.2x when demoted)
+            min_h = (2.2 if pinned else 3.2) * ctx.base_fs
             s = max(s, min_h / max(1e-6, it.src_box.h * k))
         return realize_image(it, s, ctx, max_w, max_h, k=k)
     return realize_group(it, s, ctx, max_w, max_h, relax=relax, nowrap=nowrap)

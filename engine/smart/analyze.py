@@ -60,6 +60,8 @@ class Item:
     # composite (an image carrying stickers / a row of product shots)
     host: Optional["Item"] = None
     sats: List["Item"] = field(default_factory=list)
+    # panel: the items it was built from (host first), so it can be dissolved again
+    parts: List["Item"] = field(default_factory=list)
 
     @property
     def is_text(self) -> bool:
@@ -424,7 +426,7 @@ def _make_panels(d: Design) -> None:
         labels = [e for m in members if m.kind == "text" for e in m.els]
         it = Item(key=f"panel:{host.key}", kind="group", role="panel", els=sorted(els, key=lambda e: e["z_index"]),
                   src_box=union_all(m.src_box for m in members).union(el_box(host.els[0])),
-                  importance=best.importance + 2, labels=labels, core=core)
+                  importance=best.importance + 2, labels=labels, core=core, parts=list(members))
         new_items.append(it)
     d.items = new_items
     if not any(it.role == "hero" for it in d.items):  # the "hero" was really a panel: pick again
