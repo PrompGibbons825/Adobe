@@ -195,9 +195,10 @@ def main() -> int:
         if a.render:
             try:
                 from renderer.converter.convert import render_design_to_png
+                tmp = Path(f"/tmp/_stress_render_{os.getpid()}.png")
                 with redirect_stderr(io.StringIO()):
-                    render_design_to_png(out, Path(__file__).resolve().parents[1] / "brand_kit" / "assets",
-                                         f"/tmp/_stress_render_{os.getpid()}.png")
+                    render_design_to_png(out, Path(__file__).resolve().parents[1] / "brand_kit" / "assets", tmp)
+                tmp.unlink(missing_ok=True)
             except Exception as ex:  # noqa: BLE001
                 errs.append(f"RENDER CRASH {type(ex).__name__}: {str(ex)[:120]}")
         if errs:
