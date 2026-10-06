@@ -43,8 +43,12 @@ def _no_text_on_text(plans, d: Design, ctx: Ctx) -> None:
         if not text_overlaps(emit(p, d, ctx), exempt=frozenset(src_pairs)):
             chosen = i
             break
-    if chosen is None:  # never ship copy over copy: the safe layout only scales the source
-        raise RuntimeError("every candidate draws copy over copy")
+    if chosen is None:  # never ship copy over copy
+        from . import demote
+
+        if demote.ENABLED and demote.repair(plans, d, ctx):  # demote the lower-priority text instead
+            return
+        raise RuntimeError("every candidate draws copy over copy")  # the safe layout only scales the source
     if chosen:
         plans.insert(0, plans.pop(chosen))
 
