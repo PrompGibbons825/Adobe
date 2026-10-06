@@ -26,7 +26,12 @@ from typing import Any
 from engine.smart import finalize, layout_design
 
 
-def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
+def resize(source: dict[str, Any], target_canvas: dict[str, Any],
+           constraints: dict[str, Any] | None = None) -> dict[str, Any]:
+    if constraints:  # finale-api: pins / priorities / safe area go through engine/api.py
+        from engine.api import best
+
+        return best(source, target_canvas, constraints)
     try:
         out = layout_design(source, target_canvas)
     except Exception:  # never let one odd design take the run down
