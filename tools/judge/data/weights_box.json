@@ -1,0 +1,67 @@
+{
+ "weights": {
+  "dropped_text": 1.155,
+  "dropped_art": 0.8456,
+  "contrast_loss": 1.4124,
+  "busy_gain": 1.1098,
+  "abs_low_contrast": 0.0514,
+  "abs_busy": 0.0,
+  "coll_text_art": 1.6192,
+  "coll_text_text": 1.6656,
+  "coll_art": 0.4841,
+  "spill": 0.8059,
+  "cut_text": 1.1564,
+  "cut_art": 0.5577,
+  "tiny512": 0.5673,
+  "tiny1024": 1.1089,
+  "text_shrink": 0.6019,
+  "art_shrink": 0.3009,
+  "hierarchy": 0.548,
+  "align_lost": 0.3136,
+  "near_miss": 0.2757,
+  "tight_margin": 0.2882,
+  "imbalance": 0.291,
+  "underfill": 0.327,
+  "overfill": 0.2713,
+  "aspect": 1.6732,
+  "order_flip": 0.2584,
+  "bare_canvas": 0.5711
+ },
+ "lambda": 0.1,
+ "prior": "hand",
+ "terms": "box",
+ "pairs": 239,
+ "asks": 478,
+ "cv_agreement_confident": 0.7192,
+ "per_criterion_top": {
+  "collisions": {
+   "coll_text_text": 1.751,
+   "aspect": 1.741,
+   "coll_text_art": 1.689,
+   "contrast_loss": 1.472,
+   "cut_text": 1.185
+  },
+  "readable": {
+   "aspect": 1.568,
+   "coll_text_text": 1.557,
+   "coll_text_art": 1.491,
+   "contrast_loss": 1.323,
+   "cut_text": 1.088
+  },
+  "brand": {
+   "coll_text_text": 2.012,
+   "aspect": 2.004,
+   "coll_text_art": 1.943,
+   "contrast_loss": 1.69,
+   "cut_text": 1.373
+  },
+  "intentional": {
+   "coll_text_text": 1.837,
+   "aspect": 1.828,
+   "coll_text_art": 1.774,
+   "contrast_loss": 1.54,
+   "cut_text": 1.255
+  }
+ },
+ "note": "P(a beats b) = sigmoid(sum_k w_k * (t_b,k - t_a,k)); terms from tools/judge/terms.py"
+}

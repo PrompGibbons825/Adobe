@@ -74,10 +74,11 @@ def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
         p.score -= pen
         if use_judge:
             p.breakdown["judge"] = -judge.judge_penalty(src_rep, els, ctx.W, ctx.H, stats)
-    if use_judge:  # the calibrated judge orders the head; the engine score breaks ties
-        head.sort(key=lambda p: (-round(p.breakdown["judge"], 3), -p.score))
-    else:
-        head.sort(key=lambda p: -p.score)
+    head.sort(key=lambda p: -p.score)
+    if use_judge:  # near-ties on the engine score: the calibrated judge decides
+        band = [p for p in head if p.score >= head[0].score - judge.BAND]
+        band.sort(key=lambda p: (-round(p.breakdown["judge"], 3), -p.score))
+        head = band + head[len(band):]
     plans[:top] = head
 
 

@@ -251,9 +251,23 @@ def penalty(t: Dict[str, float], weights: Dict[str, float]) -> float:
 
 ENABLED = os.environ.get("CHAMELEON_JUDGE_RERANK", "") not in ("", "0")
 
-# Fitted offline by tools/judge/fit.py on the box-level terms (see WEIGHTS_NOTE).
-WEIGHTS: Dict[str, float] = {}
-WEIGHTS_NOTE = "not fitted yet"
+# Fitted offline by tools/judge/fit.py on the box-level terms: Bradley-Terry on 239
+# blind pairwise labels (478 asks), L2 towards the scaled hand weights, lambda
+# 0.1 by cross-validation over held-out designs (tools/judge/data/weights_box.json).
+WEIGHTS: Dict[str, float] = {
+    "dropped_text": 1.155, "dropped_art": 0.846, "contrast_loss": 1.412, "busy_gain": 1.110,
+    "abs_low_contrast": 0.051, "coll_text_art": 1.619, "coll_text_text": 1.666, "coll_art": 0.484,
+    "spill": 0.806, "cut_text": 1.156, "cut_art": 0.558, "tiny512": 0.567, "tiny1024": 1.109,
+    "text_shrink": 0.602, "art_shrink": 0.301, "hierarchy": 0.548, "align_lost": 0.314,
+    "near_miss": 0.276, "tight_margin": 0.288, "imbalance": 0.291, "underfill": 0.327,
+    "overfill": 0.271, "aspect": 1.673, "order_flip": 0.258, "bare_canvas": 0.571,
+}
+
+# Only plans whose engine score is within BAND of the best are re-ordered by the
+# judge. On labelled pairs of the engine's own top-k, the engine score agreed with
+# the judge 73% of the time when it preferred one plan by >= 8 points, and was a
+# coin flip below that (49%, n=41), where these weights agreed 65%.
+BAND = 8.0
 
 _GRID = 64  # raster for coverage, centroid, margins and bare canvas
 
