@@ -50,7 +50,7 @@ def cmd_features(_a) -> None:
     n = 0
     with (DATA / "features.jsonl").open("a") as f:
         for p in corpus.load_pairs():
-            if p["pair"] in have or not (WORK / "reports" / f"{p['a']}.json").exists():
+            if p["pair"] in have or p["kind"] == "check" or not (WORK / "reports" / f"{p['a']}.json").exists():
                 continue
             ft = corpus.features(p)
             rec = {"pair": p["pair"]}
@@ -176,7 +176,12 @@ def kendall_within_case(rows, margin: np.ndarray):
         by_case[r["case"]].append((r, m))
     taus = []
     for case, items in by_case.items():
-        cands = sorted({c for r, _ in items for c in (r["a"], r["b"])})
+        # the round-robin members (every pair among them was asked, in any round)
+        rr = {c for r, _ in items if r["kind"] == "rr" for c in (r["a"], r["b"])}
+        if not rr:
+            continue
+        items = [(r, m) for r, m in items if r["a"] in rr and r["b"] in rr]
+        cands = sorted(rr)
         if len(cands) < 3 or len(items) < len(cands) * (len(cands) - 1) // 2:
             continue
         judge = Counter()
@@ -331,6 +336,42 @@ def cmd_report(a) -> None:
         print("\nwrote", dest)
 
 
+def cmd_prospective(a) -> None:
+    """Fit on round-1 pairs only (lambda by CV there), score the round-2 pairs:
+    new pairs, labelled after the terms were last changed."""
+    global PRIOR, TERMSET
+    TERMSET = a.terms
+    PRIOR = np.array([HAND_WEIGHTS[k] for k in TERMS]) if a.prior == "hand" else None
+    pairs = {p["pair"]: p for p in _jsonl(DATA / "pairs.jsonl")}
+    rows = dataset("overall")
+    tr = [r for r in rows if pairs[r["pair"]]["round"] == 1]
+    te = [r for r in rows if pairs[r["pair"]]["round"] == 2]
+    best = None
+    for lam in [0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03, 0.1]:
+        pr = cv_predict(tr, lam)
+        ll = -np.mean([r["y"] * math.log(max(q, 1e-9)) + (1 - r["y"]) * math.log(max(1 - q, 1e-9)) for r, q in zip(tr, pr)])
+        if best is None or ll < best[1]:
+            best = (lam, ll)
+    w = fit(np.stack([r["x"] for r in tr]), np.array([r["y"] for r in tr]), np.array([r["n"] for r in tr], float), best[0])
+    hand = np.array([HAND_WEIGHTS[k] for k in TERMS])
+    print(f"train: round 1 ({len(tr)} pairs), lambda={best[0]}; test: round 2 ({len(te)} pairs), terms={a.terms}")
+    print("  model                              confident        strong           all asks   tau(within case)")
+    eng = [i for i, r in enumerate(te) if r["eng"][0] is not None and r["eng"][1] is not None]
+    for name, m in (("old proxy", margins(te, "old")), ("hand weights", margins(te, "hand", hand)),
+                    ("calibrated on round 1", margins(te, "fit", w)), ("engine score", margins(te, "engine"))):
+        sub = te if name != "engine score" else [te[i] for i in eng]
+        mm = m if name != "engine score" else m[eng]
+        ag = agreement(sub, mm)
+        st = agreement.strong
+        kt = kendall_within_case(sub, mm)
+        print(f"  {name:32s} {ag[0]:.3f} (n={ag[1]:3d})  {st[0]:.3f} (n={st[1]:3d})  {ag[2]:.3f}     {kt[0]:+.3f} (cases={kt[1]})")
+    for name, m in (("old proxy", margins(te, "old")), ("hand weights", margins(te, "hand", hand)),
+                    ("calibrated on round 1", margins(te, "fit", w))):
+        ag = agreement([te[i] for i in eng], m[eng])
+        print(f"  engine top-k pairs only: {name:22s} {ag[0]:.3f} (n={ag[1]:3d})  strong {agreement.strong[0]:.3f} "
+              f"(n={agreement.strong[1]})")
+
+
 def cmd_disagree(a) -> None:
     """Pairs where the calibrated proxy and a confident judge disagree."""
     rows = dataset("overall")
@@ -357,8 +398,11 @@ def main() -> None:
     p.add_argument("--terms", default="terms", choices=["terms", "box"],
                    help="render-measured terms (dev proxy) or box-measured ones (engine re-rank)")
     sub.add_parser("disagree")
+    p = sub.add_parser("prospective")
+    p.add_argument("--prior", default="zero", choices=["zero", "hand"])
+    p.add_argument("--terms", default="terms", choices=["terms", "box"])
     a = ap.parse_args()
-    {"features": cmd_features, "report": cmd_report, "disagree": cmd_disagree}[a.cmd](a)
+    {"features": cmd_features, "report": cmd_report, "disagree": cmd_disagree, "prospective": cmd_prospective}[a.cmd](a)
 
 
 if __name__ == "__main__":
