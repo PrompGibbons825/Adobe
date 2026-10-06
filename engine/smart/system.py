@@ -31,7 +31,7 @@ SPREAD_TARGET = {
     "landscape": 3.3, "square": 3.3, "portrait": 4.5, "tall": 4.5,
 }
 # Module switches (CHAMELEON_DS="type=floor,gaps=1,margins=1,score=1" overrides them, for experiments).
-CONFIG = {"enabled": 1, "type": "floor", "gaps": 1, "margins": 1, "score": 1.0}
+CONFIG = {"enabled": 1, "type": "floor", "gaps": 1, "margins": 1, "score": 1.0, "surfaces": 1}
 for _kv in __import__("os").environ.get("CHAMELEON_DS", "").split(","):
     if "=" in _kv:
         _k, _v = _kv.split("=", 1)
@@ -301,7 +301,7 @@ def infer(d) -> DesignSystem:
         for m in bd.members:
             surfaces += [(bd.el["id"], e["id"]) for e in m.els if _visible_text(e)]
     for it in live:
-        if it.role == "panel" and it.els:
+        if it.kind == "group" and it.role == "panel" and it.els:
             host = max((e for e in it.els if e.get("type") != "text"), key=lambda e: el_box(e).area, default=None)
             if host is not None:
                 surfaces += [(host["id"], e["id"]) for e in it.labels if _visible_text(e)]
@@ -317,6 +317,36 @@ def infer(d) -> DesignSystem:
                         leading={e["id"]: TextStyle.of(e).line_height for e in texts}, role=role,
                         min_fs=min(sizes) if sizes else 0.0,
                         min_id=texts[sizes.index(min(sizes))]["id"] if sizes else None)
+
+
+# ----------------------------------------------------------------------------
+# surfaces that carry copy
+
+
+def label_art(it, d) -> float:
+    """A small piece of art whose copy dominates it (a ribbon, a tag, a
+    sticker with a word on it): the art is the copy's surface. Returns the
+    copy's largest font size, or 0."""
+    if it.kind != "composite" or it.host is None:
+        return 0.0
+    caps = [x for x in it.sats if x.kind == "text"]
+    hb = it.host.src_box
+    if not caps or hb.area <= 0 or hb.area > 0.15 * d.W * d.H:
+        return 0.0
+    if sum(c.src_box.area for c in caps) < 0.2 * hb.area:
+        return 0.0
+    return max(c.fs0 for c in caps)
+
+
+def adopt(d) -> None:
+    """Surfaces scale with the copy they carry. Label-on-art is laid out like
+    a panel (part of the copy, sized from its label on the type scale), not as
+    the hero photo that fills whatever room is left."""
+    for it in d.items:
+        fs = label_art(it, d)
+        if fs:
+            it.role = "panel"
+            it._ds_label_fs = fs
 
 
 # ----------------------------------------------------------------------------
@@ -369,6 +399,8 @@ class TargetSystem:
     def item_mult(self, it, s: float, ctx) -> float:
         if it.kind == "text":
             return self.size_mult(it.fs0, s, ctx)
+        if getattr(it, "_ds_label_fs", 0):  # art whose label dominates it: sized by the label
+            return self.size_mult(it._ds_label_fs, s, ctx)
         if it.container is not None and it.centered_label:  # a chip: its label sets its size
             return self.size_mult(it.main_fs(), s, ctx)
         return 1.0  # a panel is mostly art; its copy keeps its own floor

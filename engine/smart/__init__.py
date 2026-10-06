@@ -21,6 +21,8 @@ def plan_design(source: dict, target: dict):
 
     if system.CONFIG["enabled"]:
         ctx.system = system.instantiate(system.infer(d), ctx)
+        if system.CONFIG.get("surfaces", 1):
+            system.adopt(d)
     plans = prune_relaxed(generate(d, ctx))
     score_plans(plans, d, ctx)
     plans.sort(key=lambda p: -p.score)

@@ -455,10 +455,13 @@ def realize_composite(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: f
 
 def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF,
             relax: float = 1.0, k: float = 1.0, mode: str = "stack", nowrap: bool = False) -> Optional[Real]:
-    if ctx.system is not None and it.kind in ("text", "group"):
+    if ctx.system is not None and it.kind in ("text", "group", "composite"):
         s = s * ctx.system.item_mult(it, s, ctx)  # design system: copy sized from one type scale
     if it.kind == "composite":
-        return realize_composite(it, s, ctx, max_w, max_h, relax=relax, k=k)
+        r = realize_composite(it, s, ctx, max_w, max_h, relax=relax, k=k)
+        if r is not None and getattr(it, "_ds_label_fs", 0) and r.scale < 0.97 * s * k:
+            return None  # design system: label-on-art keeps its copy's size, like any copy
+        return r
     if it.kind == "text":
         return realize_text(it, s, ctx, max_w, max_h, mode=mode, relax=relax)
     if it.kind == "image":
