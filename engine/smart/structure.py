@@ -103,7 +103,9 @@ def stack_rows(t: Tree) -> List[List[Item]]:
 def rows_for(items: Sequence[Item]) -> List[List[Item]]:
     if not items:
         return []
-    return stack_rows(xy_tree(items))
+    from .repeats import merge_rows  # [formats-decor] one set of repeated chips, one row
+
+    return merge_rows(stack_rows(xy_tree(items)))
 
 
 def dominant_align(items: Sequence[Item]) -> str:

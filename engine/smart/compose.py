@@ -115,6 +115,10 @@ def _leaf(it: Item, hero_fill: bool, cap_rel: float = 1.5, min_rel: float = 0.5)
 def _row_node(row: Sequence[Item], hero_fill: bool, **kw) -> Node:
     if len(row) == 1:
         return _leaf(row[0], hero_fill, **kw)
+    from . import repeats  # [formats-decor] repeated chips: uniform row / grid / column
+
+    if repeats.applies(row):
+        return repeats.node(row)
     gaps = [max(0.0, b.src_box.x - a.src_box.r) for a, b in zip(row, row[1:])]
     g = sum(gaps) / len(gaps) if gaps else None
     if all(i.kind != "text" for i in row):

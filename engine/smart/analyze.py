@@ -284,6 +284,8 @@ def analyze(source: dict) -> Design:
     from . import decor  # [formats-decor] decorations leave the layout
     decor.classify(design)
     _assign_corners(design)
+    from . import repeats  # [formats-decor] badge/chip sets stay separate but uniform
+    repeats.detect(design)
     return design
 
 
