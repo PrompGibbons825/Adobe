@@ -21,6 +21,7 @@ from .analyze import Design
 from .compose import Plan
 from .geom import Box
 from .items import Ctx
+from . import thresholds as T
 
 ALPHA = 1.1
 LINE_CAP = {"headline": 4, "subhead": 5, "body": 6, "legal": 3}
@@ -30,16 +31,16 @@ def _prior(name: str, r: float, r0: float = 1.0) -> float:
     lr = math.log(r)
     if name.startswith("adapt"):
         # the designer's own arrangement, when the shape barely changes
-        return 40.0 * max(0.0, 1.0 - abs(math.log(r / r0)) / math.log(1.2))
+        return T.ADAPT_PRIOR * max(0.0, 1.0 - abs(math.log(r / r0)) / math.log(T.ADAPT_TOL))
     if name.startswith("stack"):
-        return 10.0 - 14.0 * max(0.0, lr - math.log(1.25))
+        return 10.0 - 14.0 * max(0.0, lr - math.log(T.STACK_KNEE))
     if name.startswith("split"):
-        p = 17.0 - 12.0 * abs(lr - math.log(2.0))
+        p = 17.0 - 12.0 * abs(lr - math.log(T.SPLIT_PEAK))
         if "-fold" in name:
             p -= 3.0
         return p
     if name.startswith("row"):
-        p = 10.0 - 18.0 * max(0.0, math.log(3.6) - lr)
+        p = 10.0 - 18.0 * max(0.0, math.log(T.ROW_KNEE) - lr)
         if "stacked" in name:
             p -= 2.0
         return p

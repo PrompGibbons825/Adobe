@@ -26,6 +26,7 @@ from .geom import Box, el_visual_box, union_all
 from .items import Ctx, Real, realize
 from .layout import Flow, HStack, Laid, Leaf, Node, VStack, chain_positions, search_scale
 from .structure import dominant_align, row_align, rows_for, text_edges
+from . import thresholds as T
 
 Placement = Tuple[Real, float, float]
 
@@ -84,11 +85,11 @@ def scale_bounds(d: Design, ctx: Ctx, kind: str = "stack") -> Tuple[float, float
     rw, rh = ctx.W / d.W, ctx.H / d.H
     lo_r, hi_r = min(rw, rh), max(rw, rh)
     r = ctx.W / ctx.H
-    cap = math.sqrt(rw * rh)
+    cap = T.AREA_GAIN * math.sqrt(rw * rh)
     if kind == "stack":
-        cap = min(cap, lo_r ** 0.6 * hi_r ** 0.4)  # one column shares the short side
-    if r >= 6.0 or r <= 1 / 6.0:
-        cap *= 1.4
+        cap = min(cap, T.AREA_GAIN * lo_r ** 0.6 * hi_r ** 0.4)  # one column shares the short side
+    if r >= T.STRIP_R or r <= 1 / T.STRIP_R:
+        cap *= T.STRIP_BOOST
     head = next((i for i in d.items if i.role == "headline"), None)
     if head is not None and head.fs0 > 0:
         n = max(1, len(str(head.els[0].get("content", ""))))
@@ -432,7 +433,7 @@ def plan_adapt(d: Design, ctx: Ctx, hidden: List[Item], name: str = "adapt", ins
     everything scales uniformly, positions follow the canvas, edges stay edges."""
     import math
 
-    if abs(math.log((ctx.W / ctx.H) / (d.W / d.H))) > math.log(1.2):
+    if abs(math.log((ctx.W / ctx.H) / (d.W / d.H))) > math.log(T.ADAPT_TOL):
         return None
     vis = _visible(d, hidden)
     if not vis:
@@ -555,18 +556,18 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
 
     def variants(force_all: bool = False):
         yield "adapt", plan_adapt, {}
-        if r <= 2.2 or force_all:
+        if r <= T.STACK_MAX_R or force_all:
             yield "stack", plan_stack, {}
             if busy_bg:  # copy over a photo: also try it against either side
                 yield "stack-start", plan_stack, dict(force_align="start")
                 yield "stack-end", plan_stack, dict(force_align="end")
-        if r >= 1.15:
+        if r >= T.SPLIT_MIN_R:
             for side in ("left", "right"):
                 for frac in (0.34, 0.48):
                     for fold in ((False, True) if has_corners else (False,)):
                         yield (f"split-{side}-{frac}{'-fold' if fold else ''}", plan_split,
                                dict(hero_side=side, hero_frac=frac, fold_corners=fold))
-        if r >= 1.7 or force_all:
+        if r >= T.ROW_MIN_R or force_all:
             for stack_logo in (False, True):
                 yield "row" + ("-logo-stacked" if stack_logo else ""), plan_row, dict(stack_logo=stack_logo)
 
