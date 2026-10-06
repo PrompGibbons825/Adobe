@@ -276,17 +276,18 @@ def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, r
     """Uniformly scale the group's internal arrangement (fonts scale with it)."""
     src = it.src_box
     g = s
-    for lab in it.labels:
+    if it.labels:  # the biggest line on the group must stay legible; small print rides along
+        lab = max(it.labels, key=lambda l: float(l.get("font_size", 16) or 16))
         fs0 = float(lab.get("font_size", 16) or 16)
-        g = max(g, font_for(fs0, s, it.role, ctx, relax) / fs0)
+        g = max(g, font_for(fs0, s, "body" if it.role == "panel" else it.role, ctx, relax) / fs0)
     fw, fh = src.w * g, src.h * g
     if fw > max_w + 0.5 or fh > max_h + 0.5:
         f = min(max_w / max(1e-6, fw), max_h / max(1e-6, fh))
         g *= f
         fw, fh = src.w * g, src.h * g
-        for lab in it.labels:
-            if float(lab.get("font_size", 16)) * g < ctx.floor(it.role, relax) * 0.999 and \
-                    float(lab.get("font_size", 16)) * g < float(lab.get("font_size", 16)):
+        if it.labels:
+            fs0 = max(float(l.get("font_size", 16) or 16) for l in it.labels)
+            if fs0 * g < ctx.floor("body", relax) * 0.999 and fs0 * g < fs0:
                 return None
     fonts, blocks = {}, {}
     for lab in it.labels:

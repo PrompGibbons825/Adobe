@@ -72,22 +72,33 @@ def margins(d: Design, ctx: Ctx) -> Tuple[float, float]:
 def scale_bounds(d: Design, ctx: Ctx, kind: str = "stack") -> Tuple[float, float]:
     """Search range for the global scale.
 
-    The geometric cap keeps type from ballooning when a canvas grows in one
-    direction only; reflowed layouts (split/row) may go closer to the long-side
-    ratio. When the target has far more room than the source (a leaderboard
-    re-used as a square post) the cap may rise towards a display size for the
-    headline, so the result does not look like a small design lost in space."""
+    Designers re-making a template at another size scale type by about
+    sqrt(target area / source area), and ~1.4x more on strips 6:1 and wider
+    (measured on 1,630 Crello multi-size families). Reflowed layouts may also
+    bring a short headline up to the display size typical for the format
+    (~0.28 H on strips, ~0.16 H on wide banners, ~0.13 H landscape), and a
+    design moved to a much roomier canvas may grow towards a display headline,
+    so it does not look like a small design lost in space."""
+    import math
+
     rw, rh = ctx.W / d.W, ctx.H / d.H
     lo_r, hi_r = min(rw, rh), max(rw, rh)
-    a = {"stack": 0.7, "split": 0.45, "row": 0.45}.get(kind, 0.7)
-    cap = lo_r ** a * hi_r ** (1.0 - a)
+    r = ctx.W / ctx.H
+    cap = math.sqrt(rw * rh)
+    if kind == "stack":
+        cap = min(cap, lo_r ** 0.6 * hi_r ** 0.4)  # one column shares the short side
+    if r >= 6.0 or r <= 1 / 6.0:
+        cap *= 1.4
     head = next((i for i in d.items if i.role == "headline"), None)
     if head is not None and head.fs0 > 0:
         n = max(1, len(str(head.els[0].get("content", ""))))
-        target = 0.075 * min(ctx.W, ctx.H) * min(1.0, max(0.45, 28.0 / n))
-        import math
+        short = min(1.0, max(0.45, 28.0 / n))
+        target = 0.075 * min(ctx.W, ctx.H) * short
         room = 1.0 + 0.5 * math.log(max(1.0, hi_r / max(lo_r, 1e-6)))
         cap = max(cap, min(target / head.fs0, cap * room))
+        if kind in ("row", "split") and r >= 1.4:
+            frac = 0.28 if r >= 5.0 else (0.16 if r >= 2.4 else 0.13)
+            cap = max(cap, min(frac * ctx.H * short / head.fs0, 2.0 * cap))
     return 0.01, max(0.02, cap)
 
 
@@ -371,7 +382,7 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
     hero = next((i for i in vis if i.role == "hero"), None)
     ctas = [i for i in vis if i.role == "cta"]
     texts = [i for i in vis if i.kind == "text"]
-    badges = [i for i in vis if i.role == "badge" and not i.corner]
+    badges = [i for i in vis if i.role in ("badge", "panel", "group") and not i.corner]
     floaters = [i for i in vis if i.corner and i.role != "logo"]
     others = [i for i in vis if i not in texts and i not in ctas and i not in badges and i not in floaters
               and i is not logo and i is not hero]
@@ -477,7 +488,7 @@ def drop_orders(d: Design) -> List[List[Item]]:
     """Cumulative hide-sets, least important first. Items of one role that sit
     in one row (a set of badges) are dropped together. Headline and CTA are
     never hidden; hero and logo only as a last resort."""
-    opt = [it for it in d.items if it.role not in CORE_ROLES and it.role not in ("missing", "void")]
+    opt = [it for it in d.items if it.role not in CORE_ROLES and it.role not in ("missing", "void") and not it.core]
     units: List[List[Item]] = []
     for row in rows_for(opt):
         by_role: Dict[str, List[Item]] = {}

@@ -50,7 +50,7 @@ def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
             b["fit"] = "cover"
         out[b["id"]] = b
     for e in d.decor:
-        out[e["id"]] = _decor(e, d, ctx)
+        out[e["id"]] = _slab(e, d, ctx) if e.get("_slab") else _decor(e, d, ctx)
     for bd in d.backdrops:
         out[bd.el["id"]] = _backdrop(bd, plan, d, ctx)
     for it in plan.hidden:
@@ -105,6 +105,29 @@ def _backdrop(bd, plan: Plan, d: Design, ctx: Ctx) -> dict:
     o.update(x=box.x, y=box.y, width=box.w, height=box.h)
     if o.get("corner_radius"):
         o["corner_radius"] = float(o["corner_radius"]) * sc
+    return o
+
+
+def _slab(e: dict, d: Design, ctx: Ctx) -> dict:
+    """A flat background slab keeps spanning the side it spanned, at the edge it
+    touched, with its proportions (it is an image)."""
+    b = el_box(e)
+    o = _strip(e)
+    o.pop("_slab", None)
+    r = b.w / max(1e-6, b.h)
+    if b.y <= 0.03 * d.H and b.b >= 0.97 * d.H:  # full height
+        h = ctx.H
+        w = min(ctx.W, h * r)
+        h = w / r
+        x = 0.0 if b.cx < d.W / 2 else ctx.W - w
+        y = (ctx.H - h) / 2.0
+    else:  # full width
+        w = ctx.W
+        h = min(ctx.H, w / r)
+        w = h * r
+        x = (ctx.W - w) / 2.0
+        y = 0.0 if b.cy < d.H / 2 else ctx.H - h
+    o.update(x=x, y=y, width=w, height=h)
     return o
 
 

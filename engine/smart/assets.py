@@ -29,6 +29,7 @@ class AssetInfo:
     opaque: bool = True  # no meaningful transparency
     luminance: float = 0.5  # mean luminance 0..1 of visible pixels
     busy: float = 0.0  # 0..1 edge density of visible pixels
+    coverage: float = 1.0  # share of the image that is painted (frames and outlines are low)
 
 
 @lru_cache(maxsize=256)
@@ -48,7 +49,12 @@ def info(asset_id: Optional[str]) -> AssetInfo:
     bbox = mask.getbbox() or (0, 0, w, h)
     opaque = alpha.getextrema()[0] > 240
     lum, busy = _stats(rgba, mask)
-    return AssetInfo(found=True, size=(w, h), alpha_bbox=bbox, opaque=opaque, luminance=lum, busy=busy)
+    small = mask.crop(bbox)  # inside the visible bounds: frames stay hollow, cut-out products are solid
+    small.thumbnail((128, 128))
+    hist = small.histogram()
+    coverage = sum(hist[128:]) / max(1, sum(hist))
+    return AssetInfo(found=True, size=(w, h), alpha_bbox=bbox, opaque=opaque, luminance=lum, busy=busy,
+                     coverage=coverage)
 
 
 def _stats(rgba, mask) -> Tuple[float, float]:

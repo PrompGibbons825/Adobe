@@ -29,7 +29,7 @@ from .textfit import TextStyle
 IMPORTANCE = {
     "headline": 100, "cta": 90, "logo": 88, "hero": 80, "subhead": 62, "body": 55,
     "image": 50, "badge": 42, "group": 45, "ribbon": 36, "shape": 30, "legal": 22,
-    "watermark": 12, "missing": 0, "void": 0,
+    "watermark": 12, "missing": 0, "void": 0, "panel": 60,
 }
 
 
@@ -56,6 +56,7 @@ class Item:
     labels: List[dict] = field(default_factory=list)
     centered_label: bool = False
     hidden_reason: Optional[str] = None
+    core: bool = False  # carries the headline or CTA: never dropped
     # composite (an image carrying stickers / a row of product shots)
     host: Optional["Item"] = None
     sats: List["Item"] = field(default_factory=list)
@@ -264,6 +265,7 @@ def analyze(source: dict) -> Design:
         if it.src_box.w < 1 or it.src_box.h < 1 or it.src_box.inter(canvas) <= 0:
             it.role = "void"  # nothing to show (zero-size or entirely off the source canvas)
         it.importance = IMPORTANCE.get(it.role, 40)
+    _make_panels(design)
     _make_composites(design)
     _make_backdrops(design, pending_backdrops)
     _assign_corners(design)
@@ -298,6 +300,125 @@ def _make_backdrops(d: Design, shapes: List[dict]) -> None:
         edges = (sb.x <= 2, sb.y <= 2, sb.r >= d.W - 2, sb.b >= d.H - 2)
         pad = (max(0.0, u.x - sb.x), max(0.0, u.y - sb.y), max(0.0, sb.r - u.r), max(0.0, sb.b - u.b))
         d.backdrops.append(Backdrop(el=sh, members=members, edges=edges, pad=pad))
+
+
+def _make_panels(d: Design) -> None:
+    """Copy that sits on a coloured block or a secondary image travels with it.
+
+    Real designs put text on panels all the time (a red block behind the
+    headline, a pink card with the offer). Moved apart, white copy lands on a
+    white canvas and disappears, so the panel, its text and anything small on
+    it become one unit that scales together."""
+    canvas = Box(0, 0, d.W, d.H)
+    texts = [it for it in d.items if it.kind == "text"]
+
+    def flat(it: Item) -> bool:  # a solid block, not a product shot or photo
+        e = it.els[0]
+        if e.get("type") == "shape":
+            return True
+        a = assets.info(e.get("asset_id"))
+        return a.found and a.busy < 0.25
+
+    def hollow(it: Item) -> bool:  # an outline or frame
+        return not _solid(it)
+
+    for it in list(d.items):  # a frame around (nearly) the whole design is decoration
+        if it.kind == "image" and it.role not in ("logo", "missing", "void") and hollow(it) and \
+                el_box(it.els[0]).inter(canvas) >= 0.6 * canvas.area:
+            d.items.remove(it)
+            d.decor.append(it.els[0])
+
+    # flat full-span slabs (a grey half, a coloured column) are background, not art
+    slabs = []
+    for it in d.items:
+        if it.kind != "image" or it.role in ("logo", "missing", "void") or not flat(it):
+            continue
+        b = el_box(it.els[0])
+        span_h = b.y <= 0.03 * d.H and b.b >= 0.97 * d.H
+        span_w = b.x <= 0.03 * d.W and b.r >= 0.97 * d.W
+        if (span_h or span_w) and b.inter(canvas) >= 0.15 * canvas.area:
+            slabs.append(it)
+    hosts = [it for it in d.items if it.kind == "image" and it.role not in ("logo", "missing", "void")
+             and el_box(it.els[0]).area <= 0.6 * canvas.area]
+    z = lambda it: min(e["z_index"] for e in it.els)  # noqa: E731
+
+    # 1. each text belongs to the surface right under it (highest host below it)
+    by_host: Dict[int, List[Item]] = {}
+    for t in texts:
+        tb, tz = t.src_box, t.els[0]["z_index"]
+        under = [h for h in hosts if z(h) < tz and el_box(h.els[0]).x <= tb.cx <= el_box(h.els[0]).r and
+                 el_box(h.els[0]).y <= tb.cy <= el_box(h.els[0]).b and tb.inter(el_box(h.els[0])) >= 0.5 * tb.area]
+        if under:
+            h = max(under, key=z)
+            by_host.setdefault(id(h), []).append(t)
+    used_hosts = [h for h in hosts if id(h) in by_host]
+    # 2. surfaces carrying copy that overlap form one unit (a bar on a block, a frame on a panel)
+    parent = {id(h): id(h) for h in used_hosts}
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for i, a in enumerate(used_hosts):
+        for b in used_hosts[i + 1:]:
+            ba, bb = el_box(a.els[0]), el_box(b.els[0])
+            if ba.inter(bb) >= 0.2 * min(ba.area, bb.area):
+                parent[find(id(a))] = find(id(b))
+    clusters: Dict[int, List[Item]] = {}
+    for h in used_hosts:
+        clusters.setdefault(find(id(h)), []).append(h)
+    taken = set()
+    groups = []
+    for hs in clusters.values():
+        hs.sort(key=lambda h: -el_box(h.els[0]).area)
+        zmin = min(z(h) for h in hs)
+        members = list(hs) + [t for h in hs for t in by_host[id(h)]]
+        ids = {id(m) for m in members}
+        for o in d.items:  # small art lying on the unit (rules, icons, stickers)
+            if id(o) in ids or id(o) in taken or o.kind not in ("image", "group") or \
+                    o.role in ("logo", "missing", "void", "cta") or z(o) <= zmin:
+                continue
+            if any(o.src_box.area < 0.4 * el_box(h.els[0]).area and
+                   o.src_box.inter(el_box(h.els[0])) >= 0.9 * max(1.0, o.src_box.area) for h in hs):
+                members.append(o)
+                ids.add(id(o))
+        taken.update(ids)
+        groups.append(members)
+    for sl in slabs:
+        if id(sl) not in taken:
+            taken.add(id(sl))
+            e = sl.els[0]
+            e["_slab"] = True
+            d.decor.append(e)
+    if not taken:
+        return
+    new_items = [it for it in d.items if id(it) not in taken]
+    for members in groups:
+        host = members[0]
+        best = max(members, key=lambda m: m.importance)
+        core = any(m.role in ("headline", "cta") for m in members)
+        if not flat(host) and not hollow(host):
+            # a photo with copy on it: still the photo (it can be the hero), the copy rides along
+            comp = Item(key=f"comp:{host.key}", kind="composite", role=host.role, els=[e for m in members for e in m.els],
+                        src_box=union_all(m.src_box for m in members), importance=best.importance + 2,
+                        host=host, sats=members[1:], aspect=host.aspect, core=core)
+            new_items.append(comp)
+            continue
+        els = [e for m in members for e in m.els]
+        labels = [e for m in members if m.kind == "text" for e in m.els]
+        it = Item(key=f"panel:{host.key}", kind="group", role="panel", els=sorted(els, key=lambda e: e["z_index"]),
+                  src_box=union_all(m.src_box for m in members).union(el_box(host.els[0])),
+                  importance=best.importance + 2, labels=labels, core=core)
+        new_items.append(it)
+    d.items = new_items
+    if not any(it.role == "hero" for it in d.items):  # the "hero" was really a panel: pick again
+        imgs = [it for it in d.items if it.kind == "image" and it.role == "image" and _solid(it)]
+        if imgs:
+            h = max(imgs, key=lambda it: it.src_box.area)
+            if h.src_box.area >= 0.03 * canvas.area:
+                h.role, h.importance = "hero", IMPORTANCE["hero"]
 
 
 def _make_composites(d: Design) -> None:
@@ -475,7 +596,7 @@ def _assign_roles(d: Design) -> None:
         best_logo = max(imgs, key=logo_score)
         if logo_score(best_logo) >= 2.0:
             best_logo.role = "logo"
-        rest = [it for it in imgs if it.role == "image"]
+        rest = [it for it in imgs if it.role == "image" and _solid(it)]
         if rest:
             hero = max(rest, key=lambda it: it.src_box.area)
             if hero.src_box.area >= 0.03 * canvas_area:
@@ -492,6 +613,15 @@ def _assign_roles(d: Design) -> None:
             elif small and (it.src_box.b > 0.88 * H0) and e["z_index"] < max(
                     (x["z_index"] for x in d.elements if x.get("type") == "text"), default=0):
                 it.role = "watermark"
+
+
+def _solid(it: Item) -> bool:
+    """Art with substance (a product, a photo), as opposed to an outline or frame."""
+    e = it.els[0]
+    if e.get("type") != "image":
+        return True
+    a = assets.info(e.get("asset_id"))
+    return not a.found or a.coverage >= 0.25
 
 
 def _text_alpha(el: dict) -> float:
