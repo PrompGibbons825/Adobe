@@ -97,7 +97,7 @@ _OTHER = [  # Crello/VistaCreate, IAB, Google Ads, platform specs (research 05, 
 
 # Platform overlays, as fractions of the canvas. Weight scales the penalty
 # (channel art outside the strip is cropped on every phone and laptop: heavy).
-_STORY = dict(safe=(0.04, 0.14, 0.96, 0.80), in_safe=True,
+_STORY = dict(safe=(0.0, 0.14, 1.0, 0.80), in_safe=True,
               avoid=(("story-top-ui", (0.0, 0.0, 1.0, 0.14), 1.0), ("story-bottom-ui", (0.0, 0.80, 1.0, 1.0), 1.0)))
 # YouTube channel art: TVs show all of 2560x1440, desktops a 2560x423 band, tablets
 # 1855x423 and phones 1546x423, all centred. Copy belongs in the band (outside it
