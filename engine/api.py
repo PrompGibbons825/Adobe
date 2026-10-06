@@ -112,10 +112,11 @@ def _pins_kept(design: dict, c: Optional[_cons.Constraints], d) -> Dict[str, boo
     if c is None or not c.pinned:
         return {}
     by = {e["id"]: e for e in design["elements"]}
+    bgs = {e["id"] for e in d.backgrounds}
     out = {}
     for eid, spec in c.pinned.items():
         e = by.get(eid)
-        if e is None:
+        if e is None or eid in bgs:
             continue
         if spec.mode != "box":
             out[eid] = float(e.get("opacity", 1) or 0) > 0
@@ -192,11 +193,15 @@ def _candidates(source: dict, target: dict, c, k: int, explain: bool) -> List[di
         msg = str(ex) or type(ex).__name__
         if "copy over copy" in msg:
             msg = "every candidate draws copy over copy"
-        else:
+        elif not isinstance(ex, RuntimeError):  # an engine bug, not an infeasible design
             traceback.print_exc(file=sys.stderr)
         return [_fallback_candidate(source, target, c, msg, roles)]
 
     roles = _explain.roles(d)
+    if c is not None:
+        for eid in sorted(c.pinned):
+            if roles.get(eid, {}).get("role") == "background":
+                c.warnings.append(f"pin {eid}: a background always covers the canvas; pin ignored")
     src_pairs = frozenset(deliberate_overlaps(d.elements))
     chosen: List[Tuple[Any, dict, list]] = []  # (plan, design, signature)
     dups: Dict[int, int] = {}
@@ -296,36 +301,76 @@ def _targets(targets) -> List[Tuple[str, Dict[str, int]]]:
     return [(str(n), _canvas(t)) for n, t in items]
 
 
+def family_pick(source: dict, per: Dict[str, List[dict]], targets: Dict[str, dict], constraints=None, *,
+                k: int = 5, budget=None, weight: Optional[float] = None, anchor: bool = True,
+                constraints_by_target: Optional[dict] = None, plan=None):
+    """(pool, pick, anchored): pick one candidate per target for the family.
+
+    With `anchor`, a target none of whose candidates has the logo in the
+    family's cell is planned again with the logo anchored there (every
+    archetype once more, scored together with the free ones), so the pick has
+    that option where the format allows it. `plan` replaces candidates() (the
+    dev tool caches)."""
+    from engine.smart import consistency as _cs
+
+    plan = plan or candidates
+    pool = dict(per)
+    anchored = []
+    if anchor and len(pool) > 1:
+        home = _cs.logo_home(source, pool)
+        for name, tgt in targets.items():
+            if home is None:
+                break
+            if any(_cs.features(c).get("logo") == home for c in pool[name]):
+                continue
+            ab = _cs.anchor_box(home, pool[name][0])
+            if ab is None:
+                continue
+            cons = dict(constraints or {})
+            if constraints_by_target and name in constraints_by_target:
+                cons.update(constraints_by_target[name])
+            cons["anchors"] = dict(cons.get("anchors") or {}, **{ab[0]: ab[1]})
+            pool[name] = plan(source, tgt, cons, k=k, budget=budget)
+            anchored.append(name)
+    pick = _cs.select(pool, weight=weight) if len(pool) > 1 else {n: 0 for n in pool}
+    return pool, pick, anchored
+
+
 def resize_many(source: dict, targets, constraints: Optional[dict] = None, *, k: int = 5,
-                consistency: bool = True, budget=None, constraints_by_target: Optional[dict] = None,
-                weight: Optional[float] = None) -> dict:
+                consistency: bool = True, anchor: bool = True, budget=None,
+                constraints_by_target: Optional[dict] = None, weight: Optional[float] = None) -> dict:
     """Lay one design out for many canvases, consistently.
 
     Each target gets its top-k candidates; then one candidate per target is
-    picked so the set reads as one family (same logo corner class, reading
-    order, type-scale ratio and arrangement where the formats allow), trading
-    off at most a few percent of each target's own score. Returns
+    picked so the set reads as one family (same logo cell, reading order,
+    type-scale ratio and arrangement where the formats allow), trading off at
+    most a few percent of each target's own score (see family_pick). Returns
 
         results       name -> the chosen candidate (see candidates())
         choice        name -> rank of the chosen candidate (1 = the target's own best)
+        anchored      targets re-planned with the logo anchored in the family's cell
         consistency   the family metric for independent (top-1) and joint picks
+        style         the family's majority traits
     """
     from engine.smart import consistency as _cs
 
+    tl = dict(_targets(targets))
     per: Dict[str, List[dict]] = {}
-    for name, tgt in _targets(targets):
+    for name, tgt in tl.items():
         cons = dict(constraints or {})
         if constraints_by_target and name in constraints_by_target:
             cons.update(constraints_by_target[name])
         per[name] = candidates(source, tgt, cons or None, k=k, budget=budget)
-    pick = {n: 0 for n in per}
+    first = {n: per[n][0] for n in per}
+    pool, pick, anchored = per, {n: 0 for n in per}, []
     if consistency and len(per) > 1:
-        pick = _cs.select(per, weight=weight)
-    results = {n: per[n][pick[n]] for n in per}
+        pool, pick, anchored = family_pick(source, per, tl, constraints, k=k, budget=budget, weight=weight,
+                                           anchor=anchor, constraints_by_target=constraints_by_target)
+    results = {n: pool[n][pick[n]] for n in pool}
     return {
         "results": results,
-        "choice": {n: pick[n] + 1 for n in per},
-        "consistency": {"independent": _cs.metric({n: per[n][0] for n in per}),
-                        "joint": _cs.metric(results)},
+        "choice": {n: pick[n] + 1 for n in pool},
+        "anchored": anchored,
+        "consistency": {"independent": _cs.metric(first), "joint": _cs.metric(results)},
         "style": _cs.house_style(results),
     }

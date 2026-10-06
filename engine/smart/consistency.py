@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Optional, Tuple
 
-WEIGHT = 1.0  # consistency vs. each target's own score (tuned on the tuning half)
+WEIGHT = 2.0  # consistency vs. each target's own score (tuned on the tuning half)
 MAX_LOSS = 0.06  # never give up more than this share of a target's best score
 SCALE = 0.08  # quality unit: this share of a target's best score
 
@@ -269,3 +269,51 @@ def house_style(chosen: Dict[str, dict]) -> dict:
                 votes.setdefault(k, {})
                 votes[k][v] = votes[k].get(v, 0) + 1
     return {k: max(sorted(v.items()), key=lambda t: t[1])[0] for k, v in sorted(votes.items())}
+
+
+# ----------------------------------------------------------------------------
+# anchoring the logo
+
+
+def _logo_ids(cand: dict) -> List[str]:
+    return [i for i, r in sorted(cand["roles"].items()) if r.get("role") == "logo"]
+
+
+def logo_home(source: dict, per: Dict[str, List[dict]]) -> Optional[Tuple[int, int]]:
+    """The family's logo cell: where the designer put it in the source, unless
+    that is the dead centre (then the most common cell among the winners)."""
+    first = next(iter(per.values()))[0]
+    ids = set(_logo_ids(first))
+    els = [e for e in source.get("elements", []) if e.get("id") in ids]
+    if not els:
+        return None
+    W, H = float(source["canvas"]["width"]), float(source["canvas"]["height"])
+    x, y, w, h = _union([_box(e) for e in els])
+    cell = (_cls((y + h / 2) / H), _cls((x + w / 2) / W))
+    if cell != (1, 1):
+        return cell
+    votes: Dict[Tuple[int, int], int] = {}
+    for cs in per.values():
+        c = features(cs[0]).get("logo")
+        if c is not None:
+            votes[c] = votes.get(c, 0) + 1
+    return max(sorted(votes.items()), key=lambda t: t[1])[0] if votes else None
+
+
+def anchor_box(cell: Tuple[int, int], cand: dict) -> Optional[Tuple[str, dict]]:
+    """(logo id, box): the logo as big as in `cand`, moved into `cell`."""
+    ids = set(_logo_ids(cand))
+    design = cand["design"]
+    els = [e for e in design["elements"] if e["id"] in ids and float(e.get("opacity", 1) or 0) > 0]
+    if not els:
+        return None
+    W, H = float(design["canvas"]["width"]), float(design["canvas"]["height"])
+    x, y, w, h = _union([_box(e) for e in els])
+    if w >= 0.6 * W or h >= 0.6 * H:
+        return None
+    m = max(6.0, 0.05 * min(W, H))
+    v, hz = cell
+    bx = (m, (W - w) / 2.0, W - m - w)[hz]
+    by = (m, (H - h) / 2.0, H - m - h)[v]
+    bx, by = min(max(0.0, bx), W - w), min(max(0.0, by), H - h)
+    return sorted(ids)[0], {"x": round(bx, 2), "y": round(by, 2), "width": round(w, 2), "height": round(h, 2)}
