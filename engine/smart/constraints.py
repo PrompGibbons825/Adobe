@@ -262,7 +262,9 @@ def _pin_for(it, c: Constraints) -> Optional[PinSpec]:
 def _derived_box(it, spec: PinSpec, d, ctx) -> Box:
     """keep / position / size: the source box carried over, anchored to the
     nearest canvas edges (springs and struts)."""
-    b = it.src_box
+    from .geom import el_box, union_all
+
+    b = union_all(el_box(e) for e in it.els)  # the element boxes, as a host shows them
     sx, sy = ctx.W / d.W, ctx.H / d.H
     s = min(sx, sy) if spec.mode != "size" else 1.0
     w, h = b.w * s, b.h * s
@@ -304,10 +306,20 @@ def realize_pin(it, spec: PinSpec, d, ctx):
         r = Real(item=it, w=w, h=h, scale=blk.font_size / max(1.0, it.fs0), fonts={el["id"]: blk.font_size},
                  blocks={el["id"]: blk}, emit_fn=emit)
         return r, box.x, box.y
-    s, r = search_scale(lambda s: realize(it, s, ctx, max_w=box.w + 0.5, max_h=box.h + 0.5), 0.01, 8.0)
-    if r is None:
+    from .geom import el_box, union_all
+
+    def fits(s):  # the pin box holds the element boxes (transparent margins included)
+        r = realize(it, s, ctx)
+        if r is None:
+            return None
+        u = union_all(el_box(e) for e in r.emit(0.0, 0.0)) or Box(0, 0, r.w, r.h)
+        return (r, u) if u.w <= box.w + 0.5 and u.h <= box.h + 0.5 else None
+
+    s, res = search_scale(fits, 0.01, 8.0)
+    if res is None:
         return None
-    return r, box.x + (box.w - r.w) / 2.0, box.y + (box.h - r.h) / 2.0
+    r, u = res
+    return r, box.x + (box.w - u.w) / 2.0 - u.x, box.y + (box.h - u.h) / 2.0 - u.y
 
 
 def pins_for(d, ctx) -> List[tuple]:
@@ -380,9 +392,46 @@ def plan_pinned(fn, d, ctx, hidden, name: str, kw: dict, with_insets, zone_of):
     if best is None:
         return None
     best.hidden = [h for h in best.hidden if id(h) not in pid]
-    best.floaters = list(best.floaters) + list(pins)
+    best.floaters = _clear_corners(best, pins, d, ctx) + list(pins)
     best.pinned = [i.key for i in pinned_items]  # type: ignore[attr-defined]
     return best
+
+
+def _clear_corners(plan, pins, d, ctx) -> list:
+    """Corner items that landed on a pinned box move to the nearest free corner."""
+    from .compose import collides, place_floater, margins
+
+    pboxes = [Box(x, y, r.w, r.h) for r, x, y in pins]
+    taken = [Box(x, y, r.w, r.h) for r, x, y in plan.placed]
+    gap = 0.4 * ctx.base_fs
+    mx, my = margins(d, ctx)
+    out = []
+    for f in plan.floaters:
+        r, x, y = f
+        fb = Box(x, y, r.w, r.h)
+        if not any(collides(fb, pb, gap) for pb in pboxes):
+            out.append(f)
+            taken.append(fb)
+            continue
+        it = r.item
+        c0 = it.corner or "tr"
+        moved = None
+        for c in (c0[0] + ("r" if c0[1] == "l" else "l"), ("b" if c0[0] == "t" else "t") + c0[1],
+                  ("b" if c0[0] == "t" else "t") + ("r" if c0[1] == "l" else "l")):
+            it.corner = c
+            try:
+                p = place_floater(it, plan.s, ctx, mx, my, plan.relax)
+            finally:
+                it.corner = c0
+            if p is None:
+                continue
+            nb = Box(p[1], p[2], p[0].w, p[0].h)
+            if not any(collides(nb, o, gap) for o in pboxes + taken):
+                moved = p
+                break
+        out.append(moved or f)
+        taken.append(Box(*(moved or f)[1:], (moved or f)[0].w, (moved or f)[0].h))
+    return out
 
 
 # ----------------------------------------------------------------------------
