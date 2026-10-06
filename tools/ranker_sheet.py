@@ -42,7 +42,7 @@ def main():
     from tools.designer_sim import similarity
 
     def render(design):
-        p = Path("/tmp/_ranker_sheet.png")
+        p = Path(f"/tmp/_ranker_sheet_{os.getpid()}.png")
         with contextlib.redirect_stdout(io.StringIO()):
             render_design_to_png(design, kit / "assets", p, fonts_dir=ROOT / "brand_kit" / "fonts")
         im = Image.open(p).convert("RGB")
