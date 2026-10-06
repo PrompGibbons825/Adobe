@@ -586,6 +586,8 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
             hidden = missing + drop
             if any(_cons.is_core(h, CORE_ROLES) for h in drop) and plans:
                 break  # core items are only given up when nothing else worked
+            if _budget.beyond_bound(d, ctx, hidden, plans):  # finale-api: budget mode only
+                break
             for name, fn, kw in variants(force_all):
                 if name in done:
                     continue
