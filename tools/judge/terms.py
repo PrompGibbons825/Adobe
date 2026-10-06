@@ -401,31 +401,26 @@ def terms(src: dict, out: dict) -> Dict[str, float]:
     # collisions the source did not have; overlaps it had must not grow or spill
     for key, (fmin, fa, fb) in out["pairs"].items():
         a, b = key.split("|")
-        if a not in S or b not in S:
-            continue
-        sp = _pair(src, a, b) if (S[a]["live"] and S[b]["live"]) else None
+        if a not in S or b not in S or S[a]["bg"] or S[b]["bg"]:
+            continue  # anything over what was a full-canvas background in the source is intended
+        sp = (_pair(src, a, b) if (S[a]["live"] and S[b]["live"]) else None) or [0.0, 0.0, 0.0]
         ta, tb = S[a]["type"] == "text", S[b]["type"] == "text"
-        allowed = sp is not None and sp[0] > 0.05
-        if not allowed:
-            if fmin <= 0.02:
-                continue
-            if ta and tb:
-                t["coll_text_text"] += fmin
-            elif ta or tb:
-                t["coll_text_art"] += fmin
-            else:
-                t["coll_art"] += fmin
+        on_surface = False
+        for txt, cin0, cin1 in ((a, sp[1], fa), (b, sp[2], fb)):
+            if S[txt]["type"] == "text" and cin0 >= 0.6:  # copy on its panel / photo / button
+                t["spill"] += max(0.0, cin0 - cin1)
+                on_surface = True
+        if on_surface:
             continue
-        if ta or tb:  # copy on its surface: it must stay on it
-            for txt, cin0, cin1 in ((a, sp[1], fa), (b, sp[2], fb)):
-                if S[txt]["type"] != "text":
-                    continue
-                if cin0 >= 0.6:
-                    t["spill"] += max(0.0, cin0 - cin1)
-                else:
-                    t["spill"] += max(0.0, fmin - sp[0] - 0.1)
+        grown = fmin - sp[0]
+        if grown <= 0.05:  # what the source already had (resolution noise included)
+            continue
+        if ta and tb:
+            t["coll_text_text"] += grown
+        elif ta or tb:
+            t["coll_text_art"] += grown
         else:
-            t["coll_art"] += max(0.0, fmin - sp[0] - 0.1)
+            t["coll_art"] += grown
     for k in ("coll_text_art", "coll_text_text", "coll_art", "spill"):
         t[k] = min(3.0, t[k])
 
