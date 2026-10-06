@@ -17,8 +17,10 @@ __all__ = ["layout_design", "finalize", "plan_design"]
 def plan_design(source: dict, target: dict):
     d = analyze(source)
     ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
-    plans = prune_relaxed(generate(d, ctx))
+    from . import formats  # [formats-decor] platform safe/avoid zones
+    plans = prune_relaxed(generate(d, ctx) + formats.safe_plans(d, ctx, generate))
     score_plans(plans, d, ctx)
+    formats.score_zones(plans, d, ctx)
     plans.sort(key=lambda p: -p.score)
     _pixel_rerank(plans, d, ctx)
     _no_text_on_text(plans, d, ctx)
