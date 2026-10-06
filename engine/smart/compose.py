@@ -44,6 +44,11 @@ class Plan:
     capped: bool = False  # reached its scale cap: hiding more cannot make anything bigger
     score: float = 0.0
     breakdown: Dict[str, float] = field(default_factory=dict)
+    # demotion ladder (demote.py): item key -> floor | zone | chips | hide, what was done and why,
+    # and repaired output elements that replace emit()'s
+    demoted: Dict[str, str] = field(default_factory=dict)
+    log: List[str] = field(default_factory=list)
+    override: Optional[List[dict]] = None
 
     def footprints(self) -> List[Tuple[Item, Box]]:
         return [(r.item, Box(x, y, r.w, r.h)) for r, x, y in self.placed + self.floaters]
@@ -376,7 +381,7 @@ def plan_split(d: Design, ctx: Ctx, hidden: List[Item], hero_side: str = "left",
 
 
 def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_logo: bool = False,
-             insets=(0, 0, 0, 0)) -> Optional[Plan]:
+             insets=(0, 0, 0, 0), cols: int = 1, hero_max: float = 0.3) -> Optional[Plan]:
     vis = _visible(d, hidden)
     hid = list(hidden)
     logo = next((i for i in vis if i.role == "logo"), None)
@@ -398,11 +403,20 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
     if logo is not None and not stack_logo:
         kids.append(Leaf(logo, fill=True, cap_rel=1.7, min_rel=1.0, max_w_frac=0.2))
     if hero is not None:
-        kids.append(Leaf(hero, fill=True, cap_rel=1.6, min_rel=0.4, max_w_frac=0.3))
+        kids.append(Leaf(hero, fill=True, cap_rel=1.6, min_rel=0.4 if hero_max >= 0.3 else 0.1, max_w_frac=hero_max))
     if copy_rows or (stack_logo and logo is not None):
         rows = ([[logo]] if stack_logo and logo is not None else []) + copy_rows
-        col, _ = column(d, rows, force_align="center" if centred else "start", gap_scale=0.6)
-        kids.append(col)
+        if cols > 1:  # copy side by side (strips whose copy cannot stack in one column)
+            from .demote import split_rows
+
+            chunks = split_rows(rows, cols)
+            if chunks is None:
+                return None
+        else:
+            chunks = [rows]
+        for chunk in chunks:
+            col, _ = column(d, chunk, force_align="center" if centred else "start", gap_scale=0.6)
+            kids.append(col)
     gap = max(1.2 * ctx.base_fs, 0.022 * ctx.W)
     s = laid = None
     relax = 1.0
@@ -515,7 +529,7 @@ def _shift(p: Plan, dx: float, dy: float) -> Plan:
     return p
 
 
-def _with_insets(fn, d: Design, ctx: Ctx, *args, **kw) -> Optional[Plan]:
+def _with_insets(fn, d: Design, ctx: Ctx, *args, base=(0.0, 0.0, 0.0, 0.0), **kw) -> Optional[Plan]:
     """Run a planner and make sure every painted box stays on the canvas.
 
     Images carry transparent margins, so content that sits right at the safe
@@ -524,7 +538,7 @@ def _with_insets(fn, d: Design, ctx: Ctx, *args, **kw) -> Optional[Plan]:
     again."""
     ins = [0.0, 0.0, 0.0, 0.0]
     for _ in range(5):
-        p = fn(d, ctx, *args, insets=tuple(ins), **kw)
+        p = fn(d, ctx, *args, insets=tuple(b + i for b, i in zip(base, ins)), **kw)
         if p is None:
             return None
         l, t, r, b = overflow(p.placed, ctx)
@@ -544,31 +558,37 @@ def _with_insets(fn, d: Design, ctx: Ctx, *args, **kw) -> Optional[Plan]:
     return None
 
 
-def generate(d: Design, ctx: Ctx) -> List[Plan]:
-    r = ctx.W / ctx.H
-    plans: List[Plan] = []
-    missing = [it for it in d.items if it.role in ("missing", "void")]
-    has_corners = any(it.corner for it in d.items if it.role not in ("missing", "void"))
+def variants(d: Design, ctx: Ctx, force_all: bool = False):
+    """The archetype variants worth trying for this canvas: (name, planner, kwargs)."""
     from . import assets as _assets
 
+    r = ctx.W / ctx.H
+    has_corners = any(it.corner for it in d.items if it.role not in ("missing", "void"))
     busy_bg = any(b.get("type") == "image" and _assets.info(b.get("asset_id")).busy > 0.3 for b in d.backgrounds)
+    yield "adapt", plan_adapt, {}
+    if r <= 2.2 or force_all:
+        yield "stack", plan_stack, {}
+        if busy_bg:  # copy over a photo: also try it against either side
+            yield "stack-start", plan_stack, dict(force_align="start")
+            yield "stack-end", plan_stack, dict(force_align="end")
+    if r >= 1.15:
+        for side in ("left", "right"):
+            for frac in (0.34, 0.48):
+                for fold in ((False, True) if has_corners else (False,)):
+                    yield (f"split-{side}-{frac}{'-fold' if fold else ''}", plan_split,
+                           dict(hero_side=side, hero_frac=frac, fold_corners=fold))
+    if r >= 1.7 or force_all:
+        for stack_logo in (False, True):
+            yield "row" + ("-logo-stacked" if stack_logo else ""), plan_row, dict(stack_logo=stack_logo)
 
-    def variants(force_all: bool = False):
-        yield "adapt", plan_adapt, {}
-        if r <= 2.2 or force_all:
-            yield "stack", plan_stack, {}
-            if busy_bg:  # copy over a photo: also try it against either side
-                yield "stack-start", plan_stack, dict(force_align="start")
-                yield "stack-end", plan_stack, dict(force_align="end")
-        if r >= 1.15:
-            for side in ("left", "right"):
-                for frac in (0.34, 0.48):
-                    for fold in ((False, True) if has_corners else (False,)):
-                        yield (f"split-{side}-{frac}{'-fold' if fold else ''}", plan_split,
-                               dict(hero_side=side, hero_frac=frac, fold_corners=fold))
-        if r >= 1.7 or force_all:
-            for stack_logo in (False, True):
-                yield "row" + ("-logo-stacked" if stack_logo else ""), plan_row, dict(stack_logo=stack_logo)
+
+def generate(d: Design, ctx: Ctx) -> List[Plan]:
+    from . import demote
+
+    if demote.ENABLED:  # feasibility first + demotion ladder instead of drop orders
+        return demote.generate(d, ctx)
+    plans: List[Plan] = []
+    missing = [it for it in d.items if it.role in ("missing", "void")]
 
     if not _visible(d, missing):  # nothing to lay out: every element is void or missing
         return [Plan(name="empty", placed=[], hidden=list(missing), s=1.0, zone=Box(0, 0, ctx.W, ctx.H))]
@@ -579,7 +599,7 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
             hidden = missing + drop
             if any(h.role in CORE_ROLES for h in drop) and plans:
                 break  # core items are only given up when nothing else worked
-            for name, fn, kw in variants(force_all):
+            for name, fn, kw in variants(d, ctx, force_all):
                 if name in done:
                     continue
                 p = _with_insets(fn, d, ctx, hidden, name=name, **kw)

@@ -15,8 +15,11 @@ __all__ = ["layout_design", "finalize", "plan_design"]
 
 
 def plan_design(source: dict, target: dict):
+    from . import demote
+
     d = analyze(source)
     ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
+    demote.prepare(d, ctx)  # feasibility first: dissolve rigid units that cannot fit at their floor
     plans = prune_relaxed(generate(d, ctx))
     score_plans(plans, d, ctx)
     plans.sort(key=lambda p: -p.score)
@@ -87,6 +90,8 @@ def _strip(el: dict) -> dict:
 
 
 def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
+    if plan.override is not None:  # repaired (demote.repair)
+        return [dict(e) for e in plan.override]
     out: Dict[str, dict] = {}
     for r, x, y in plan.placed + plan.floaters:
         for e in r.emit(x, y):
@@ -143,9 +148,19 @@ def _backdrop(bd, plan: Plan, d: Design, ctx: Ctx) -> dict:
     if eb and free(Box(box.x, box.b, box.w, ctx.H - box.b)):
         box = Box(box.x, box.y, box.w, ctx.H - box.y)
     box = box.inter_box(Box(0, 0, ctx.W, ctx.H)) or box
+    if bd.el.get("type") == "image":  # a block that is an image keeps its proportions (dissolved panels)
+        from .demote import ratio_box
+
+        box = ratio_box(box, el_box(bd.el), ctx)
+        if box is None:
+            return _hidden(bd.el, d, ctx)
     if not free(box):  # padding would run into a neighbour: hug the members instead
         tight = u.expanded(0.25 * floor)
-        if free(tight):
+        if bd.el.get("type") == "image":
+            from .demote import ratio_box
+
+            tight = ratio_box(tight, el_box(bd.el), ctx)
+        if tight is not None and free(tight):
             box = tight
         else:
             return _hidden(bd.el, d, ctx)

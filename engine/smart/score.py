@@ -76,15 +76,21 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
     vis = 0.0
     small = 0.0
     lines_pen = 0.0
+    from .demote import RUNG_COST
+
     for r, _, _ in placed:
         it = r.item
         rel = r.scale / max(1e-9, best.get(it.key, r.scale))
         if it.kind in ("image", "composite"):
             # art only needs to be big enough; past 60% of the best size it is fine
-            vis += it.importance * (1.0 + 0.6 * math.log(max(1e-3, min(1.0, rel / 0.6))))
+            term = 1.0 + 0.6 * math.log(max(1e-3, min(1.0, rel / 0.6)))
         else:
             # copy should be as large as the best layout manages, within ~15%
-            vis += it.importance * (1.0 + ALPHA * math.log(max(1e-3, min(1.0, rel / 0.85))))
+            term = 1.0 + ALPHA * math.log(max(1e-3, min(1.0, rel / 0.85)))
+        rung = p.demoted.get(it.key)
+        if rung in RUNG_COST:  # demoted on purpose (demote.py): worth a fixed share, never less
+            term = max(term, 1.0 - RUNG_COST[rung])
+        vis += it.importance * term
         for fs in r.fonts.values():
             role = it.role if it.role in ("legal", "badge", "ribbon", "headline") else "body"
             floor = ctx.floor(role)
