@@ -77,16 +77,91 @@ class Unit:
 
 
 def _area(e):
-    return max(0.0, e["width"]) * max(0.0, e["height"])
+    b = _box(e)
+    return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+
+
+def _box(e):
+    h = e["height"]
+    if e["type"] == "text":
+        h = min(h, _ink_h(e))
+    return (e["x"], e["y"], e["x"] + e["width"], e["y"] + h)
+
+
+def _ink_h(e):
+    from . import textfit
+    try:
+        m = textfit.measure(e, max(1, int(e["font_size"])), e["width"])
+        return m["height"]
+    except Exception:
+        return e["height"]
+
+
+def _inter(a, b):
+    A, B = _box(a), _box(b)
+    ix = max(0.0, min(A[2], B[2]) - max(A[0], B[0]))
+    iy = max(0.0, min(A[3], B[3]) - max(A[1], B[1]))
+    return ix * iy
+
+
+def _gap(a, b):
+    A, B = _box(a), _box(b)
+    dx = max(0.0, max(A[0], B[0]) - min(A[2], B[2]))
+    dy = max(0.0, max(A[1], B[1]) - min(A[3], B[3]))
+    return max(dx, dy)
 
 
 def _inside(inner, outer, tol=0.15):
-    ix0, iy0 = inner["x"], inner["y"]
-    ix1, iy1 = ix0 + inner["width"], iy0 + inner["height"]
-    ox0, oy0 = outer["x"], outer["y"]
-    ox1, oy1 = ox0 + outer["width"], oy0 + outer["height"]
-    tw, th = inner["width"] * tol, inner["height"] * tol
-    return ix0 >= ox0 - tw and iy0 >= oy0 - th and ix1 <= ox1 + tw and iy1 <= oy1 + th
+    return _inter(inner, outer) >= (1 - tol) * max(1e-6, _area(inner))
+
+
+def _opaque_frac(e):
+    if e["type"] != "image":
+        return 1.0
+    info = saliency.analyze(e.get("asset_id") or "")
+    return info["opaque_frac"] if info else 1.0
+
+
+class _UF:
+    def __init__(self, ids):
+        self.p = {i: i for i in ids}
+
+    def find(self, i):
+        while self.p[i] != i:
+            self.p[i] = self.p[self.p[i]]
+            i = self.p[i]
+        return i
+
+    def union(self, a, b):
+        self.p[self.find(a)] = self.find(b)
+
+
+def _text_roles(texts):
+    """Headline / subhead / body / legal / cta for every text element."""
+    roles = {}
+    if not texts:
+        return roles
+    cta = [e for e in texts if CTA_WORDS.search(e["content"]) and len(e["content"]) <= 40]
+    others = [e for e in texts if e not in cta]
+    for e in cta:
+        roles[e["id"]] = "cta"
+    if not others:
+        return roles
+    head = max(others, key=lambda e: (e["font_size"] * (1.15 if e.get("font_weight") == "bold" else 1), -e["y"]))
+    roles[head["id"]] = "headline"
+    hfs = head["font_size"]
+    rest = sorted([e for e in others if e is not head], key=lambda e: e["font_size"], reverse=True)
+    sub_done = False
+    for e in rest:
+        small = e["font_size"] <= 0.4 * hfs
+        faint = (e.get("opacity", 1) or 1) < 0.8 or re.search(r",\s*0?\.[0-6]\d*\)", e.get("color", "")) is not None
+        if small and (len(e["content"]) > 40 or faint) and e is rest[-1]:
+            roles[e["id"]] = "legal"
+        elif not sub_done and e["font_size"] >= 0.3 * hfs:
+            roles[e["id"]], sub_done = "subhead", True
+        else:
+            roles[e["id"]] = "body"
+    return roles
 
 
 def analyze(source: dict) -> dict:
@@ -95,58 +170,109 @@ def analyze(source: dict) -> dict:
     for i, e in enumerate(els):
         e.setdefault("z_index", i)
     carea = cw * ch
+    mind = min(cw, ch)
     units: list[Unit] = []
     used = set()
 
-    # 1. Backgrounds: full-bleed images / shapes at the bottom of the stack
+    # 1. Backgrounds: full-bleed layers at the bottom of the stack
     for e in sorted(els, key=lambda e: e["z_index"]):
         if e["type"] in ("image", "shape") and _area(e) >= 0.85 * carea and not e.get("group_id"):
-            units.append(Unit(e["id"], "bg", "bg", [e]))
+            if _opaque_frac(e) < 0.3:
+                units.append(Unit(e["id"], "frame_bg", "bg", [e]))  # border/frame over the canvas
+            else:
+                units.append(Unit(e["id"], "bg", "bg", [e]))
             used.add(e["id"])
 
-    # 2. Explicit groups
-    groups: dict[str, list] = {}
+    # 2. Decoration: faint layers, and loose shapes that hold no text
+    texts_all = [e for e in els if e["type"] == "text" and e["id"] not in used]
     for e in els:
-        if e["id"] in used:
+        if e["id"] in used or e["type"] == "text" or e.get("group_id"):
             continue
-        g = e.get("group_id")
-        if g:
-            groups.setdefault(g, []).append(e)
-    for g, members in groups.items():
+        faint = (e.get("opacity", 1) or 1) < 0.5
+        loose_shape = e["type"] == "shape" and not any(_inside(t, e) for t in texts_all)
+        if faint or loose_shape:
+            units.append(Unit(e["id"], "deco", "deco", [e]))
+            used.add(e["id"])
+
+    # 3. Text roles are global (the headline may sit inside a lockup)
+    troles = _text_roles([e for e in texts_all])
+
+    # 4. Geometric grouping: what travels together
+    cand = [e for e in els if e["id"] not in used]
+    for e in list(cand):
+        if e["type"] == "image" and saliency.asset_file(e.get("asset_id")) is None:
+            units.append(Unit(e["id"], "missing", "image", [e]))
+            used.add(e["id"])
+            cand.remove(e)
+    uf = _UF([e["id"] for e in cand])
+    opaque = {e["id"]: _opaque_frac(e) for e in cand}
+    big = {e["id"] for e in cand if e["type"] != "text" and _area(e) > 0.3 * carea and opaque[e["id"]] >= 0.3}
+    for i, a in enumerate(cand):
+        for b in cand[i + 1:]:
+            if a.get("group_id") and a.get("group_id") == b.get("group_id"):
+                uf.union(a["id"], b["id"])
+                continue
+            if a.get("group_id") and b.get("group_id"):
+                continue  # two designer groups stay separate
+            if a["id"] in big or b["id"] in big:
+                continue  # large photos are backdrops/heroes, not glue
+            ta, tb = a["type"] == "text", b["type"] == "text"
+            inter = _inter(a, b)
+            small = min(_area(a), _area(b))
+            # frame (outline / container) enclosing other pieces
+            for f, o in ((a, b), (b, a)):
+                if f["type"] != "text" and _area(f) > _area(o) * 1.5 and _inside(o, f):
+                    uf.union(a["id"], b["id"])
+                    break
+            else:
+                if ta and tb:
+                    if inter >= 0.2 * small:
+                        uf.union(a["id"], b["id"])
+                elif inter >= 0.15 * small:
+                    uf.union(a["id"], b["id"])
+                elif _gap(a, b) <= 0.012 * mind and min(_area(a), _area(b)) < 0.015 * carea and not (ta and tb):
+                    uf.union(a["id"], b["id"])  # small icon touching a word, ornaments in a lockup
+    comps: dict[str, list] = {}
+    for e in cand:
+        comps.setdefault(uf.find(e["id"]), []).append(e)
+
+    singles_img = []
+    for members in comps.values():
+        members.sort(key=lambda e: e["z_index"])
         for e in members:
             used.add(e["id"])
-        rotated = any(abs(e.get("rotation", 0) or 0) > 1 for e in members)
-        has_shape = any(m["type"] == "shape" for m in members)
-        has_text = any(m["type"] == "text" for m in members)
-        if rotated:
-            kind, role = "ribbon", "ribbon"
-        elif has_shape and has_text and len(members) == 2:
-            kind, role = "button", "button"
-        else:
-            kind, role = "group", "group"
-        units.append(Unit(g, role, kind, members))
+        if len(members) == 1:
+            e = members[0]
+            if e["type"] == "text":
+                units.append(Unit(e["id"], troles.get(e["id"], "body"), "text", [e]))
+            elif e["type"] == "image":
+                singles_img.append(e)
+            else:
+                units.append(Unit(e["id"], "deco", "deco", [e]))
+            continue
+        gid = members[0].get("group_id") or ("cl_" + members[0]["id"])
+        txt = [m for m in members if m["type"] == "text"]
+        non = [m for m in members if m["type"] != "text"]
+        rotated = any(abs(m.get("rotation", 0) or 0) > 1 for m in members)
+        explicit = all(m.get("group_id") for m in members)
+        if rotated and explicit and len(members) <= 3:
+            units.append(Unit(gid, "ribbon", "ribbon", members))
+            continue
+        if len(txt) == 1 and len(non) == 1 and not rotated and _inside(txt[0], non[0], 0.25) \
+                and _area(non[0]) < 0.12 * carea and len(txt[0]["content"]) <= 40:
+            units.append(Unit(gid, "button", "button", members))
+            continue
+        order = ["headline", "cta", "subhead", "body", "legal"]
+        rs = [troles.get(t["id"], "body") for t in txt]
+        role = min(rs, key=order.index) if rs else "group"
+        if not txt:
+            aid = " ".join((m.get("asset_id") or "").lower() for m in non)
+            role = "logo" if "logo" in aid else "group"
+        units.append(Unit(gid, role, "group", members))
 
-    # 3. Implicit containers: ungrouped text sitting inside an ungrouped small shape
-    free_shapes = [e for e in els if e["type"] == "shape" and e["id"] not in used
-                   and _area(e) < 0.4 * carea and (e.get("opacity", 1) or 1) > 0.5]
-    for s in free_shapes:
-        inner = [t for t in els if t["type"] == "text" and t["id"] not in used and _inside(t, s)]
-        if len(inner) == 1:
-            used.update([s["id"], inner[0]["id"]])
-            units.append(Unit(s["id"] + "+", "button", "button", [s, inner[0]]))
-
-    # 4. Remaining shapes -> decoration
-    for e in els:
-        if e["id"] not in used and e["type"] == "shape":
-            used.add(e["id"])
-            units.append(Unit(e["id"], "deco", "deco", [e]))
-
-    # 5. Images
-    imgs = [e for e in els if e["id"] not in used and e["type"] == "image"]
-    for e in imgs:
-        used.add(e["id"])
+    # 5. Single images: missing / logo / hero / minor
     real = []
-    for e in imgs:
+    for e in singles_img:
         if saliency.asset_file(e.get("asset_id")) is None:
             units.append(Unit(e["id"], "missing", "image", [e]))
         else:
@@ -156,7 +282,7 @@ def analyze(source: dict) -> dict:
         aid = (e.get("asset_id") or "").lower()
         if "logo" in aid or "wordmark" in aid or "lockup" in aid:
             logo_ids.add(e["id"])
-    if not logo_ids:
+    if not logo_ids and not any(u.role == "logo" for u in units):
         cands = [e for e in real if e["width"] / max(1, e["height"]) >= 1.8
                  and _area(e) < 0.08 * carea and e["y"] < 0.25 * ch]
         if cands:
@@ -172,38 +298,7 @@ def analyze(source: dict) -> dict:
             role = "minor"
         units.append(Unit(e["id"], role, "image", [e]))
 
-    # 6. Texts
-    texts = [e for e in els if e["id"] not in used and e["type"] == "text"]
-    for e in texts:
-        used.add(e["id"])
-    text_units = [Unit(e["id"], "body", "text", [e]) for e in texts]
-    if text_units:
-        def fs(u):
-            return u.els[0]["font_size"]
-        cta_text = [u for u in text_units if CTA_WORDS.search(u.els[0]["content"])
-                    and len(u.els[0]["content"]) <= 40]
-        others = [u for u in text_units if u not in cta_text]
-        if others:
-            head = max(others, key=lambda u: (fs(u), -u.els[0]["y"]))
-            head.role = "headline"
-            hfs = fs(head)
-            rest = sorted([u for u in others if u is not head], key=fs, reverse=True)
-            sub_assigned = False
-            for u in rest:
-                e = u.els[0]
-                small = fs(u) <= 0.4 * hfs
-                faint = (e.get("opacity", 1) or 1) < 0.8 or "0.6)" in e.get("color", "")
-                if small and (len(e["content"]) > 40 or faint) and u is rest[-1]:
-                    u.role = "legal"
-                elif not sub_assigned:
-                    u.role, sub_assigned = "subhead", True
-                else:
-                    u.role = "body"
-        for u in cta_text:
-            u.role = "cta"
-    units.extend(text_units)
-
-    # 7. Buttons: CTA vs badges (clusters of similar pills form a badge row)
+    # 6. Buttons: CTA vs badges (clusters of similar pills form a badge row)
     buttons = [u for u in units if u.kind == "button"]
     clusters: list[list[Unit]] = []
     for b in sorted(buttons, key=lambda u: u.bbox[0]):
@@ -214,7 +309,7 @@ def analyze(source: dict) -> dict:
                 break
         else:
             clusters.append([b])
-    has_text_cta = any(u.role == "cta" for u in units)
+    has_text_cta = any(u.role == "cta" and u.kind == "text" for u in units)
     singles = [c[0] for c in clusters if len(c) == 1]
     cta_unit = None
     if singles and not has_text_cta:
@@ -228,12 +323,9 @@ def analyze(source: dict) -> dict:
             for b in c:
                 units.remove(b)
                 b.role = "badge"
-            bu = Unit("badges:" + c[0].uid, "badges", "badges", [], members=c)
-            units.append(bu)
+            units.append(Unit("badges:" + c[0].uid, "badges", "badges", [], members=c))
         else:
             c[0].role = "cta" if c[0] is cta_unit else "badges"
-            if c[0].role == "badges":
-                c[0].kind = "button"
 
     for u in units:
         u.prio = PRIORITY.get(u.role, 0)

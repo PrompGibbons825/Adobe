@@ -39,8 +39,9 @@ def score(ctx, P, model):
             fs = P.props[eid].get("font_size", el["font_size"])
             role = u.role
             mn = max(MIN_ABS.get(role, 10), MIN_REL.get(role, 0.015) * min(W, H))
-            if role == "headline":
+            if role == "headline" and (hfs is None or fs > hfs):
                 hfs = fs
+            if role == "headline":
                 mn = min(mn, el["font_size"] * ctx.t_star * 0.9) if mn > 16 else mn
             if fs < mn:
                 read -= (u.prio + 3) * 3 * (1 - fs / mn)
@@ -49,8 +50,8 @@ def score(ctx, P, model):
     # 3. prominence: headline + hero reasonably large vs the ideal scale
     prom = 0.0
     head = next((u for u in units if u.role == "headline"), None)
-    if head and hfs:
-        ideal = head.els[0]["font_size"] * ctx.t_star
+    if head and hfs and any(e["type"] == "text" for e in head.els):
+        ideal = max(e["font_size"] for e in head.els if e["type"] == "text") * ctx.t_star
         prom += 4 * min(1.0, hfs / ideal)
     hero = next((u for u in units if u.role == "hero"), None)
     if hero and hero.els[0]["id"] in P.vis:
@@ -92,6 +93,9 @@ def score(ctx, P, model):
             v = P.vis[eid]
             b = saliency.region_mean(bmap, (v[0] - bx) / bw, (v[1] - by) / bh, (v[2] - bx) / bw, (v[3] - by) / bh)
             busy -= 10 * max(0.0, b - 0.06)
+            if P.bg_sal is not None:
+                sm = saliency.region_mean(P.bg_sal, (v[0] - bx) / bw, (v[1] - by) / bh, (v[2] - bx) / bw, (v[3] - by) / bh)
+                busy -= 8 * max(0.0, sm - 0.3)
     br["busy_bg"] = busy
 
     # 6. balance: content should use the canvas, and stay off the edges

@@ -29,21 +29,22 @@ DROP_LEVELS = [0.0, 1.3, 3.5, 5.5]
 
 
 def _candidates(ctx, model):
-    flow_all = [u for u in model["units"] if u.role in FLOW_ROLES]
-    for th in DROP_LEVELS:
-        flow = [u for u in flow_all if u.prio >= th]
-        if not flow:
-            continue
+    """Every candidate keeps every unit (no drops)."""
+    flow = [u for u in model["units"] if u.role in FLOW_ROLES]
+    if not flow:
+        return
+    for region in ("full", "left", "right", "top", "bottom"):
         for align in ("center", "left"):
-            yield th, lambda f=flow, a=align: tmpl_stack(ctx, f, a)
-        for side in ("left", "right"):
-            for frac in (0.4, 0.5):
-                for align in ("left", "center"):
-                    yield th, lambda f=flow, s=side, fr=frac, a=align: tmpl_split(ctx, f, s, fr, a)
-    for hero in (True, False):
-        for logo in (True, False):
-            for sub in (True, False):
-                yield 99.0, lambda h=hero, l=logo, s=sub: tmpl_row(ctx, flow_all, h, l, s)
+            if region == "full" or (region in ("left", "right") and ctx.W / ctx.H > 1.2) \
+                    or (region in ("top", "bottom") and ctx.H / ctx.W > 1.2):
+                yield 0.0, lambda f=flow, a=align, r=region: tmpl_stack(ctx, f, a, r)
+    for side in ("left", "right"):
+        for frac in (0.4, 0.5):
+            for align in ("left", "center"):
+                yield 0.0, lambda f=flow, s=side, fr=frac, a=align: tmpl_split(ctx, f, s, fr, a)
+    for scale in (1.0, 0.8, 0.6, 0.4):
+        for ncols in (1, 2):
+            yield 0.0, lambda f=flow, sc=scale, nc=ncols: tmpl_row(ctx, f, sc, nc)
 
 
 def _build(source, target, P):
@@ -76,6 +77,7 @@ def _fallback(source, target):
 
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
+    resize.last_choice = ({"template": "fallback"}, 0.0, {})
     try:
         model = analyze(source)
         ctx = Ctx(model, target_canvas)
@@ -85,7 +87,8 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 P = make()
                 if P is None:
                     continue
-                finalize(ctx, P, model, float_threshold=min(th, 99.0))
+                if finalize(ctx, P, model) is None:
+                    continue
                 s, br = score(ctx, P, model)
             except Exception as ex:  # one bad candidate never kills the run
                 if DEBUG:

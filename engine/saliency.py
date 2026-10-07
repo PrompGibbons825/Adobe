@@ -119,6 +119,7 @@ def analyze(asset_id: str) -> dict | None:
         "centroid": (cx, cy),
         "has_alpha": bool(has_alpha),
         "busyness": float(busy.mean()),
+        "opaque_frac": float((alpha > 0.5).mean()),
     }
 
 

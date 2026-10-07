@@ -45,6 +45,7 @@ def place_bg(ctx, P, unit):
     else:
         P.set(el["id"], x=-x0 * bw, y=-y0 * bh, width=bw, height=bh)
     P.bg_map = (info["busy"], -x0 * bw, -y0 * bh, bw, bh)
+    P.bg_sal = info["sal"] if concentrated else None
 
 
 def place_deco(ctx, P, unit):
@@ -85,7 +86,8 @@ def place_float(ctx, P, unit, s0):
     pad_x = (sb[0] if left else ctx.Ws - sb[2])
     pad_y = (sb[1] if top else ctx.Hs - sb[3])
     s = s0
-    for _ in range(3):
+    for attempt in range(4):
+        last = attempt == 3
         bw, bh = (sb[2] - sb[0]) * s, (sb[3] - sb[1]) * s
         px = max(4, pad_x * s)
         py = max(4, pad_y * s)
@@ -94,7 +96,7 @@ def place_float(ctx, P, unit, s0):
         tx = min(max(tx, 0), max(0, W - bw))
         ty = min(max(ty, 0), max(0, H - bh))
         box = (tx, ty, tx + bw, ty + bh)
-        if all(_overlap(box, o) <= 0.03 * _area(box) for o in occupied) and bw <= W and bh <= H:
+        if last or (all(_overlap(box, o) <= 0.03 * _area(box) for o in occupied) and bw <= W and bh <= H):
             if unit.kind == "image":
                 el = unit.els[0]
                 ew, eh = el["width"] * s, el["height"] * s
@@ -147,25 +149,36 @@ def clamp_inside(ctx, P, model):
                 P.vis[eid] = (v[0] + dx, v[1] + dy, v[2] + dx, v[3] + dy)
 
 
+def place_frame_bg(ctx, P, unit):
+    """A border/frame layer over the whole canvas: stretch it to the new canvas."""
+    el = unit.els[0]
+    sx, sy = ctx.W / ctx.Ws, ctx.H / ctx.Hs
+    P.set(el["id"], x=el["x"] * sx, y=el["y"] * sy, width=el["width"] * sx, height=el["height"] * sy)
+
+
 def finalize(ctx, P, model, float_threshold=0.0):
+    """Returns P, or None if the template failed to place some unit
+    (nothing may be dropped)."""
     P.hidden = set()
     P.min_z = min(e.get("z_index", 0) for e in model["els"].values())
     P.bg_map = None
+    P.bg_sal = None
     t = P.meta.get("t", ctx.t_star)
     for u in model["units"]:
         if u.role == "bg":
             place_bg(ctx, P, u)
+        elif u.role == "frame_bg":
+            place_frame_bg(ctx, P, u)
         elif u.role == "deco":
             place_deco(ctx, P, u)
     for u in sorted(model["units"], key=lambda u: -u.prio):
         if u.role in ("ribbon", "minor"):
-            ok = u.prio >= float_threshold and place_float(ctx, P, u, min(t, 1.5))
-            if not ok:
-                for e in u.els:
-                    hide(P, e, ctx.W, ctx.H)
+            place_float(ctx, P, u, min(t, 1.5))
     for u in model["units"]:
         for eid in u.ids:
-            if u.role in HIDE_ROLES or eid not in P.props:
-                hide(P, model["els"][eid], ctx.W, ctx.H)
+            if u.role in HIDE_ROLES:
+                hide(P, model["els"][eid], ctx.W, ctx.H)  # missing asset: skip gracefully (FAQ)
+            elif eid not in P.props:
+                return None
     clamp_inside(ctx, P, model)
     return P
