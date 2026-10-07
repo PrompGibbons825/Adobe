@@ -255,6 +255,10 @@ class FrameBlock:
         tgt_ca = ctx.W / ctx.H
         self.t_aspect = self.aspect * (tgt_ca / src_ca) ** alpha
         self.t_aspect = min(max(self.t_aspect, self.aspect / 4), self.aspect * 4)
+        if c["type"] == "image":
+            from .analyze import _fills_box
+            if _fills_box(c):
+                self.t_aspect = self.aspect   # a picture is never stretched
 
     def dims(self, t):
         area = self.cw * self.ch * t * t

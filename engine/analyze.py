@@ -229,7 +229,41 @@ def _contact(a, b, mind, carea):
     return side or stacked
 
 
-def _cluster(cand, carea, mind):
+def _flush(a, b, mind):
+    """Touching or overlapping pieces that share two or more edge lines (same
+    left, right, top or bottom, or one's edge on the other's): designed as one."""
+    A, B = _box(a), _box(b)
+    tol = 0.01 * mind
+    if max(A[0], B[0]) - min(A[2], B[2]) > tol or max(A[1], B[1]) - min(A[3], B[3]) > tol:
+        return False
+    lines = sum(abs(A[i] - B[i]) <= tol for i in range(4))
+    lines += abs(A[2] - B[0]) <= tol or abs(A[0] - B[2]) <= tol
+    lines += abs(A[3] - B[1]) <= tol or abs(A[1] - B[3]) <= tol
+    return lines >= 2
+
+
+def _fills_box(e):
+    """Opaque edge to edge (a photo, a flat panel, a full-frame illustration):
+    it can be cropped without cutting a silhouette."""
+    if e["type"] == "shape":
+        return e.get("shape_type", "rectangle") == "rectangle" and not e.get("corner_radius")
+    if e["type"] != "image":
+        return False
+    info = saliency.analyze(e.get("asset_id") or "")
+    return info is not None and info["opaque_frac"] > 0.97
+
+
+def _is_backdrop(e, cw, ch):
+    if e["type"] == "text" or not _fills_box(e):
+        return False
+    x0, y0, x1, y1 = _box(e)
+    if (min(x1, cw) - max(x0, 0)) * (min(y1, ch) - max(y0, 0)) < 0.3 * cw * ch:
+        return False
+    t = 0.01 * min(cw, ch)
+    return (x0 <= t) + (y0 <= t) + (x1 >= cw - t) + (y1 >= ch - t) >= 2
+
+
+def _cluster(cand, carea, mind, cw_=None, ch_=None):
     """Union-find over elements, in three passes.
 
     strong:  designer groups, word fragments, overlapping texts, and enclosure
@@ -256,15 +290,12 @@ def _cluster(cand, carea, mind):
 
     # large *detailed* images (photos) are backdrops, not glue; large *flat*
     # panels (cards, colour blocks) are containers and keep their contents
-    def _detailed(e):
-        if e["type"] != "image":
-            return False
-        info = saliency.analyze(e.get("asset_id") or "")
-        return info is not None and info["busyness"] > 0.03
-    big = {e["id"] for e in cand if e["type"] != "text" and _area(e) > 0.3 * carea
-           and opaque[e["id"]] >= 0.3 and _detailed(e)}
+    # backdrops: content floating on them is not glued to them. A backdrop
+    # fills its box, covers much of the canvas and runs off two or more edges.
+    # Anything else (a circle, a cross, a card) is an object or a container.
+    big = {e["id"] for e in cand if cw_ and _is_backdrop(e, cw_, ch_)}
     enclosers: dict[str, list] = {}
-    contacts, weak = [], []
+    contacts, weak, overlaps = [], [], []
     for i, a in enumerate(cand):
         for b in cand[i + 1:]:
             if a.get("group_id") and a.get("group_id") == b.get("group_id"):
@@ -272,9 +303,14 @@ def _cluster(cand, carea, mind):
                 continue
             if a.get("group_id") and b.get("group_id"):
                 continue
-            if a["id"] in big or b["id"] in big:
-                continue
             ta, tb = a["type"] == "text", b["type"] == "text"
+            if not ta and not tb and _flush(a, b, mind):
+                union(a["id"], b["id"])   # designed together: two or more shared edge lines
+                continue
+            if a["id"] in big or b["id"] in big:
+                if not ta and not tb and _contact(a, b, mind, carea):
+                    contacts.append((a["id"], b["id"]))
+                continue
             if ta and tb and _fragments(a, b):
                 union(a["id"], b["id"])   # one word split across texts ("PA" / "IN")
                 continue
@@ -285,20 +321,25 @@ def _cluster(cand, carea, mind):
                     enclosers.setdefault(o["id"], []).append(f)
                     break
             else:
-                if not ta and not tb and (_inside(a, b, 0.05) or _inside(b, a, 0.05)):
+                if not ta and not tb and (_inside(a, b, 0.05) or _inside(b, a, 0.05)) \
+                        and max(_area(a), _area(b)) <= 1.5 * min(_area(a), _area(b)):
                     union(a["id"], b["id"])   # layers of one object (a card and its inset outline)
                 elif ta and tb:
                     if inter >= 0.2 * small:
                         union(a["id"], b["id"])
                 elif _contact(a, b, mind, carea):
                     contacts.append((a["id"], b["id"]))
-                elif inter >= 0.15 * small:
-                    weak.append((inter / max(1e-6, small), a["id"], b["id"]))
-                elif not (ta and tb) and (
-                        (_gap(a, b) <= 0.012 * mind and small < 0.015 * carea)
-                        or (_gap(a, b) <= 0.025 * mind and small < 0.06 * carea
-                            and min(_ink_density(a), _ink_density(b)) < 0.4)):
-                    weak.append((0.1, a["id"], b["id"]))  # ornaments / line-art pieces of a lockup
+                else:
+                    if not ta and not tb and inter > 0 and small >= 0.02 * carea:
+                        overlaps.append((a["id"], b["id"]))   # joins if both hold text (see below)
+                    if inter >= 0.15 * small:
+                        weak.append((inter / max(1e-6, small), a["id"], b["id"],
+                                     inter / max(1e-6, _area(a)), inter / max(1e-6, _area(b))))
+                    elif not (ta and tb) and (
+                            (_gap(a, b) <= 0.012 * mind and small < 0.015 * carea)
+                            or (_gap(a, b) <= 0.025 * mind and small < 0.06 * carea
+                                and min(_ink_density(a), _ink_density(b)) < 0.4)):
+                        weak.append((0.1, a["id"], b["id"], 0.0, 0.0))  # ornaments / line-art pieces of a lockup
     byid = {e["id"]: e for e in cand}
     for oid, fs in enclosers.items():
         z = byid[oid]["z_index"]
@@ -309,10 +350,20 @@ def _cluster(cand, carea, mind):
             framed[uf.find(oid)] = True
     for x, y in contacts:
         union(x, y)
-    for _, x, y in sorted(weak, reverse=True):
+    # two text cards that overlap at all, however little, are one composition
+    for x, y in overlaps:
+        if framed[uf.find(x)] and framed[uf.find(y)]:
+            union(x, y)
+    for _, x, y, fx, fy in sorted(weak, reverse=True):
         rx, ry = uf.find(x), uf.find(y)
-        if rx != ry and framed[rx] and framed[ry]:
+        if rx == ry:
+            continue
+        if framed[rx] and framed[ry]:
             continue          # a bridge between two framed text blocks
+        # a text-free piece that mostly lies outside a text card is decoration
+        # around the card, not part of it
+        if (framed[ry] and not has_text[rx] and fx < 0.5) or (framed[rx] and not has_text[ry] and fy < 0.5):
+            continue
         union(x, y)
     comps: dict[str, list] = {}
     for e in cand:
@@ -519,13 +570,13 @@ def analyze(source: dict) -> dict:
         tiny = w * h < 0.0008 * carea
         thin = min(w, h) < 0.008 * mind and max(w, h) / max(1e-6, min(w, h)) > 5 and w * h < 0.02 * carea
         if thin:
-            # a line that spans half the canvas or runs from a canvas edge is
+            # a line that spans most of the canvas (and is not inside a card) is
             # page structure (a grid rule), not an ornament of nearby text
             horiz = w >= h
             span = w / cw if horiz else h / ch
-            t_ = 0.01 * mind
-            from_edge = (b[0] <= t_ or b[2] >= cw - t_) if horiz else (b[1] <= t_ or b[3] >= ch - t_)
-            if span >= 0.5 or from_edge:
+            in_card = any(o is not e and o["type"] != "text" and o["id"] not in used
+                          and _area(o) > 2 * w * h and _inside(e, o, 0.05) for o in els)
+            if span >= 0.8 and not in_card:
                 units.append(Unit(e["id"], "rule", "bg", [e]))
                 used.add(e["id"])
                 continue
@@ -557,7 +608,7 @@ def analyze(source: dict) -> dict:
             used.add(e["id"])
             cand.remove(e)
     singles_img = []
-    for members in _cluster(cand, carea, mind):
+    for members in _cluster(cand, carea, mind, cw, ch):
         for e in members:
             used.add(e["id"])
         if len(members) == 1:
@@ -727,20 +778,19 @@ def analyze(source: dict) -> dict:
         if hit:
             u.role, u.anchor_uid, u.align_line = "aligned", hit[0].uid, hit[1]
 
-    # 8c. Photographic hero: a rectangular, opaque, detailed picture. It may be
-    #     cropped to fill a panel of the canvas (it is a window onto a scene,
-    #     not an object with a silhouette).
+    # 8c. A hero image that fills its box edge to edge (photo or full-frame
+    #     illustration) may be cropped to fill a panel of the canvas: it is a
+    #     window onto something, not an object with a silhouette.
     for u in units:
         if u.role == "hero" and u.kind == "image":
             info = saliency.analyze(u.els[0].get("asset_id") or "")
-            u.photo = bool(info and info["opaque_frac"] > 0.97 and info["busyness"] > 0.03
-                           and abs(u.els[0].get("rotation", 0) or 0) < 1)
-            # a photo that bleeds off three or more edges and fills much of the
+            u.croppable = _fills_box(u.els[0]) and abs(u.els[0].get("rotation", 0) or 0) < 1
+            # a hero that bleeds off three or more edges and fills much of the
             # canvas is the scene everything sits in: it may become a backdrop
             x0, y0, x1, y1 = _box(u.els[0])
             t_ = 0.01 * mind
             edges = (x0 <= t_) + (y0 <= t_) + (x1 >= cw - t_) + (y1 >= ch - t_)
-            u.backdrop = u.photo and edges >= 3 and _area(u.els[0]) >= 0.4 * carea
+            u.backdrop = u.croppable and edges >= 3 and _area(u.els[0]) >= 0.4 * carea
             if u.backdrop:
                 # how much of the photo the designer covered with opaque pieces
                 ph = u.els[0]

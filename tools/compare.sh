@@ -5,16 +5,17 @@
 root=$1; out=${2:-review/changed_$root.png}
 export CHAMELEON_ASSETS_DIR=$root/assets CHAMELEON_FONTS_PICKLE=$root/fonts_subset.pickle
 py=.venv/bin/python
-$py tools/choices.py $root 2>/dev/null > /tmp/claude-new-$root.txt
+cp tools/choices.py /tmp/claude-choices.py      # same script for both sides
+$py /tmp/claude-choices.py $root 2>/dev/null > /tmp/claude-new-$root.txt
 git stash -q
-$py tools/choices.py $root 2>/dev/null > /tmp/claude-old-$root.txt
+$py /tmp/claude-choices.py $root 2>/dev/null > /tmp/claude-old-$root.txt
 changed=(${(f)"$(diff <(cat /tmp/claude-old-$root.txt) <(cat /tmp/claude-new-$root.txt) | grep '^>' | awk '{print $2}')"})
 if [[ -n "$changed" ]]; then
   $py tools/crello_report.py $root $changed >/dev/null 2>&1
   mkdir -p /tmp/claude-old; for p in $changed; do cp $root/report/${p}_ours.png /tmp/claude-old/$root-$p.png; done
 fi
 git stash pop -q
-paste -d' ' /tmp/claude-old-$root.txt /tmp/claude-new-$root.txt | awk '$2!=$4 {print $1": "$2" -> "$4}'
+paste -d' ' /tmp/claude-old-$root.txt /tmp/claude-new-$root.txt | awk '$2!=$5 {print $1": "$3" -> "$6}'
 [[ -z "$changed" ]] && exit 0
 $py tools/crello_report.py $root $changed >/dev/null 2>&1
 $py - $root $out $changed <<'PY'

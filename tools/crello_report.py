@@ -26,14 +26,19 @@ PALETTE = [(230, 57, 70), (29, 120, 220), (42, 157, 92), (245, 160, 20), (142, 6
            (0, 160, 170), (220, 80, 160), (120, 120, 120), (180, 110, 40), (90, 90, 220)]
 PAGE_W = 2480  # A4-ish at 300dpi, landscape-free portrait page
 PAGE_H = 3508
-FONT_PATHS = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
+FONT_PATHS = [
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+]
 
 
 def font(size, bold=False):
-    try:
-        return ImageFont.truetype(FONT_PATHS[1 if bold else 0], size)
-    except Exception:
-        return ImageFont.load_default()
+    for pair in FONT_PATHS:
+        try:
+            return ImageFont.truetype(pair[1 if bold else 0], size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
 def unit_label(u, modes):
@@ -229,6 +234,26 @@ def main(root, picks):
             "model": model, "srcP": source_placed(model), "ourP": ourP,
         })
         print(p, meta["template"], meta.get("frame_modes"))
+
+    # ---------------- per-pair panels (for the review gallery) ----------------
+    for c in cases:
+        modes = c["meta"].get("frame_modes", {})
+        for tag, png, design in (("src", c["src_png"], c["src"]), ("ours", c["our_png"], c["ours"])):
+            t, _ = fit(png, 1000, 700)
+            sc = t.width / design["canvas"]["width"]
+            annotate(t, design, c["units"], modes, sc).save(out / f"{c['name']}_groups_{tag}.png")
+        legend = [f"G{n + 1}  {unit_label(u, modes)}" for n, u in enumerate(c["units"])]
+        panels = {}
+        for tag, png, design, P, ghost in (("src", c["src_png"], c["src"], c["srcP"], False),
+                                           ("ours", c["our_png"], c["ours"], c["ourP"], True)):
+            if P is None:
+                continue
+            diag_panel(png, design, P, c["model"], assets, 1000, 700, ghost=ghost).save(out / f"{c['name']}_weight_{tag}.png")
+            panels[tag] = weight_lines(P, c["model"], design)
+        (out / f"{c['name']}_meta.json").write_text(json.dumps({
+            "title": c["title"], "src": [c["src_v"]["w"], c["src_v"]["h"]], "dst": [c["ref_v"]["w"], c["ref_v"]["h"]],
+            "template": c["meta"]["template"], "legend": legend,
+            "palette": [PALETTE[n % len(PALETTE)] for n in range(len(c["units"]))], "weights": panels}))
 
     # ---------------- page 1 ----------------
     pages = []

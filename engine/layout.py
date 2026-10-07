@@ -445,7 +445,7 @@ def inner_layout(ctx, P, units, rect, t):
 
 
 def place_photo_panel(ctx, P, hero, rect, side):
-    """Crop a photographic hero to fill `rect`, a full-bleed band along one
+    """Crop a hero that fills its box to fill `rect`, a full-bleed band along one
     canvas edge. The photo keeps its proportions; it is scaled to cover the
     band and slides along the band so its subject sits mid-band. Any excess
     runs off the canvas edges the band touches, never into the content."""
@@ -481,10 +481,10 @@ def place_photo_panel(ctx, P, hero, rect, side):
 
 
 def tmpl_panel(ctx, flow, side="left", frac=0.4):
-    """A photographic hero fills a full-bleed band on one side of the canvas;
+    """A croppable hero fills a full-bleed band on one side of the canvas;
     everything else is laid out in the rest (as a row on extreme banners,
     as a stack otherwise)."""
-    heroes = [u for u in flow if u.role == "hero" and getattr(u, "photo", False)]
+    heroes = [u for u in flow if u.role == "hero" and getattr(u, "croppable", False)]
     if not heroes:
         return None
     W, H = ctx.W, ctx.H
