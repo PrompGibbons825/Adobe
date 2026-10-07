@@ -123,63 +123,62 @@ def to_chameleon(ex, features, asset_dir: Path, prefix: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
+    ap.add_argument("--parquet", nargs="*", help="local Crello parquet shards (else stream from the Hub)")
     ap.add_argument("--split", default="test")
-    ap.add_argument("--scan", type=int, default=4000)
     ap.add_argument("--pairs", type=int, default=12)
+    ap.add_argument("--fonts", default=None, help="local opencole fonts.pickle")
     a = ap.parse_args()
     out = Path(a.out)
     (out / "assets").mkdir(parents=True, exist_ok=True)
     (out / "designs").mkdir(parents=True, exist_ok=True)
-
-    ds = load_dataset("cyberagent/crello", revision="5.0.0", split=a.split, streaming=True)
+    if a.parquet:
+        ds = load_dataset("parquet", data_files=a.parquet, split="train")
+    else:
+        ds = load_dataset("cyberagent/crello", revision="5.0.0", split=a.split)
     features = ds.features
-    groups = defaultdict(list)
-    keep = {}
-    for k, ex in enumerate(ds):
-        if k >= a.scan:
-            break
-        texts = tuple(sorted(norm_text(t) for t in ex["text"] if norm_text(t)))
-        if not texts or sum(len(t) for t in texts) < 12:
-            continue
-        ratio = ex["canvas_width"] / ex["canvas_height"]
-        groups[texts].append((k, ratio))
-        keep[k] = ex
-        # drop rows that can no longer form a pair to bound memory
-        if len(keep) > 6000:
-            for kk in list(keep)[:1000]:
-                if all(len(groups[t]) < 2 for t in groups if any(r[0] == kk for r in groups[t])):
-                    keep.pop(kk, None)
+    meta = ds.remove_columns([c for c in ("image", "preview") if c in ds.column_names])
+
+    # Same title + mostly the same text = the designer's own resize of one design
+    by_title = defaultdict(list)
+    for k, ex in enumerate(meta):
+        if ex["title"]:
+            texts = {norm_text(t) for t in ex["text"] if norm_text(t)}
+            by_title[ex["title"]].append((k, ex["canvas_width"] / ex["canvas_height"], texts))
     pairs = []
-    for texts, rows in groups.items():
-        rows = [r for r in rows if r[0] in keep]
+    for title, rows in by_title.items():
+        if len(rows) < 2:
+            continue
         rows.sort(key=lambda r: r[1])
-        if len(rows) >= 2 and rows[-1][1] / rows[0][1] > 1.25:
-            pairs.append(rows)
-    print(f"scanned {a.scan} rows, found {len(pairs)} multi-size designs")
+        base = rows[0]
+        same = [base] + [r for r in rows[1:] if base[2] and r[2]
+                         and len(base[2] & r[2]) / max(1, min(len(base[2]), len(r[2]))) >= 0.5
+                         and max(r[1], base[1]) / min(r[1], base[1]) > 1.2]
+        if len(same) >= 2:
+            pairs.append(same)
+    print(f"{len(ds)} rows, {len(pairs)} designs with designer-made resizes")
     pairs.sort(key=lambda rows: -(rows[-1][1] / rows[0][1]))
-    families = set()
-    index = []
+    families, index = set(), []
     for p, rows in enumerate(pairs[: a.pairs]):
         variants = []
-        for k, ratio in rows:
-            ex = keep[k]
+        for k, ratio, _ in rows:
+            ex = ds[k]
             d = to_chameleon(ex, features, out / "assets", f"p{p}_r{k}")
             fn = f"p{p}_{d['canvas']['width']}x{d['canvas']['height']}_r{k}.json"
             (out / "designs" / fn).write_text(json.dumps(d))
-            ex["preview"].convert("RGB").save(out / "designs" / fn.replace(".json", "_preview.jpg")) if ex.get("preview") else None
             families.update(e["font_family"] for e in d["elements"] if e["type"] == "text")
-            variants.append({"file": fn, "w": d["canvas"]["width"], "h": d["canvas"]["height"], "id": ex.get("id")})
+            variants.append({"file": fn, "w": d["canvas"]["width"], "h": d["canvas"]["height"],
+                             "title": ex["title"], "format": features["format"].int2str(ex["format"])})
         index.append(variants)
     (out / "index.json").write_text(json.dumps(index, indent=1))
 
-    fp = hf_hub_download(repo_id="cyberagent/opencole", filename="resources/fonts.pickle", repo_type="dataset")
+    fp = a.fonts or hf_hub_download(repo_id="cyberagent/opencole", filename="resources/fonts.pickle", repo_type="dataset")
     with open(fp, "rb") as f:
         fonts = pickle.load(f)
     keys = {normalize_family(x) for x in families} | {normalize_family("Montserrat")}
     sub = {k: v for k, v in fonts.items() if k in keys}
     with open(out / "fonts_subset.pickle", "wb") as f:
         pickle.dump(sub, f)
-    print(f"exported {len(index)} designs, {len(sub)} font families")
+    print(f"exported {len(index)} designs, {len(sub)}/{len(keys)} font families")
 
 
 if __name__ == "__main__":
