@@ -111,37 +111,62 @@ def _fallback(source, target):
     return {"canvas": {"width": W, "height": H}, "elements": out}
 
 
+def _broken(tight, loose):
+    """How many compositions of the tight reading the loose reading splits."""
+    where = {}
+    for i, u in enumerate(loose["units"]):
+        for eid in u.ids:
+            where[eid] = i
+    return sum(1 for u in tight["units"] if len(u.ids) > 1 and len({where.get(e) for e in u.ids}) > 1)
+
+
+BREAK_COST = 2.0   # per composition taken apart: it has to buy readability or space
+
+
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
     resize.last_choice = ({"template": "fallback"}, 0.0, {})
+    resize.last_model = None
     try:
-        model = analyze(source)
-        ctx = Ctx(model, target_canvas)
-        best, best_s, best_br, best_meta = None, -1e18, None, None
-        for th, make in _candidates(ctx, model):
-            try:
-                P = make()
-                if P is None:
+        tight = analyze(source)
+        readings = [(tight, 0)]
+        loose = analyze(source, compose=False)
+        n = _broken(tight, loose)
+        if n:
+            readings.append((loose, n))
+        best, best_s, best_br, best_meta, best_model = None, -1e18, None, None, None
+        for model, broken in readings:
+            ctx = Ctx(model, target_canvas)
+            for th, make in _candidates(ctx, model):
+                try:
+                    P = make()
+                    if P is None:
+                        continue
+                    if finalize(ctx, P, model) is None:
+                        continue
+                    s, br = score(ctx, P, model)
+                    if broken:
+                        br["grouping"] = -BREAK_COST * broken
+                        s += br["grouping"]
+                except Exception:  # one bad candidate never kills the run
+                    if DEBUG:
+                        import traceback
+                        traceback.print_exc()
                     continue
-                if finalize(ctx, P, model) is None:
-                    continue
-                s, br = score(ctx, P, model)
-            except Exception as ex:  # one bad candidate never kills the run
                 if DEBUG:
-                    import traceback
-                    traceback.print_exc()
-                continue
-            if DEBUG:
-                print(f"    {P.meta['template']:<28} drop>={th:<4} score={s:7.2f} "
-                      + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
-            if s > best_s:
-                best, best_s, best_br = P, s, br
-                best_meta = dict(P.meta, frame_modes=dict(getattr(P, "frame_modes", {})))
+                    print(f"    {('loose ' if broken else '') + P.meta['template']:<34} score={s:7.2f} "
+                          + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
+                if s > best_s:
+                    best, best_s, best_br, best_model = P, s, br, model
+                    best_meta = dict(P.meta, frame_modes=dict(getattr(P, "frame_modes", {})))
+                    if broken:
+                        best_meta["template"] = "loose-" + best_meta["template"]
         if best is None:
             return _fallback(source, target_canvas)
         if DEBUG:
             print(f"  -> {best_meta['template']} score={best_s:.2f}")
         resize.last_choice = (best_meta, best_s, best_br)
         resize.last_P = best
+        resize.last_model = best_model
         return _build(source, target_canvas, best)
     except Exception:
         if DEBUG:

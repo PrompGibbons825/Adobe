@@ -222,7 +222,7 @@ def main(root, picks):
         ours = resize(src, {"width": ref_v["w"], "height": ref_v["h"]})
         meta = resize.last_choice[0]
         ourP = getattr(resize, "last_P", None)
-        model = analyze(src)
+        model = getattr(resize, "last_model", None) or analyze(src)   # the reading the engine chose
         (out / f"{p}_ours.json").write_text(json.dumps(ours, indent=1))
         cases.append({
             "name": p, "title": src_v.get("title", ""), "src": src, "ours": ours, "meta": meta,

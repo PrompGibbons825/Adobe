@@ -257,13 +257,13 @@ def _is_backdrop(e, cw, ch):
     if e["type"] == "text" or not _fills_box(e):
         return False
     x0, y0, x1, y1 = _box(e)
-    if (min(x1, cw) - max(x0, 0)) * (min(y1, ch) - max(y0, 0)) < 0.3 * cw * ch:
+    if (min(x1, cw) - max(x0, 0)) * (min(y1, ch) - max(y0, 0)) < 0.5 * cw * ch:
         return False
     t = 0.01 * min(cw, ch)
     return (x0 <= t) + (y0 <= t) + (x1 >= cw - t) + (y1 >= ch - t) >= 2
 
 
-def _cluster(cand, carea, mind, cw_=None, ch_=None):
+def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False):
     """Union-find over elements, in three passes.
 
     strong:  designer groups, word fragments, overlapping texts, and enclosure
@@ -287,13 +287,17 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None):
         r = uf.find(rx)
         has_text[r] = has_text[rx] or has_text[ry]
         framed[r] = framed[rx] or framed[ry]
-
-    # large *detailed* images (photos) are backdrops, not glue; large *flat*
-    # panels (cards, colour blocks) are containers and keep their contents
     # backdrops: content floating on them is not glued to them. A backdrop
-    # fills its box, covers much of the canvas and runs off two or more edges.
+    # fills its box, covers half the canvas or more and runs off two or more edges.
     # Anything else (a circle, a cross, a card) is an object or a container.
-    big = {e["id"] for e in cand if cw_ and _is_backdrop(e, cw_, ch_)}
+    # Nothing is a backdrop when it sits on a detailed full-canvas background
+    # (a band over a photo is a panel on the scene, not the scene).
+    big = {e["id"] for e in cand if cw_ and not on_scene and _is_backdrop(e, cw_, ch_)}
+    if not compose:
+        # the loose reading: a large *detailed* picture is not a container either
+        # (text stays readable on a flat card, not on a detailed picture)
+        big |= {e["id"] for e in cand if e["type"] == "image" and _fills_box(e) and _area(e) > 0.15 * carea
+                and (saliency.analyze(e.get("asset_id") or "") or {}).get("busyness", 0) > 0.03}
     enclosers: dict[str, list] = {}
     contacts, weak, overlaps = [], [], []
     for i, a in enumerate(cand):
@@ -304,7 +308,7 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None):
             if a.get("group_id") and b.get("group_id"):
                 continue
             ta, tb = a["type"] == "text", b["type"] == "text"
-            if not ta and not tb and _flush(a, b, mind):
+            if compose and not ta and not tb and _flush(a, b, mind):
                 union(a["id"], b["id"])   # designed together: two or more shared edge lines
                 continue
             if a["id"] in big or b["id"] in big:
@@ -348,12 +352,13 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None):
         union(oid, f["id"])
         if byid[oid]["type"] == "text":
             framed[uf.find(oid)] = True
-    for x, y in contacts:
-        union(x, y)
-    # two text cards that overlap at all, however little, are one composition
-    for x, y in overlaps:
-        if framed[uf.find(x)] and framed[uf.find(y)]:
+    if compose:
+        for x, y in contacts:
             union(x, y)
+        # two text cards that overlap at all, however little, are one composition
+        for x, y in overlaps:
+            if framed[uf.find(x)] and framed[uf.find(y)]:
+                union(x, y)
     for _, x, y, fx, fy in sorted(weak, reverse=True):
         rx, ry = uf.find(x), uf.find(y)
         if rx == ry:
@@ -503,7 +508,10 @@ def _aligned_anchor(u, units, cw, mind):
     return best[:2] if best else None
 
 
-def analyze(source: dict) -> dict:
+def analyze(source: dict, compose: bool = True) -> dict:
+    """compose=False leaves compositions (pieces joined only by contact, flush
+    edges or overlapping text cards) as separate units: the engine also tries
+    that reading, so a composition never forces unreadable text."""
     cw, ch = source["canvas"]["width"], source["canvas"]["height"]
     els = [dict(e) for e in source["elements"]]
     for i, e in enumerate(els):
@@ -608,7 +616,10 @@ def analyze(source: dict) -> dict:
             used.add(e["id"])
             cand.remove(e)
     singles_img = []
-    for members in _cluster(cand, carea, mind, cw, ch):
+    on_scene = any(u.role == "bg" and u.els[0]["type"] == "image"
+                   and (saliency.analyze(u.els[0].get("asset_id") or "") or {}).get("busyness", 0) > 0.03
+                   for u in units)
+    for members in _cluster(cand, carea, mind, cw, ch, compose, on_scene):
         for e in members:
             used.add(e["id"])
         if len(members) == 1:
