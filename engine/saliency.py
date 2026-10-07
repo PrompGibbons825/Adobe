@@ -1,0 +1,132 @@
+"""Image analysis: saliency (where the eye goes) and busyness (where text
+would be hard to read). Classical methods only: no weights, runs offline.
+
+- Spectral residual saliency (Hou & Zhang 2007): the log amplitude spectrum
+  of natural images is smooth; whatever sticks out of that smooth curve is
+  "unexpected" content, i.e. the subject.
+- Busyness: local edge density. A smooth gradient scores ~0, a photo of
+  foliage scores high. This is the "text never sits on a busy image" check.
+- For transparent PNG cutouts, alpha IS the object mask.
+"""
+
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageFilter
+
+ASSETS_DIR = Path(os.environ.get("CHAMELEON_ASSETS_DIR", "brand_kit/assets"))
+_WORK = 128  # analysis resolution (long side)
+
+
+def asset_file(asset_id: str | None) -> Path | None:
+    if not asset_id:
+        return None
+    p = ASSETS_DIR / asset_id
+    return p if p.is_file() else None
+
+
+@lru_cache(maxsize=64)
+def _load(asset_id: str):
+    p = asset_file(asset_id)
+    if p is None:
+        return None
+    try:
+        im = Image.open(p).convert("RGBA")
+    except Exception:
+        return None
+    return im
+
+
+def image_size(asset_id: str) -> tuple[int, int] | None:
+    im = _load(asset_id)
+    return im.size if im else None
+
+
+@lru_cache(maxsize=64)
+def analyze(asset_id: str) -> dict | None:
+    """Returns dict with saliency map, busy map (both HxW float 0..1 at work
+    res), alpha bbox (fractions), and salient-box (fractions)."""
+    im = _load(asset_id)
+    if im is None:
+        return None
+    w, h = im.size
+    s = _WORK / max(w, h)
+    sw, sh = max(8, round(w * s)), max(8, round(h * s))
+    small = im.resize((sw, sh), Image.LANCZOS)
+    arr = np.asarray(small).astype(np.float32) / 255.0
+    alpha = arr[..., 3]
+    gray = (arr[..., :3] @ np.array([0.299, 0.587, 0.114], dtype=np.float32)) * alpha
+
+    # --- spectral residual ---
+    f = np.fft.fft2(gray)
+    log_amp = np.log(np.abs(f) + 1e-8)
+    phase = np.angle(f)
+    k = 3
+    pad = np.pad(log_amp, k // 2, mode="edge")
+    avg = np.zeros_like(log_amp)
+    for dy in range(k):
+        for dx in range(k):
+            avg += pad[dy: dy + log_amp.shape[0], dx: dx + log_amp.shape[1]]
+    avg /= k * k
+    resid = log_amp - avg
+    sal = np.abs(np.fft.ifft2(np.exp(resid + 1j * phase))) ** 2
+    sal_img = Image.fromarray((sal / (sal.max() + 1e-8) * 255).astype(np.uint8))
+    sal = np.asarray(sal_img.filter(ImageFilter.GaussianBlur(radius=max(2, sw // 24)))).astype(np.float32)
+    sal = sal / (sal.max() + 1e-8)
+
+    # --- busyness: gradient magnitude, locally averaged ---
+    gy, gx = np.gradient(gray)
+    grad = np.sqrt(gx ** 2 + gy ** 2)
+    grad_img = Image.fromarray(np.clip(grad * 4 * 255, 0, 255).astype(np.uint8))
+    busy = np.asarray(grad_img.filter(ImageFilter.BoxBlur(radius=max(2, sw // 20)))).astype(np.float32) / 255.0
+
+    # weight saliency by alpha (transparent pixels are never the subject)
+    has_alpha = alpha.min() < 0.98
+    if has_alpha:
+        sal = 0.5 * sal * alpha + 0.5 * alpha
+    sal = sal / (sal.max() + 1e-8)
+
+    # alpha bbox
+    ys, xs = np.where(alpha > 0.05)
+    if len(xs):
+        abox = (xs.min() / sw, ys.min() / sh, (xs.max() + 1) / sw, (ys.max() + 1) / sh)
+    else:
+        abox = (0, 0, 1, 1)
+
+    # salient box: smallest box holding ~80% of saliency mass above threshold
+    thr = np.quantile(sal, 0.85)
+    mask = sal >= thr
+    ys, xs = np.where(mask)
+    if len(xs):
+        sbox = (np.quantile(xs, 0.05) / sw, np.quantile(ys, 0.05) / sh,
+                (np.quantile(xs, 0.95) + 1) / sw, (np.quantile(ys, 0.95) + 1) / sh)
+        wts = sal[mask]
+        cx = float((xs * wts).sum() / wts.sum() + 0.5) / sw
+        cy = float((ys * wts).sum() / wts.sum() + 0.5) / sh
+    else:
+        sbox, cx, cy = (0.25, 0.25, 0.75, 0.75), 0.5, 0.5
+
+    return {
+        "size": (w, h),
+        "sal": sal,
+        "busy": busy,
+        "alpha_box": abox,
+        "sal_box": sbox,
+        "centroid": (cx, cy),
+        "has_alpha": bool(has_alpha),
+        "busyness": float(busy.mean()),
+    }
+
+
+def region_mean(map_: np.ndarray, fx0: float, fy0: float, fx1: float, fy1: float) -> float:
+    """Mean of map over a fractional region of the image."""
+    h, w = map_.shape
+    x0, x1 = int(max(0, min(w, fx0 * w))), int(max(0, min(w, np.ceil(fx1 * w))))
+    y0, y1 = int(max(0, min(h, fy0 * h))), int(max(0, min(h, np.ceil(fy1 * h))))
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    return float(map_[y0:y1, x0:x1].mean())
