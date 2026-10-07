@@ -120,7 +120,39 @@ def analyze(asset_id: str) -> dict | None:
         "has_alpha": bool(has_alpha),
         "busyness": float(busy.mean()),
         "opaque_frac": float((alpha > 0.5).mean()),
+        "edge_cover": _edge_cover(_alpha_maxpooled(im)),
+        "corners": _corners(_alpha_maxpooled(im)),
     }
+
+
+def _alpha_maxpooled(im: Image.Image, long_side: int = 256) -> np.ndarray:
+    """Alpha downsampled with max-pooling so thin/dotted lines survive."""
+    a = im.getchannel("A")
+    k = max(1, int(max(a.size) / long_side))
+    if k > 1:
+        a = a.filter(ImageFilter.MaxFilter(2 * (k // 2) + 1))
+        a = a.resize((max(8, a.width // k), max(8, a.height // k)), Image.NEAREST)
+    return np.asarray(a).astype(np.float32) / 255.0
+
+
+def _edge_cover(alpha: np.ndarray) -> float:
+    """How much of each side of the box is traced by opaque pixels (min over
+    the four sides). ~1 for a rectangular border, low for a hexagon/circle."""
+    h, w = alpha.shape
+    bx, by = max(1, int(round(w * 0.06))), max(1, int(round(h * 0.06)))
+    m = alpha > 0.3
+    sides = [m[:by, :].any(axis=0).mean(), m[-by:, :].any(axis=0).mean(),
+             m[:, :bx].any(axis=1).mean(), m[:, -bx:].any(axis=1).mean()]
+    return float(min(sides))
+
+
+def _corners(alpha: np.ndarray) -> bool:
+    """True when all four corners of the box carry ink (rectangular frames do;
+    hexagons, circles and diamonds don't)."""
+    h, w = alpha.shape
+    bx, by = max(1, int(round(w * 0.06))), max(1, int(round(h * 0.06)))
+    m = alpha > 0.3
+    return bool(m[:by, :bx].any() and m[:by, -bx:].any() and m[-by:, :bx].any() and m[-by:, -bx:].any())
 
 
 def region_mean(map_: np.ndarray, fx0: float, fy0: float, fx1: float, fy1: float) -> float:

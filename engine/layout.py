@@ -18,6 +18,14 @@ class Ctx:
         self.W, self.H = target["width"], target["height"]
         self.t_star = ((self.W * self.H) / (self.Ws * self.Hs)) ** 0.5
         self.margin = 0.06 * min(self.W, self.H) + 0.01 * max(self.W, self.H)
+        # a border that echoes the canvas edge keeps its inset; content stays inside it
+        k = min(self.W, self.H) / min(self.Ws, self.Hs)
+        self.border_scale = k
+        for u in model["units"]:
+            if u.role == "border":
+                inner = max(getattr(u, "insets", (0, 0, 0, 0))) * k
+                if inner > 0:
+                    self.margin = max(self.margin, inner + 0.04 * min(self.W, self.H))
 
 
 def _src_gaps(units):

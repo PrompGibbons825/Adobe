@@ -117,6 +117,16 @@ def _inside(inner, outer, tol=0.15):
     return _inter(inner, outer) >= (1 - tol) * max(1e-6, _area(inner))
 
 
+def _corners(e):
+    info = saliency.analyze(e.get("asset_id") or "")
+    return info["corners"] if info else False
+
+
+def _edge_cover(e):
+    info = saliency.analyze(e.get("asset_id") or "")
+    return info["edge_cover"] if info else 0.0
+
+
 def _opaque_frac(e):
     if e["type"] != "image":
         return 1.0
@@ -199,8 +209,10 @@ def _cluster(cand, carea, mind):
                         uf.union(a["id"], b["id"])
                 elif inter >= 0.15 * small:
                     uf.union(a["id"], b["id"])
-                elif _gap(a, b) <= 0.012 * mind and small < 0.015 * carea and not (ta and tb):
-                    uf.union(a["id"], b["id"])
+                elif not (ta and tb) and (
+                        (_gap(a, b) <= 0.012 * mind and small < 0.015 * carea)
+                        or (_gap(a, b) <= 0.025 * mind and min(opaque[a["id"]], opaque[b["id"]]) < 0.4)):
+                    uf.union(a["id"], b["id"])  # ornaments / line-art pieces of a lockup
     comps: dict[str, list] = {}
     for e in cand:
         comps.setdefault(uf.find(e["id"]), []).append(e)
@@ -269,11 +281,34 @@ def analyze(source: dict) -> dict:
     units: list[Unit] = []
     used = set()
 
-    # 1. Backgrounds: full-bleed layers at the bottom of the stack
+    # 1a. Borders: outlines that echo the canvas edge (even insets on all sides).
+    #     A designer keeps these hugging the edge at the same inset, whatever the shape.
+    borders = []
+    for e in els:
+        if e["type"] == "text" or e.get("group_id") or abs(e.get("rotation", 0) or 0) > 1:
+            continue
+        ins = (e["x"], e["y"], cw - e["x"] - e["width"], ch - e["y"] - e["height"])
+        outline = (_opaque_frac(e) < 0.35 and _edge_cover(e) > 0.4 and _corners(e)) if e["type"] == "image" else (
+            "rgba(0,0,0,0)" in e.get("fill_color", "").replace(" ", "") or (e.get("stroke_width") or 0) > 0
+            and re.search(r",\s*0(\.0+)?\)", e.get("fill_color", "")) is not None)
+        if outline and min(ins) >= -0.01 * mind and max(ins) <= 0.15 * mind \
+                and max(ins) - min(ins) <= 0.05 * mind and _area(e) >= 0.55 * carea:
+            borders.append((e, ins))
+    for e, ins in borders:
+        u = Unit(e["id"], "border", "bg", [e])
+        u.insets = ins
+        units.append(u)
+        used.add(e["id"])
+
+    # 1b. Backgrounds: full-bleed layers at the bottom of the stack
     for e in sorted(els, key=lambda e: e["z_index"]):
+        if e["id"] in used:
+            continue
         if e["type"] in ("image", "shape") and _area(e) >= 0.85 * carea and not e.get("group_id"):
             if _opaque_frac(e) < 0.3:
-                units.append(Unit(e["id"], "frame_bg", "bg", [e]))  # border/frame over the canvas
+                u = Unit(e["id"], "border", "bg", [e])  # full-canvas overlay/frame
+                u.insets = (e["x"], e["y"], cw - e["x"] - e["width"], ch - e["y"] - e["height"])
+                units.append(u)
             else:
                 units.append(Unit(e["id"], "bg", "bg", [e]))
             used.add(e["id"])
@@ -374,4 +409,14 @@ def analyze(source: dict) -> dict:
     for u in units:
         u.prio = PRIORITY.get(u.role, 0)
 
-    return {"canvas": (cw, ch), "units": units, "els": {e["id"]: e for e in els}, "troles": troles}
+    content = [u for u in units if u.role not in ("bg", "border", "deco", "missing")]
+    centered = False
+    if content:
+        # area-weighted horizontal center of the content, and whether the key units sit on the axis
+        tot = sum(max(1.0, u.w * u.h) for u in content)
+        cx = sum((u.bbox[0] + u.bbox[2]) / 2 * max(1.0, u.w * u.h) for u in content) / tot
+        key = [u for u in content if u.role in ("headline", "logo", "cta", "subhead")] or content
+        on_axis = all(abs((u.bbox[0] + u.bbox[2]) / 2 - cw / 2) < 0.08 * cw for u in key)
+        centered = abs(cx - cw / 2) < 0.06 * cw and on_axis
+    return {"canvas": (cw, ch), "units": units, "els": {e["id"]: e for e in els}, "troles": troles,
+            "centered": centered}

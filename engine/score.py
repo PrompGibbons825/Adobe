@@ -15,7 +15,7 @@ MIN_REL = {"headline": 0.045, "cta": 0.022, "subhead": 0.018, "body": 0.016, "gr
 def score(ctx, P, model):
     W, H = ctx.W, ctx.H
     br = {}
-    units = [u for u in model["units"] if u.role not in ("bg", "deco")]
+    units = [u for u in model["units"] if u.role not in ("bg", "deco", "border")]
     owner = {}
     for u in units:
         for eid in u.ids:
@@ -113,5 +113,33 @@ def score(ctx, P, model):
             if v[0] < edge or v[1] < edge or v[2] > W - edge or v[3] > H - edge:
                 bal -= 0.5
     br["balance"] = bal
+
+    # 7. visual weight balance (center of mass of text, images and the photo's subject)
+    #    and the rule of thirds for the subject
+    wsum, mx, my = 0.0, 0.0, 0.0
+    frame_conts = {u.container["id"] for u in units if u.kind == "frame" and u.container}
+    for eid in ids:
+        v = P.vis[eid]
+        a = (v[2] - v[0]) * (v[3] - v[1]) / (W * H)
+        typ = model["els"][eid]["type"]
+        w = a * (2.0 if typ == "text" else 1.0) * (0.25 if eid in frame_conts else 1.0)
+        wsum += w
+        mx += w * (v[0] + v[2]) / 2
+        my += w * (v[1] + v[3]) / 2
+    if P.bg_focal is not None:
+        fcx, fcy, fw = P.bg_focal
+        wsum += fw
+        mx += fw * fcx
+        my += fw * fcy
+    wb = 0.0
+    if wsum > 0:
+        cmx, cmy = mx / wsum / W, my / wsum / H
+        k = 12.0 if model.get("centered") else 8.0
+        wb -= k * abs(cmx - 0.5) + 0.5 * k * abs(cmy - 0.5)
+    if P.bg_focal is not None and W > 1.2 * H:
+        fx = P.bg_focal[0] / W
+        d = min(abs(fx - 1 / 3), abs(fx - 2 / 3), abs(fx - 0.5) * 1.5)
+        wb += 1.5 * max(0.0, 1 - d / (1 / 6))
+    br["weight_balance"] = wb
 
     return sum(br.values()), br

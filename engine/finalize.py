@@ -12,40 +12,78 @@ from .blocks import GroupBlock, ImageBlock, rot_bounds
 HIDE_ROLES = {"missing"}
 
 
-def place_bg(ctx, P, unit):
+def _text_center(P, model):
+    tot, sx, sy = 0.0, 0.0, 0.0
+    for eid, v in P.vis.items():
+        if model["els"].get(eid, {}).get("type") != "text":
+            continue
+        a = max(1.0, (v[2] - v[0]) * (v[3] - v[1]))
+        tot += a
+        sx += a * (v[0] + v[2]) / 2
+        sy += a * (v[1] + v[3]) / 2
+    return (sx / tot, sy / tot) if tot else None
+
+
+def _thirds_target(text_c, size):
+    """Where the image's focal point should land on one axis: on the third
+    line opposite the text, or centered when the text is centered."""
+    if text_c is None:
+        return 0.5
+    t = text_c / size
+    if t < 0.42:
+        return 2 / 3
+    if t > 0.58:
+        return 1 / 3
+    return 0.5
+
+
+def place_bg(ctx, P, unit, model=None):
     el = unit.els[0]
     W, H = ctx.W, ctx.H
     info = saliency.analyze(el.get("asset_id") or "") if el["type"] == "image" else None
     if info is None:
         P.set(el["id"], x=0, y=0, width=W, height=H)
-        P.bg_map = None
         return
     iw, ih = info["size"]
     s = max(W / iw, H / ih)
     bw, bh = iw * s, ih * s
     wx, wy = W / bw, H / bh  # visible window, as fraction of image
-    sal = info["sal"]
-    tot = float(sal.sum()) + 1e-8
-
-    def kept(x0, y0):
-        return saliency.region_mean(sal, x0, y0, x0 + wx, y0 + wy) * (wx * wy) * sal.size / tot
-
     cx0, cy0 = (1 - wx) / 2, (1 - wy) / 2
     sb = info["sal_box"]
     concentrated = (sb[2] - sb[0]) * (sb[3] - sb[1]) < 0.45
-    if not concentrated or kept(cx0, cy0) >= 0.85 or (wx > 0.98 and wy > 0.98):
-        x0, y0 = cx0, cy0
-    else:
-        # slide the window to keep the salient centroid as central as possible
-        cx, cy = info["centroid"]
-        x0 = min(max(cx - wx / 2, 0.0), 1 - wx)
-        y0 = min(max(cy - wy / 2, 0.0), 1 - wy)
+    x0, y0 = cx0, cy0
+    if concentrated and not (wx > 0.98 and wy > 0.98):
+        # rule of thirds: slide the crop so the subject sits on the third line
+        # opposite the text (only along the axis that has room to slide)
+        fx, fy = info["centroid"]
+        tc = _text_center(P, model) if model else None
+        if wx < 0.98:
+            tx = _thirds_target(tc[0] if tc else None, W)
+            x0 = min(max(fx - tx * wx, 0.0), 1 - wx)
+        if wy < 0.98:
+            ty = _thirds_target(tc[1] if tc else None, H)
+            y0 = min(max(fy - ty * wy, 0.0), 1 - wy)
     if abs(x0 - cx0) < 1e-3 and abs(y0 - cy0) < 1e-3 and el.get("fit", "contain") == "cover":
         P.set(el["id"], x=0, y=0, width=W, height=H)
     else:
         P.set(el["id"], x=-x0 * bw, y=-y0 * bh, width=bw, height=bh)
     P.bg_map = (info["busy"], -x0 * bw, -y0 * bh, bw, bh)
     P.bg_sal = info["sal"] if concentrated else None
+    if concentrated:
+        fx, fy = info["centroid"]
+        fcx, fcy = -x0 * bw + fx * bw, -y0 * bh + fy * bh
+        # visual weight of the subject: its on-canvas size x how strongly it stands out
+        sa = ((sb[2] - sb[0]) * bw * (sb[3] - sb[1]) * bh) / (W * H)
+        strength = float(info["sal"].max() - info["sal"].mean())
+        P.bg_focal = (fcx, fcy, min(1.0, sa) * (0.5 + strength))
+
+
+def place_border(ctx, P, unit):
+    """Borders keep hugging the canvas edge at the same (scaled) inset."""
+    el = unit.els[0]
+    k = ctx.border_scale
+    l, t, r, b = (max(0.0, v) * k for v in getattr(unit, "insets", (0, 0, 0, 0)))
+    P.set(el["id"], x=l, y=t, width=max(1.0, ctx.W - l - r), height=max(1.0, ctx.H - t - b))
 
 
 def place_deco(ctx, P, unit):
@@ -126,7 +164,7 @@ def hide(P, el, W, H):
 
 def clamp_inside(ctx, P, model):
     W, H = ctx.W, ctx.H
-    skip = {e["id"] for u in model["units"] if u.role in ("bg", "deco") for e in u.els}
+    skip = {e["id"] for u in model["units"] if u.role in ("bg", "deco", "border") for e in u.els}
     for eid, p in P.props.items():
         if eid in skip or eid in P.hidden:
             continue
@@ -163,12 +201,13 @@ def finalize(ctx, P, model, float_threshold=0.0):
     P.min_z = min(e.get("z_index", 0) for e in model["els"].values())
     P.bg_map = None
     P.bg_sal = None
+    P.bg_focal = None
     t = P.meta.get("t", ctx.t_star)
     for u in model["units"]:
         if u.role == "bg":
-            place_bg(ctx, P, u)
-        elif u.role == "frame_bg":
-            place_frame_bg(ctx, P, u)
+            place_bg(ctx, P, u, model)
+        elif u.role == "border":
+            place_border(ctx, P, u)
         elif u.role == "deco":
             place_deco(ctx, P, u)
     for u in sorted(model["units"], key=lambda u: -u.prio):

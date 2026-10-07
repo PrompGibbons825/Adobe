@@ -35,6 +35,8 @@ def font(size, bold=False):
 
 
 def unit_label(u, modes):
+    if u.role == "border":
+        return "border · hugs canvas edge"
     if u.kind == "frame":
         m = modes.get(u.uid)
         from collections import Counter
@@ -176,8 +178,12 @@ def main(root, picks):
         for n, u in enumerate(c["units"]):
             col = PALETTE[n % len(PALETTE)]
             d.rectangle([int(x), ly + 6, int(x) + 26, ly + 32], fill=col)
-            d.text((int(x) + 38, ly + 2), f"G{n + 1}  {unit_label(u, modes)}", fill=(40, 40, 40), font=font(26))
-            ly += 40
+            import textwrap
+            lines = textwrap.wrap(f"G{n + 1}  {unit_label(u, modes)}", 34)
+            for j, ln in enumerate(lines):
+                d.text((int(x) + 38 + (0 if j == 0 else 44), ly + 2), ln, fill=(40, 40, 40), font=font(26))
+                ly += 34
+            ly += 6
             if ly > y + row_h - 20:
                 break
         y += row_h + 25
