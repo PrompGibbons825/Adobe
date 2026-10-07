@@ -255,10 +255,17 @@ class FrameBlock:
         tgt_ca = ctx.W / ctx.H
         self.t_aspect = self.aspect * (tgt_ca / src_ca) ** alpha
         self.t_aspect = min(max(self.t_aspect, self.aspect / 4), self.aspect * 4)
+        # A detailed picture is never reshaped. A flat card that fills its box
+        # may change shape: it is cropped (fit=cover), never stretched.
+        self.crop_card = False
         if c["type"] == "image":
             from .analyze import _fills_box
             if _fills_box(c):
-                self.t_aspect = self.aspect   # a picture is never stretched
+                info = saliency.analyze(c.get("asset_id") or "")
+                if info is not None and info["busyness"] > 0.03:
+                    self.t_aspect = self.aspect
+                else:
+                    self.crop_card = True
 
     def dims(self, t):
         area = self.cw * self.ch * t * t
@@ -286,6 +293,8 @@ class FrameBlock:
         from .layout import inner_layout
         c = self.c
         P.set(c["id"], x=bx, y=by, width=w, height=h)
+        if self.crop_card and abs(w / max(1e-6, h) - self.aspect) > 0.01 * self.aspect:
+            P.set(c["id"], fit="cover")
         P.vis[c["id"]] = (bx, by, bx + w, by + h)
         # padding keeps its proportion on each axis, but never more than it was at uniform scale
         pl = min(self.pad[0] * w, self.pad[0] * self.cw * t * 1.5)

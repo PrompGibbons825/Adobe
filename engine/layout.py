@@ -44,9 +44,19 @@ def _src_fs(u):
     return min(fss) if fss else None
 
 
-def block_scale(u, t, k, boost=True):
+def grows(u, units):
+    """The pieces that grow into free space: the hero visual and the headline
+    (alone or as the composition carrying it)."""
+    if u.role == "hero":
+        return True
+    return u.role == "headline"
+
+
+def block_scale(u, t, k, boost=True, grow=False):
     if u.role == "hero":
         return t * k
+    if grow:                       # the headline grows with k but never shrinks below t
+        return t * max(1.0, k)
     fs = _src_fs(u)
     if boost and fs and u.role in MIN_FS:
         return max(t, MIN_FS[u.role] / fs)
@@ -54,7 +64,7 @@ def block_scale(u, t, k, boost=True):
 
 
 def _stack_sizes(blocks, units, t, k, max_w, boost=True):
-    return [b.size(block_scale(u, t, k, boost), max_w) for b, u in zip(blocks, units)]
+    return [b.size(block_scale(u, t, k, boost, grows(u, units)), max_w) for b, u in zip(blocks, units)]
 
 
 def stack(ctx: Ctx, P: Placed, units, rect, align, t_hi):
@@ -74,20 +84,22 @@ def _stack(ctx: Ctx, P: Placed, units, rect, align, t_hi, boost):
     blocks = [make_block(u, ctx.Ws, ctx) for u in units]
     rx, ry, rw, rh = rect
     base_gaps = [min(max(g, 0.02 * ctx.Hs), 0.08 * ctx.Hs) for g in _src_gaps(units)]
-    has_hero = any(u.role == "hero" for u in units)
-    k_min = 0.6 if has_hero else 1.0
+    has_hero = any(grows(u, units) for u in units)
+    k_min = 0.6 if any(u.role == "hero" for u in units) else 1.0
 
     def total(t, k):
         sizes = _stack_sizes(blocks, units, t, k, rw, boost)
         return sum(s[1] for s in sizes) + sum(g * t for g in base_gaps), sizes
 
+    # with no hero image, keep room for the headline to stand 1.4x above the rest
+    k_t = 1.4 if k_min == 1.0 and has_hero else k_min
     lo, hi = 0.0, t_hi
-    if total(hi, k_min)[0] <= rh:
+    if total(hi, k_t)[0] <= rh:
         lo = hi
     else:
         for _ in range(30):
             mid = (lo + hi) / 2
-            if total(mid, k_min)[0] <= rh:
+            if total(mid, k_t)[0] <= rh:
                 lo = mid
             else:
                 hi = mid
@@ -114,13 +126,14 @@ def _stack(ctx: Ctx, P: Placed, units, rect, align, t_hi, boost):
         slack -= extra
     y = ry + max(0.0, slack) / 2
     for i, (b, u) in enumerate(zip(blocks, units)):
-        b.place(P, rx, y, block_scale(u, t, k, boost), rw, align)
+        b.place(P, rx, y, block_scale(u, t, k, boost, grows(u, units)), rw, align)
         y += sizes[i][1] + (gaps[i] if i < len(gaps) else 0)
     return t
 
 
 def t_cap(ctx, col_w):
-    return min(1.25 * ctx.t_star, 2.0)
+    # type may grow with the canvas: a small banner's 15px headline becomes ~50px on a big one
+    return min(1.25 * ctx.t_star, 3.0)
 
 
 def tmpl_stack(ctx, flow, align="center", region="full", tscale=1.0):
@@ -547,4 +560,66 @@ def tmpl_backdrop(ctx, flow, align="center", region="full"):
         return None
     P.backdrop = hero
     P.meta["template"] = "backdrop-" + P.meta["template"]
+    return P
+
+
+def tmpl_card_panel(ctx, flow, side="left", frac=0.5):
+    """A card (a frame whose container is a flat, box-filling piece) becomes a
+    full-bleed band on one side, its text reflowed inside; the background
+    shows on the other side. The card is cropped to the band (excess runs off
+    the canvas edges it touches), never stretched."""
+    from .blocks import FrameBlock
+    W, H = ctx.W, ctx.H
+    wide = side in ("left", "right")
+    if (wide and W / H < 1.2) or (not wide and H / W < 1.2):
+        return None
+    frames = [u for u in flow if u.kind == "frame"]
+    if not frames:
+        return None
+    card = max(frames, key=lambda u: u.container["width"] * u.container["height"])
+    fb = FrameBlock(card, ctx)
+    if not fb.crop_card and card.container["type"] != "shape":
+        return None
+    P = Placed()
+    if wide:
+        bw, bh = W * frac, H
+        rect = (0.0, 0.0, bw, bh) if side == "left" else (W - bw, 0.0, bw, bh)
+    else:
+        bw, bh = W, H * frac
+        rect = (0.0, 0.0, bw, bh) if side == "top" else (0.0, H - bh, bw, bh)
+    c = card.container
+    rx, ry, rw, rh = rect
+    if c["type"] == "image":
+        s = max(rw / c["width"], rh / c["height"])
+        cw_, ch_ = c["width"] * s, c["height"] * s
+        # excess runs outward only: pinned to the band's inner edge
+        if wide:
+            cx = rx + rw - cw_ if side == "left" else rx
+            cy = ry + (rh - ch_) / 2
+        else:
+            cx = rx + (rw - cw_) / 2
+            cy = ry + rh - ch_ if side == "top" else ry
+        P.set(c["id"], x=cx, y=cy, width=cw_, height=ch_)
+    else:
+        P.set(c["id"], x=rx, y=ry, width=rw, height=rh)
+    P.vis[c["id"]] = rect
+    P.panel = {"id": c["id"], "rect": rect, "side": side}
+    m = ctx.margin
+    inner = (rx + m, ry + m, rw - 2 * m, rh - 2 * m)
+    P.frame_modes = {}
+    P.frame_modes[card.uid] = inner_layout(ctx, P, card.children, inner, 1.25 * ctx.t_star)
+    if P.frame_modes[card.uid] is None:
+        return None
+    rest = [u for u in flow if u is not card]
+    t = 1.0
+    if rest:
+        if wide:
+            ox = rect[2] if side == "left" else 0.0
+            t = stack(ctx, P, rest, (ox + m, m, W - rect[2] - 2 * m, H - 2 * m), "center", t_cap(ctx, W))
+        else:
+            oy = rect[3] if side == "top" else 0.0
+            t = stack(ctx, P, rest, (m, oy + m, W - 2 * m, H - rect[3] - 2 * m), "center", t_cap(ctx, W))
+        if t is None:
+            return None
+    P.meta = {"template": f"cardpanel-{side}-{frac}", "t": t}
     return P

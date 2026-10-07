@@ -192,6 +192,37 @@ def _text_roles(texts):
 ROLE_ORDER = ["headline", "cta", "subhead", "body", "legal"]
 
 
+def _same_line(a, b):
+    """Two texts set side by side on one line (HOHOHO | AGENCY): same baseline,
+    similar size, a word space apart. They read as one line."""
+    if any(abs(e.get("rotation", 0) or 0) > 1 for e in (a, b)):
+        return False
+    fa, fb = a["font_size"], b["font_size"]
+    if abs(fa - fb) > 0.2 * max(fa, fb):
+        return False
+    from . import textfit
+    try:
+        ma = textfit.measure(a, max(1, int(fa)), a["width"])
+        mb = textfit.measure(b, max(1, int(fb)), b["width"])
+    except Exception:
+        return False
+    if ma["lines"] != 1 or mb["lines"] != 1:
+        return False
+    A, B = _box(a), _box(b)
+    if abs(A[3] - B[3]) > 0.25 * max(fa, fb):
+        return False
+    # inked horizontal extents, by alignment inside each box
+    def ink(e, m, bx):
+        w = min(e["width"], m["width"])
+        al = e.get("text_align", "left")
+        x0 = bx[0] + (e["width"] - w) * (0.5 if al == "center" else 1.0 if al == "right" else 0.0)
+        return x0, x0 + w
+    a0, a1 = ink(a, ma, A)
+    b0, b1 = ink(b, mb, B)
+    gap = max(a0, b0) - min(a1, b1)
+    return -0.1 * max(fa, fb) <= gap <= 0.8 * max(fa, fb)
+
+
 def _fragments(a, b):
     """Two texts that are pieces of one word: same style, touching, and at
     least one is a fragment of a few letters."""
@@ -315,8 +346,8 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False
                 if not ta and not tb and _contact(a, b, mind, carea):
                     contacts.append((a["id"], b["id"]))
                 continue
-            if ta and tb and _fragments(a, b):
-                union(a["id"], b["id"])   # one word split across texts ("PA" / "IN")
+            if ta and tb and (_fragments(a, b) or _same_line(a, b)):
+                union(a["id"], b["id"])   # one word split across texts ("PA" / "IN"), or one line
                 continue
             inter = _inter(a, b)
             small = min(_area(a), _area(b))

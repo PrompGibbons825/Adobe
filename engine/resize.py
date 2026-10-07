@@ -21,7 +21,7 @@ from typing import Any
 
 from .analyze import FLOW_ROLES, analyze
 from .finalize import finalize
-from .layout import Ctx, tmpl_backdrop, tmpl_panel, tmpl_row, tmpl_split, tmpl_stack
+from .layout import Ctx, tmpl_backdrop, tmpl_card_panel, tmpl_panel, tmpl_row, tmpl_split, tmpl_stack
 from .score import score
 
 DEBUG = os.environ.get("CHAMELEON_DEBUG") == "1"
@@ -74,6 +74,9 @@ def _templates_raw(ctx, flow):
             if region == "full" or (region in ("left", "right") and ctx.W / ctx.H > 1.2) \
                     or (region in ("top", "bottom") and ctx.H / ctx.W > 1.2):
                 yield 0.0, lambda f=flow, a=align, r=region: tmpl_backdrop(ctx, f, a, r)
+    for side in ("left", "right", "top", "bottom"):
+        for frac in (0.4, 0.55, 0.7):
+            yield 0.0, lambda f=flow, s=side, fr=frac: tmpl_card_panel(ctx, f, s, fr)
     for side in ("left", "right", "top", "bottom"):
         for frac in (0.3, 0.45):
             yield 0.0, lambda f=flow, s=side, fr=frac: tmpl_panel(ctx, f, s, fr)

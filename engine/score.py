@@ -46,6 +46,24 @@ def weight_items(P, model, W, H, ids, units):
     return items, (sum(i[1] * i[3] for i in items) / tot, sum(i[2] * i[3] for i in items) / tot)
 
 
+def _plates(P, model):
+    """Opaque flat pieces (cards, bars, plates) as placed: (box, z)."""
+    from .analyze import _fills_box
+    out = []
+    for i, v in P.vis.items():
+        el = model["els"].get(i)
+        if el is None or el["type"] == "text" or i in P.hidden:
+            continue
+        if (el.get("opacity", 1) or 1) < 0.8 or not _fills_box(el):
+            continue
+        if el["type"] == "image":
+            info = saliency.analyze(el.get("asset_id") or "")
+            if info is None or info["busyness"] > 0.03:
+                continue
+        out.append((v, el.get("z_index", 0)))
+    return out
+
+
 def score(ctx, P, model):
     W, H = ctx.W, ctx.H
     br = {}
@@ -98,8 +116,15 @@ def score(ctx, P, model):
     drift = 0.0
     for i in range(len(sizes)):
         for j in range(i + 1, len(sizes)):
-            (s1, o1), (s2, o2) = sizes[i], sizes[j]
-            drift += abs(math.log(max(1e-6, o1 / max(1e-6, o2)) / max(1e-6, s1 / s2)))
+            (s1, o1), (s2, o2) = sizes[i], sizes[j]          # s1 >= s2 in the source
+            r_src, r_out = s1 / max(1e-6, s2), o1 / max(1e-6, o2)
+            if r_src < 1.05:
+                drift += abs(math.log(max(1e-6, r_out)))           # set equal: stay equal
+            elif r_out < 1.0:
+                drift += math.log(1.0 / max(1e-6, r_out))          # order flipped
+            elif r_out > r_src:
+                drift += 0.5 * math.log(r_out / r_src)             # secondary text shrank away
+            # small text growing toward the headline (legibility) is free
     br["hierarchy"] = -2.0 * drift
 
     # 3. prominence: headline + hero reasonably large vs the ideal scale
@@ -132,6 +157,25 @@ def score(ctx, P, model):
         prom -= 10 * max(0.0, covered - getattr(hero, "src_covered", 0.0) - 0.1)
     br["prominence"] = prom
 
+    # share of the canvas: the headline unit and the hero keep at least ~70%
+    # of the share of the canvas they had in the source
+    share = 0.0
+    Ws, Hs = model["canvas"]
+    for u in units:
+        if u.role not in ("headline", "hero"):
+            continue
+        bs = [P.vis[i] for i in u.ids if i in P.vis]
+        if not bs:
+            continue
+        if getattr(P, "backdrop", None) is u or (getattr(P, "panel", None) and P.panel["id"] in u.ids):
+            continue
+        x0, y0, x1, y1 = u.bbox
+        src = max(0.0, min(x1, Ws) - max(x0, 0)) * max(0.0, min(y1, Hs) - max(y0, 0)) / (Ws * Hs)
+        out = (max(b[2] for b in bs) - min(b[0] for b in bs)) * (max(b[3] for b in bs) - min(b[1] for b in bs)) / (W * H)
+        if src > 0:
+            share -= 6 * max(0.0, 0.7 - out / src)
+    br["share"] = share
+
     # 4. collisions between different units
     col = 0.0
     ids = [i for i in P.vis if i not in P.hidden and i in owner]
@@ -158,10 +202,14 @@ def score(ctx, P, model):
     busy = 0.0
     if P.bg_map is not None:
         bmap, bx, by, bw, bh = P.bg_map
+        plates = _plates(P, model)
         for eid in ids:
             if model["els"][eid]["type"] != "text":
                 continue
             v = P.vis[eid]
+            z = model["els"][eid].get("z_index", 0)
+            if any(pz < z and _overlap(v, pb) >= 0.9 * max(1.0, _area(v)) for pb, pz in plates):
+                continue          # text on its own card or plate is not on the background
             b = saliency.region_mean(bmap, (v[0] - bx) / bw, (v[1] - by) / bh, (v[2] - bx) / bw, (v[3] - by) / bh)
             busy -= 10 * max(0.0, b - 0.06)
             if P.bg_sal is not None:
