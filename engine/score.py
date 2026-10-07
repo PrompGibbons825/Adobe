@@ -101,6 +101,14 @@ def score(ctx, P, model):
             prom += 2 * min(1.0, a / (src_a * ctx.t_star ** 2 * 0.8))
             # the hero visual should command the canvas: reward up to ~30% of it
             prom += 3 * min(1.0, a / (0.30 * W * H))
+    if hero and getattr(P, "backdrop", None) is hero:
+        prom += 5      # a backdrop fills the canvas: as prominent as a hero gets
+        # ...but only if it stays about as visible as the designer left it
+        from .analyze import coverage
+        over = [P.vis[i] for i in P.vis if i in owner and owner[i] is not hero
+                and i not in P.hidden and model["els"][i]["type"] != "text"]
+        covered = coverage(over, (0, 0, W, H))
+        prom -= 10 * max(0.0, covered - getattr(hero, "src_covered", 0.0) - 0.1)
     br["prominence"] = prom
 
     # 4. collisions between different units
@@ -149,7 +157,10 @@ def score(ctx, P, model):
         fill = ((x1 - x0) * (y1 - y0)) / (W * H)
         bal += 3 * min(1.0, fill / 0.55)
         edge = 0.015 * min(W, H)
-        for v in vis:
+        panel = getattr(P, "panel", None)
+        for eid, v in zip(ids, vis):
+            if panel and eid == panel["id"]:
+                continue          # a full-bleed photo panel is meant to touch the edges
             if v[0] < edge or v[1] < edge or v[2] > W - edge or v[3] > H - edge:
                 bal -= 0.5
     br["balance"] = bal
@@ -167,6 +178,19 @@ def score(ctx, P, model):
         fx = P.bg_focal[0] / W
         d = min(abs(fx - 1 / 3), abs(fx - 2 / 3), abs(fx - 0.5) * 1.5)
         wb += 1.5 * max(0.0, 1 - d / (1 / 6))
+    # faithfulness: a centred design that comes out left-aligned has to earn it
+    if model.get("centered"):
+        tot = left = 0.0
+        for eid in ids:
+            el = model["els"][eid]
+            if el["type"] != "text":
+                continue
+            a = _area(P.vis[eid])
+            tot += a
+            if P.props.get(eid, {}).get("text_align", el.get("text_align", "left")) == "left":
+                left += a
+        if tot and left / tot > 0.5:
+            wb -= 1.5
     br["weight_balance"] = wb
 
     # 8. figure-ground relations: a unit that sat on the photo's subject in the

@@ -132,28 +132,39 @@ def place_float(ctx, P, unit, s0):
     pad_x = (sb[0] if left else ctx.Ws - sb[2])
     pad_y = (sb[1] if top else ctx.Hs - sb[3])
     s = s0
+    # its own corner first, then the mirrored ones, before shrinking
+    corners = [(left, top), (not left, top), (left, not top), (not left, not top)]
     for attempt in range(4):
         last = attempt == 3
         bw, bh = (sb[2] - sb[0]) * s, (sb[3] - sb[1]) * s
         px = max(4, pad_x * s)
         py = max(4, pad_y * s)
-        tx = px if left else W - px - bw
-        ty = py if top else H - py - bh
-        tx = min(max(tx, 0), max(0, W - bw))
-        ty = min(max(ty, 0), max(0, H - bh))
-        box = (tx, ty, tx + bw, ty + bh)
-        if last or (all(_overlap(box, o) <= 0.03 * _area(box) for o in occupied) and bw <= W and bh <= H):
-            if unit.kind == "image":
-                el = unit.els[0]
-                ew, eh = el["width"] * s, el["height"] * s
-                P.set(el["id"], x=tx + (ew - bw) / 2 * 0, y=ty, width=ew, height=eh)
-                v = blk.v
-                P.vis[el["id"]] = (tx + v[0] * ew, ty + v[1] * eh, tx + v[2] * ew, ty + v[3] * eh)
-            else:
-                b = blk.bounds_at(0, 0, s)
-                blk.place_at(P, tx - b[0], ty - b[1], s)
-            return True
-        s *= 0.75
+        for ci, (cl, ct) in enumerate(corners):
+            tx = px if cl else W - px - bw
+            ty = py if ct else H - py - bh
+            tx = min(max(tx, 0), max(0, W - bw))
+            ty = min(max(ty, 0), max(0, H - bh))
+            box = (tx, ty, tx + bw, ty + bh)
+            free = all(_overlap(box, o) <= 0.03 * _area(box) for o in occupied) and bw <= W and bh <= H
+            if free or (last and ci == len(corners) - 1):
+                if not free:
+                    tx, ty = (px if left else W - px - bw), (py if top else H - py - bh)
+                    tx = min(max(tx, 0), max(0, W - bw))
+                    ty = min(max(ty, 0), max(0, H - bh))
+                break
+        else:
+            s *= 0.75
+            continue
+        if unit.kind == "image":
+            el = unit.els[0]
+            ew, eh = el["width"] * s, el["height"] * s
+            P.set(el["id"], x=tx, y=ty, width=ew, height=eh)
+            v = blk.v
+            P.vis[el["id"]] = (tx + v[0] * ew, ty + v[1] * eh, tx + v[2] * ew, ty + v[3] * eh)
+        else:
+            b = blk.bounds_at(0, 0, s)
+            blk.place_at(P, tx - b[0], ty - b[1], s)
+        return True
     return False
 
 
@@ -173,6 +184,10 @@ def hide(P, el, W, H):
 def clamp_inside(ctx, P, model):
     W, H = ctx.W, ctx.H
     skip = {e["id"] for u in model["units"] if u.role in ("bg", "deco", "border", "anchored") for e in u.els}
+    if getattr(P, "panel", None):
+        skip.add(P.panel["id"])   # a photo panel bleeds off the canvas edges it touches
+    if getattr(P, "backdrop", None) is not None:
+        skip.update(P.backdrop.ids)
     for eid, p in P.props.items():
         if eid in skip or eid in P.hidden:
             continue
@@ -202,6 +217,55 @@ def place_frame_bg(ctx, P, unit):
     P.set(el["id"], x=el["x"] * sx, y=el["y"] * sy, width=el["width"] * sx, height=el["height"] * sy)
 
 
+def _vis_box(P, ids):
+    bs = [P.vis[i] for i in ids if i in P.vis]
+    if not bs:
+        return None
+    return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+
+
+def place_aligned(ctx, P, unit, model):
+    """Keep a small piece on its anchor's line (centre, left or right), on the
+    same side of it and at the same gap, scaled with the anchor. Returns
+    False when that spot is off the canvas or taken."""
+    from .analyze import _unit_ink
+    anchor = next((u for u in model["units"] if u.uid == unit.anchor_uid), None)
+    if anchor is None:
+        return False
+    nb = _vis_box(P, anchor.ids)
+    if nb is None:
+        return False
+    ob, pb = _unit_ink(anchor), _unit_ink(unit)
+    s = (nb[3] - nb[1]) / max(1e-6, ob[3] - ob[1])
+    pw, ph = (pb[2] - pb[0]) * s, (pb[3] - pb[1]) * s
+    line = unit.align_line
+    # the anchor's own alignment may have changed (a left-aligned row column)
+    al = {model["els"][i].get("text_align") for i in anchor.ids if model["els"][i]["type"] == "text"}
+    new_al = {P.props.get(i, {}).get("text_align") for i in anchor.ids if model["els"][i]["type"] == "text"} - {None}
+    if line == "center" and new_al and new_al != {"center"} and al != new_al:
+        line = "left" if "left" in new_al else "right"
+    x = {"center": (nb[0] + nb[2]) / 2 - pw / 2, "left": nb[0], "right": nb[2] - pw}[line]
+    above = pb[3] <= ob[1]
+    gap = (ob[1] - pb[3] if above else pb[1] - ob[3]) * s
+    y = nb[1] - gap - ph if above else nb[3] + gap
+    box = (x, y, x + pw, y + ph)
+    edge = 0.01 * min(ctx.W, ctx.H)
+    if box[0] < edge or box[1] < edge or box[2] > ctx.W - edge or box[3] > ctx.H - edge:
+        return False
+    if any(_overlap(box, v) > 0.03 * _area(box) for v in P.vis.values()):
+        return False
+    if unit.kind == "image":
+        el = unit.els[0]
+        P.set(el["id"], x=x, y=y, width=pw, height=ph)
+        v = img_vis_frac(el)
+        P.vis[el["id"]] = (x + v[0] * pw, y + v[1] * ph, x + v[2] * pw, y + v[3] * ph)
+    else:
+        blk = GroupBlock(unit)
+        b = blk.bounds_at(0, 0, s)
+        blk.place_at(P, x - b[0], y - b[1], s)
+    return True
+
+
 def finalize(ctx, P, model, float_threshold=0.0):
     """Returns P, or None if the template failed to place some unit
     (nothing may be dropped)."""
@@ -219,6 +283,8 @@ def finalize(ctx, P, model, float_threshold=0.0):
     # defines the crop, the subject and the busy map used for scoring
     for u in sorted((u for u in model["units"] if u.role == "bg"), key=_detail):
         place_bg(ctx, P, u, model)
+    if getattr(P, "backdrop", None) is not None:
+        place_bg(ctx, P, P.backdrop, model)   # over the plain backgrounds; defines the busy map
     for u in model["units"]:
         if u.role == "bg":
             continue
@@ -229,6 +295,10 @@ def finalize(ctx, P, model, float_threshold=0.0):
     for u in model["units"]:
         if u.role == "anchored":
             place_anchored(ctx, P, u)
+    for u in model["units"]:
+        if u.role == "aligned" and u.els[0]["id"] not in P.props:
+            if not place_aligned(ctx, P, u, model):
+                place_float(ctx, P, u, min(t, 1.5))
     for u in sorted(model["units"], key=lambda u: -u.prio):
         if u.role in ("ribbon", "minor"):
             place_float(ctx, P, u, min(t, 1.5))

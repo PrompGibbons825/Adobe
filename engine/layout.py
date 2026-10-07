@@ -208,13 +208,17 @@ def _fit_column(texts, col_w, h_avail, fs_cap):
     return layout(lo) if lo > 0 else None
 
 
-def tmpl_row(ctx, flow, item_scale=1.0, ncols=1):
-    """Everything on one line, every unit kept: logo | hero | text column(s) | groups | badges | cta."""
+def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None):
+    """Everything on one line, every unit kept: logo | hero | text column(s) | groups | badges | cta.
+    `area` = (x, width) restricts the row to a vertical band of the canvas.
+    Aligned pieces are left to finalize, which keeps them on their anchor's line."""
     from .blocks import BadgesBlock
-    W, H = ctx.W, ctx.H
+    ax, W = area if area else (0.0, ctx.W)
+    H = ctx.H
     if W / H < 2.2:
         return None
-    P = Placed()
+    flow = [u for u in flow if u.role != "aligned"]
+    P = P if P is not None else Placed()
     mv = 0.12 * H
     hA = H - 2 * mv
     gut = max(0.015 * W, 0.6 * mv)
@@ -265,6 +269,8 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1):
             cols = [texts]
         for c in cols:
             items.append({"order": 2, "kind": "textcol", "unit": None, "texts": c, "x0": c[0].bbox[0]})
+    if not items:
+        return None
     items.sort(key=lambda it: (it["order"], it["x0"]))
 
     def pad(it, side):
@@ -296,7 +302,7 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1):
     if n > 1 and g < gut * 0.5:
         return None
     g = min(g, 0.08 * W)
-    x = mL + (W - mL - mR - total_w - g * (n - 1)) / 2
+    x = ax + mL + (W - mL - mR - total_w - g * (n - 1)) / 2
     cy = H / 2
     head_t = 1.0
     for it in items:
@@ -305,8 +311,12 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1):
             it["block"].place_vis(P, x, cy - it["h"] / 2, it["s"])
         elif k == "group":
             it["block"].place_at(P, x, cy - it["h"] / 2, it["s"])
+            if it["unit"].role == "headline":
+                head_t = it["s"]       # a headline lockup: its scale is the text scale
         elif k == "frame":
             it["block"].place_box(P, x, cy - it["h"] / 2, it["w"], it["h"], it["s"])
+            if it["unit"].role == "headline":
+                head_t = it["s"]
         elif k == "badges":
             it["block"].place(P, x, cy - it["h"] / 2, it["s"], it["w"] + 1, "left")
         elif k == "ctatext":
@@ -432,3 +442,109 @@ def inner_layout(ctx, P, units, rect, t):
     P.frame_modes = getattr(P, "frame_modes", {})
     P.frame_modes.update(getattr(best, "frame_modes", {}))
     return mode
+
+
+def place_photo_panel(ctx, P, hero, rect, side):
+    """Crop a photographic hero to fill `rect`, a full-bleed band along one
+    canvas edge. The photo keeps its proportions; it is scaled to cover the
+    band and slides along the band so its subject sits mid-band. Any excess
+    runs off the canvas edges the band touches, never into the content."""
+    from . import saliency
+    el = hero.els[0]
+    info = saliency.analyze(el.get("asset_id") or "")
+    if info is None:
+        return False
+    rx, ry, rw, rh = rect
+    s = max(rw / el["width"], rh / el["height"])
+    bw, bh = el["width"] * s, el["height"] * s
+    sb = info["sal_box"]
+    concentrated = (sb[2] - sb[0]) * (sb[3] - sb[1]) < 0.45
+    fx, fy = info["centroid"] if concentrated else (0.5, 0.5)
+    # a diffuse subject still has an extent: follow it along an axis it doesn't fill
+    if not concentrated:
+        if sb[2] - sb[0] < 0.8:
+            fx = (sb[0] + sb[2]) / 2
+        if sb[3] - sb[1] < 0.8:
+            fy = (sb[1] + sb[3]) / 2
+    if side in ("left", "right"):
+        # vertical slide is free (top and bottom are canvas edges)
+        y = min(max(ry + rh / 2 - fy * bh, ry + rh - bh), ry)
+        # horizontally the inner edge is pinned to the band; excess goes outward
+        x = rx + rw - bw if side == "left" else rx
+    else:
+        x = min(max(rx + rw / 2 - fx * bw, rx + rw - bw), rx)
+        y = ry + rh - bh if side == "top" else ry
+    P.set(el["id"], x=x, y=y, width=bw, height=bh)
+    P.vis[el["id"]] = (rx, ry, rx + rw, ry + rh)
+    P.panel = {"id": el["id"], "rect": rect, "side": side}
+    return True
+
+
+def tmpl_panel(ctx, flow, side="left", frac=0.4):
+    """A photographic hero fills a full-bleed band on one side of the canvas;
+    everything else is laid out in the rest (as a row on extreme banners,
+    as a stack otherwise)."""
+    heroes = [u for u in flow if u.role == "hero" and getattr(u, "photo", False)]
+    if not heroes:
+        return None
+    W, H = ctx.W, ctx.H
+    wide = side in ("left", "right")
+    if (wide and W / H < 1.2) or (not wide and H / W < 1.2):
+        return None
+    hero = heroes[0]
+    rest = [u for u in flow if u is not hero]
+    # The photo fills the band's full cross-size and is cropped only along the
+    # band (the free axis, which runs off the canvas). If at full cross-size it
+    # is longer than the band, the band grows to show it whole; a photo that
+    # would need more than 60% of the canvas is a backdrop, not a panel.
+    el = hero.els[0]
+    A = el["width"] / max(1e-6, el["height"])
+    natural = A * H / W if wide else (W / A) / H
+    if natural > 0.6:
+        return None
+    frac = max(frac, natural)
+    P = Placed()
+    if wide:
+        pw = W * frac
+        rect = (0.0, 0.0, pw, H) if side == "left" else (W - pw, 0.0, pw, H)
+    else:
+        ph = H * frac
+        rect = (0.0, 0.0, W, ph) if side == "top" else (0.0, H - ph, W, ph)
+    if not place_photo_panel(ctx, P, hero, rect, side):
+        return None
+    m = ctx.margin
+    if wide:
+        cx0 = rect[2] if side == "left" else 0.0
+        cw = W - rect[2]
+        if cw / H >= 2.2:
+            R = tmpl_row(ctx, rest, 1.0, 1, area=(cx0, cw), P=P)
+            if R is None:
+                R = tmpl_row(ctx, rest, 0.7, 1, area=(cx0, cw), P=P)
+            if R is None:
+                return None
+            t = R.meta["t"]
+        else:
+            t = stack(ctx, P, rest, (cx0 + m, m, cw - 2 * m, H - 2 * m), "center", t_cap(ctx, cw))
+    else:
+        cy0 = rect[3] if side == "top" else 0.0
+        ch = H - rect[3]
+        t = stack(ctx, P, rest, (m, cy0 + m, W - 2 * m, ch - 2 * m), "center", t_cap(ctx, W))
+    if t is None:
+        return None
+    P.meta = {"template": f"panel-{side}-{frac}", "t": t}
+    return P
+
+
+def tmpl_backdrop(ctx, flow, align="center", region="full"):
+    """A full-bleed hero photo becomes the backdrop (cropped to cover the
+    canvas in finalize, like a background); the rest is stacked over it."""
+    heroes = [u for u in flow if u.role == "hero" and getattr(u, "backdrop", False)]
+    if not heroes:
+        return None
+    hero = heroes[0]
+    P = tmpl_stack(ctx, [u for u in flow if u is not hero], align, region)
+    if P is None:
+        return None
+    P.backdrop = hero
+    P.meta["template"] = "backdrop-" + P.meta["template"]
+    return P

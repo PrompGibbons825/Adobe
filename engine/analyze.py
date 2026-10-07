@@ -20,10 +20,10 @@ CTA_LEAD = re.compile(r"^\W*" + CTA_WORDS.pattern, re.I)  # "Shop now", not "We'
 
 PRIORITY = {
     "headline": 10, "logo": 9, "cta": 8.5, "hero": 7, "subhead": 5, "body": 4,
-    "group": 4, "badges": 3, "ribbon": 2.5, "minor": 1.5, "legal": 1.2, "missing": 0,
+    "group": 4, "badges": 3, "ribbon": 2.5, "minor": 1.5, "aligned": 1.5, "legal": 1.2, "missing": 0,
 }
 # Roles that are laid out in the main flow (others float or fill)
-FLOW_ROLES = {"headline", "logo", "cta", "hero", "subhead", "body", "group", "badges", "legal"}
+FLOW_ROLES = {"headline", "logo", "cta", "hero", "subhead", "body", "group", "badges", "legal", "aligned"}
 
 
 @dataclass
@@ -192,6 +192,25 @@ def _text_roles(texts):
 ROLE_ORDER = ["headline", "cta", "subhead", "body", "legal"]
 
 
+def _fragments(a, b):
+    """Two texts that are pieces of one word: same style, touching, and at
+    least one is a fragment of a few letters."""
+    if any(abs(e.get("rotation", 0) or 0) > 1 for e in (a, b)):
+        return False
+    short = min(len(re.sub(r"\s", "", e["content"])) for e in (a, b))
+    if short == 0 or short > 3:
+        return False
+    fa, fb = a["font_size"], b["font_size"]
+    if abs(fa - fb) > 0.1 * max(fa, fb):
+        return False
+    for k in ("font_family", "font_weight", "font_style"):
+        if a.get(k) != b.get(k):
+            return False
+    if re.sub(r"\s", "", a.get("color", "")) != re.sub(r"\s", "", b.get("color", "")):
+        return False
+    return _gap(a, b) <= 0.3 * min(fa, fb)
+
+
 def _cluster(cand, carea, mind):
     """Union-find over elements: designer groups, frames enclosing content,
     overlapping pieces, and small ornaments touching their neighbour."""
@@ -218,6 +237,9 @@ def _cluster(cand, carea, mind):
             if a["id"] in big or b["id"] in big:
                 continue
             ta, tb = a["type"] == "text", b["type"] == "text"
+            if ta and tb and _fragments(a, b):
+                uf.union(a["id"], b["id"])   # one word split across texts ("PA" / "IN")
+                continue
             inter = _inter(a, b)
             small = min(_area(a), _area(b))
             for f, o in ((a, b), (b, a)):
@@ -291,6 +313,86 @@ def _group_unit(members, troles, carea, mind, depth=0):
                 children.append(_group_unit(sub, troles, carea, mind, depth + 1))
         return Unit(gid, role, "frame", members, container=cont, children=children)
     return Unit(gid, role, "group", members)
+
+
+def _ink_box(e):
+    """Box of what an element actually draws (an image's opaque pixels)."""
+    x0, y0, x1, y1 = _box(e)
+    if e["type"] == "image":
+        info = saliency.analyze(e.get("asset_id") or "")
+        if info is not None:
+            ab = info["alpha_box"]
+            w, h = x1 - x0, y1 - y0
+            return (x0 + ab[0] * w, y0 + ab[1] * h, x0 + ab[2] * w, y0 + ab[3] * h)
+    return (x0, y0, x1, y1)
+
+
+def coverage(boxes, region, n=64):
+    """Share of `region` covered by the union of `boxes` (coarse raster)."""
+    import numpy as np
+    rx0, ry0, rx1, ry1 = region
+    if rx1 <= rx0 or ry1 <= ry0:
+        return 0.0
+    g = np.zeros((n, n), bool)
+    for b in boxes:
+        i0 = int(np.clip((b[0] - rx0) / (rx1 - rx0) * n, 0, n))
+        i1 = int(np.clip(np.ceil((b[2] - rx0) / (rx1 - rx0) * n), 0, n))
+        j0 = int(np.clip((b[1] - ry0) / (ry1 - ry0) * n, 0, n))
+        j1 = int(np.clip(np.ceil((b[3] - ry0) / (ry1 - ry0) * n), 0, n))
+        g[j0:j1, i0:i1] = True
+    return float(g.mean())
+
+
+ANCHOR_ROLES = {"headline", "subhead", "body", "cta", "legal", "logo"}
+
+
+def _unit_ink(u):
+    """Inked horizontal extent and vertical extent of a unit, in source px."""
+    boxes = []
+    for e in (u.els if u.kind != "badges" else [x for m in u.members for x in m.els]):
+        x0, y0, x1, y1 = _box(e)
+        if e["type"] == "text":
+            from . import textfit
+            try:
+                w = min(e["width"], textfit.measure(e, max(1, int(e["font_size"])), e["width"])["width"])
+            except Exception:
+                w = e["width"]
+            al = e.get("text_align", "left")
+            x0 = x0 + (e["width"] - w) * (0.5 if al == "center" else 1.0 if al == "right" else 0.0)
+            x1 = x0 + w
+        boxes.append((x0, y0, x1, y1))
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+            max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def _aligned_anchor(u, units, cw, mind):
+    """(anchor unit, 'center'|'left'|'right') if u sits right above or below a
+    text-bearing unit on one of its lines, else None."""
+    pb = _unit_ink(u)
+    pw = pb[2] - pb[0]
+    best = None
+    for a in units:
+        if a is u or a.role not in ANCHOR_ROLES:
+            continue
+        ab = _unit_ink(a)
+        aw = ab[2] - ab[0]
+        if pw > aw:
+            continue                       # a satellite is smaller than its anchor
+        if pb[3] <= ab[1]:
+            gap = ab[1] - pb[3]
+        elif pb[1] >= ab[3]:
+            gap = pb[1] - ab[3]
+        else:
+            continue                       # side by side or overlapping: not this rule
+        if gap > 0.08 * mind:
+            continue
+        tol = 0.02 * cw
+        lines = (("center", abs((pb[0] + pb[2]) / 2 - (ab[0] + ab[2]) / 2)),
+                 ("left", abs(pb[0] - ab[0])), ("right", abs(pb[2] - ab[2])))
+        line, d = min(lines, key=lambda x: x[1])
+        if d <= tol and (best is None or gap < best[2]):
+            best = (a, line, gap)
+    return best[:2] if best else None
 
 
 def analyze(source: dict) -> dict:
@@ -537,6 +639,40 @@ def analyze(source: dict) -> dict:
             units.append(Unit(sp["id"], "deco", "deco", [sp]))   # a stray speck: decoration
             continue
         _attach(sp, au)
+
+    deco_ids = {e["id"] for u in units if u.role in ("bg", "border", "deco", "missing") for e in u.els}
+
+    # 8b. Alignment inheritance: a small piece right above or below a text unit,
+    #     on the same centre / left / right line, stays on that line.
+    for u in units:
+        if u.role != "minor" or u.kind not in ("image", "group"):
+            continue
+        if any(abs(e.get("rotation", 0) or 0) > 1 for e in u.els):
+            continue
+        hit = _aligned_anchor(u, units, cw, mind)
+        if hit:
+            u.role, u.anchor_uid, u.align_line = "aligned", hit[0].uid, hit[1]
+
+    # 8c. Photographic hero: a rectangular, opaque, detailed picture. It may be
+    #     cropped to fill a panel of the canvas (it is a window onto a scene,
+    #     not an object with a silhouette).
+    for u in units:
+        if u.role == "hero" and u.kind == "image":
+            info = saliency.analyze(u.els[0].get("asset_id") or "")
+            u.photo = bool(info and info["opaque_frac"] > 0.97 and info["busyness"] > 0.03
+                           and abs(u.els[0].get("rotation", 0) or 0) < 1)
+            # a photo that bleeds off three or more edges and fills much of the
+            # canvas is the scene everything sits in: it may become a backdrop
+            x0, y0, x1, y1 = _box(u.els[0])
+            t_ = 0.01 * mind
+            edges = (x0 <= t_) + (y0 <= t_) + (x1 >= cw - t_) + (y1 >= ch - t_)
+            u.backdrop = u.photo and edges >= 3 and _area(u.els[0]) >= 0.4 * carea
+            if u.backdrop:
+                # how much of the photo the designer covered with opaque pieces
+                ph = u.els[0]
+                over = [_ink_box(e) for e in els if e["type"] != "text" and e is not ph
+                        and e["z_index"] > ph["z_index"] and e["id"] not in deco_ids]
+                u.src_covered = coverage(over, (max(0, x0), max(0, y0), min(cw, x1), min(ch, y1)))
 
     for u in units:
         u.prio = PRIORITY.get(u.role, 0)
