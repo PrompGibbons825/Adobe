@@ -121,6 +121,7 @@ def _broken(tight, loose):
 
 
 BREAK_COST = 2.0   # per composition taken apart: it has to buy readability or space
+RESTACK_COST = 0.5  # per composition re-stacked along the other axis
 
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
@@ -134,8 +135,16 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         if n:
             readings.append((loose, n))
         best, best_s, best_br, best_meta, best_model = None, -1e18, None, None, None
+        from .blocks import find_cut
+        passes = []
         for model, broken in readings:
+            passes.append((model, broken, False))
+            carea = model["canvas"][0] * model["canvas"][1]
+            if any(u.kind == "group" and u.role in FLOW_ROLES and find_cut(u, carea) for u in model["units"]):
+                passes.append((model, broken, True))     # compositions may re-stack
+        for model, broken, restack in passes:
             ctx = Ctx(model, target_canvas)
+            ctx.restack = restack
             for th, make in _candidates(ctx, model):
                 try:
                     P = make()
@@ -147,6 +156,10 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                     if broken:
                         br["grouping"] = -BREAK_COST * broken
                         s += br["grouping"]
+                    if getattr(P, "restacked", 0):
+                        br["restack"] = -RESTACK_COST * P.restacked
+                        s += br["restack"]
+                        P.meta["template"] += " restack"
                 except Exception:  # one bad candidate never kills the run
                     if DEBUG:
                         import traceback

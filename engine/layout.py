@@ -153,7 +153,7 @@ def tmpl_split(ctx, flow, side="left", frac=0.45, align="left"):
     m = ctx.margin
     W, H = ctx.W, ctx.H
     is_img = hero.kind == "image"
-    hb = ImageBlock(hero) if is_img else GroupBlock(hero)
+    hb = ImageBlock(hero) if is_img else make_block(hero, ctx.Ws, ctx)
     col_w = W * frac - 1.5 * m
     s = hb.scale_for(10.0, col_w, H - 2 * m)
     hw, hh = (hb.vw * s, hb.vh * s) if is_img else (hb.w * s, hb.h * s)
@@ -256,7 +256,7 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None):
             h = w / b.t_aspect
             it.update(kind="frame", block=b, w=w, h=h, s=h / b.dims(1.0)[1])
         else:
-            b = GroupBlock(u)
+            b = make_block(u, ctx.Ws, ctx)
             fh = {"cta": 0.7, "badges": 0.5, "headline": 1.0, "hero": 1.1}.get(u.role, 0.8)
             sc = b.scale_for(10.0, 0.32 * W * item_scale, hA * fh * item_scale)
             it.update(kind="group", block=b, w=b.w * sc, h=b.h * sc, s=sc)

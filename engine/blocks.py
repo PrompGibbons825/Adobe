@@ -297,9 +297,100 @@ class FrameBlock:
         P.frame_modes[self.unit.uid] = inner_layout(self.ctx, P, self.unit.children, rect, t)
 
 
+def find_cut(unit, carea):
+    """A clean cut through a composition: a horizontal or vertical line that
+    no substantial piece crosses, with real content on both sides. Small
+    connectors that straddle it go with the side holding their centre.
+    Returns (axis, part_a_els, part_b_els) or None."""
+    els = unit.els
+    if len(els) < 2:
+        return None
+    boxes = [rot_bounds(e["x"], e["y"], e["width"], e["height"], e.get("rotation", 0)) for e in els]
+    gx0, gy0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    gx1, gy1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+    garea = max(1.0, (gx1 - gx0) * (gy1 - gy0))
+    best = None
+    for axis in ("y", "x"):
+        lo, hi = (1, 3) if axis == "y" else (0, 2)
+        span0, span1 = (gy0, gy1) if axis == "y" else (gx0, gx1)
+        tol = 0.01 * (span1 - span0)
+        cands = sorted({b[hi] for b in boxes} | {b[lo] for b in boxes})
+        for c in cands:
+            if c <= span0 + 0.2 * (span1 - span0) or c >= span1 - 0.2 * (span1 - span0):
+                continue        # both sides must hold a real part
+            crossing = [b for b in boxes if b[lo] < c - tol and b[hi] > c + tol]
+            small = all((b[2] - b[0]) * (b[3] - b[1]) < 0.05 * garea for b in crossing)
+            if not small:
+                continue
+            a = [e for e, b in zip(els, boxes) if (b[lo] + b[hi]) / 2 < c]
+            bb = [e for e, b in zip(els, boxes) if (b[lo] + b[hi]) / 2 >= c]
+            if not a or not bb:
+                continue
+            bal = abs(len(a) - len(bb)) + abs((c - span0) - (span1 - c)) / (span1 - span0)
+            if best is None or bal < best[0]:
+                best = (bal, axis, a, bb)
+    return best[1:] if best else None
+
+
+class RestackBlock:
+    """A composition re-stacked along the other axis: two parts that were
+    stacked go side by side (or the reverse), still touching, same scale,
+    centres aligned. Each part keeps its own arrangement."""
+
+    def __init__(self, unit, cut):
+        from .analyze import Unit
+        axis, a, b = cut
+        self.unit = unit
+        self.parts = [GroupBlock(Unit(unit.uid + ":a", unit.role, "group", a)),
+                      GroupBlock(Unit(unit.uid + ":b", unit.role, "group", b))]
+        self.side = axis == "y"            # stacked in the source -> side by side now
+        pa, pb = self.parts
+        # keep the source gap between the parts (zero when they touched)
+        if self.side:
+            self.gap = max(0.0, pb.y0 - (pa.y0 + pa.h))
+            self.w, self.h = pa.w + self.gap + pb.w, max(pa.h, pb.h)
+        else:
+            self.gap = max(0.0, pb.x0 - (pa.x0 + pa.w))
+            self.w, self.h = max(pa.w, pb.w), pa.h + self.gap + pb.h
+        self.x0, self.y0 = unit.bbox[0], unit.bbox[1]
+
+    def scale_for(self, u, max_w, max_h=None):
+        if self.w * u > max_w:
+            u = max_w / self.w
+        if max_h is not None and self.h * u > max_h:
+            u = max_h / self.h
+        return u
+
+    def size(self, u, max_w):
+        u = self.scale_for(u, max_w)
+        return self.w * u, self.h * u
+
+    def place(self, P, x, y, u, max_w, align):
+        u = self.scale_for(u, max_w)
+        gx = x + (max_w - self.w * u) / 2 if align == "center" else x
+        self.place_at(P, gx, y, u)
+
+    def place_at(self, P, gx, gy, u):
+        pa, pb = self.parts
+        if self.side:
+            pa.place_at(P, gx, gy + (self.h - pa.h) * u / 2, u)
+            pb.place_at(P, gx + (pa.w + self.gap) * u, gy + (self.h - pb.h) * u / 2, u)
+        else:
+            pa.place_at(P, gx + (self.w - pa.w) * u / 2, gy, u)
+            pb.place_at(P, gx + (self.w - pb.w) * u / 2, gy + (pa.h + self.gap) * u, u)
+        P.restacked = getattr(P, "restacked", 0) + 1
+
+    def bounds_at(self, gx, gy, u):
+        return (gx, gy, gx + self.w * u, gy + self.h * u)
+
+
 def make_block(unit, src_w, ctx=None):
     if unit.kind == "frame" and ctx is not None:
         return FrameBlock(unit, ctx)
+    if unit.kind == "group" and ctx is not None and getattr(ctx, "restack", False):
+        cut = find_cut(unit, ctx.Ws * ctx.Hs)
+        if cut:
+            return RestackBlock(unit, cut)
     if unit.kind == "text":
         return TextBlock(unit, src_w)
     if unit.kind == "image":

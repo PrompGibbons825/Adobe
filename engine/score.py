@@ -71,7 +71,8 @@ def score(ctx, P, model):
             if el["type"] != "text" or eid in P.hidden:
                 continue
             fs = P.props[eid].get("font_size", el["font_size"])
-            role = model.get("troles", {}).get(eid, u.role) if u.kind == "frame" else u.role
+            # each text by its own role (a group's caption is not held to headline size)
+            role = model.get("troles", {}).get(eid, u.role) if u.kind != "text" else u.role
             mn = max(MIN_ABS.get(role, 10), MIN_REL.get(role, 0.015) * min(W, H))
             if role == "headline" and (hfs is None or fs > hfs):
                 hfs = fs
