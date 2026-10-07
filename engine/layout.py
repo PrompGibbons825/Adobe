@@ -123,7 +123,7 @@ def t_cap(ctx, col_w):
     return min(1.25 * ctx.t_star, 2.0)
 
 
-def tmpl_stack(ctx, flow, align="center", region="full"):
+def tmpl_stack(ctx, flow, align="center", region="full", tscale=1.0):
     P = Placed()
     m = ctx.margin
     W, H = ctx.W, ctx.H
@@ -134,10 +134,10 @@ def tmpl_stack(ctx, flow, align="center", region="full"):
         "top": (m, m, W - 2 * m, H * 0.55 - 1.5 * m),
         "bottom": (m, H * 0.45 + 0.5 * m, W - 2 * m, H * 0.55 - 1.5 * m),
     }[region]
-    t = stack(ctx, P, flow, rect, align, t_cap(ctx, rect[2]))
+    t = stack(ctx, P, flow, rect, align, t_cap(ctx, rect[2]) * tscale)
     if t is None:
         return None
-    P.meta = {"template": f"stack-{region}-{align}", "t": t}
+    P.meta = {"template": f"stack-{region}-{align}" + ("-herofirst" if tscale < 1 else ""), "t": t}
     return P
 
 
@@ -152,17 +152,21 @@ def tmpl_split(ctx, flow, side="left", frac=0.45, align="left"):
     P = Placed()
     m = ctx.margin
     W, H = ctx.W, ctx.H
-    hb = ImageBlock(hero)
+    is_img = hero.kind == "image"
+    hb = ImageBlock(hero) if is_img else GroupBlock(hero)
     col_w = W * frac - 1.5 * m
     s = hb.scale_for(10.0, col_w, H - 2 * m)
-    hw, hh = hb.vw * s, hb.vh * s
+    hw, hh = (hb.vw * s, hb.vh * s) if is_img else (hb.w * s, hb.h * s)
     if side == "left":
         hx = m + (col_w - hw) / 2
         text_rect = (W * frac + 0.5 * m, m, W * (1 - frac) - 1.5 * m, H - 2 * m)
     else:
         hx = W * (1 - frac) + 0.5 * m + (col_w - hw) / 2
         text_rect = (m, m, W * (1 - frac) - 1.5 * m, H - 2 * m)
-    hb.place_vis(P, hx, (H - hh) / 2, s)
+    if is_img:
+        hb.place_vis(P, hx, (H - hh) / 2, s)
+    else:
+        hb.place_at(P, hx, (H - hh) / 2, s)
     t = stack(ctx, P, rest, text_rect, align, t_cap(ctx, text_rect[2]))
     if t is None:
         return None
@@ -249,7 +253,7 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1):
             it.update(kind="frame", block=b, w=w, h=h, s=h / b.dims(1.0)[1])
         else:
             b = GroupBlock(u)
-            fh = {"cta": 0.7, "badges": 0.5, "headline": 1.0}.get(u.role, 0.8)
+            fh = {"cta": 0.7, "badges": 0.5, "headline": 1.0, "hero": 1.1}.get(u.role, 0.8)
             sc = b.scale_for(10.0, 0.32 * W * item_scale, hA * fh * item_scale)
             it.update(kind="group", block=b, w=b.w * sc, h=b.h * sc, s=sc)
         items.append(it)
@@ -334,17 +338,17 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1):
 
 
 def _inner_row(ctx, P, units, rect, t):
-    """Row inside a frame: non-text pieces on the left, one text column on
-    the right. Returns the text scale achieved, or None."""
+    """Row inside a frame. One piece: icon | text. Two or more: the pieces
+    flank the text (first one left, second right, alternating), and the text
+    column sits centered between them. Returns the text scale, or None."""
     rx, ry, rw, rh = rect
     texts = sorted([u for u in units if u.kind == "text"], key=lambda u: (u.bbox[1], u.bbox[0]))
-    rest = [u for u in units if u.kind != "text"]
+    rest = sorted([u for u in units if u.kind != "text"], key=lambda u: (u.bbox[1], u.bbox[0]))
     if not rest or not texts:
         return None
     g = 0.06 * rh
-    placed_w = 0.0
-    blocks = []
-    for u in sorted(rest, key=lambda u: (u.bbox[0], u.bbox[1])):
+    sized = []
+    for u in rest:
         b = make_block(u, ctx.Ws, ctx)
         if isinstance(b, ImageBlock):
             s = b.scale_for(t * 1.6, 0.3 * rw, 0.8 * rh)
@@ -355,9 +359,14 @@ def _inner_row(ctx, P, units, rect, t):
         else:
             s = t
             w, h = b.size(s, 0.3 * rw)
-        blocks.append((b, s, w, h))
-        placed_w += w + g
-    col_w = rw - placed_w
+        sized.append((b, s, w, h))
+    symmetric = len(sized) >= 2
+    left = sized[0::2] if symmetric else sized
+    right = sized[1::2] if symmetric else []
+    wl = sum(x[2] + g for x in left)
+    wr = sum(x[2] + g for x in right)
+    side = max(wl, wr) if symmetric else wl
+    col_w = rw - side * (2 if symmetric else 1)
     if col_w < 0.25 * rw:
         return None
     cap = max(u.els[0]["font_size"] for u in texts) * t * 1.6
@@ -366,21 +375,37 @@ def _inner_row(ctx, P, units, rect, t):
         return None
     tw = max(m["width"] for m in ms)
     th = sum(m["height"] for m in ms) + sum(m["fs"] * 0.3 for m in ms[1:])
-    x = rx + (rw - placed_w - tw) / 2
     cy = ry + rh / 2
-    for b, s, w, h in blocks:
+    align = "center" if symmetric else "left"
+    if symmetric:
+        cx = rx + rw / 2                      # text centered in the frame
+        tx = cx - tw / 2
+        lx_end, rx_start = tx - g, tx + tw + g
+    else:
+        tx = rx + (rw - wl - tw) / 2 + wl
+        lx_end, rx_start = tx - g, None
+
+    def put(b, s, x, w, h):
         if isinstance(b, ImageBlock):
             b.place_vis(P, x, cy - h / 2, s)
         elif isinstance(b, GroupBlock):
             b.place_at(P, x, cy - h / 2, s)
         else:
             b.place(P, x, cy - h / 2, s, w, "left")
+    x = lx_end
+    for b, s, w, h in reversed(left):        # pack leftwards from the text
+        x -= w
+        put(b, s, x, w, h)
+        x -= g
+    x = rx_start if rx_start is not None else 0
+    for b, s, w, h in right:
+        put(b, s, x, w, h)
         x += w + g
     y = cy - th / 2
     for u, m in zip(texts, ms):
         el = u.els[0]
-        P.set(el["id"], x=x, y=y, width=tw + m["fs"], height=m["height"], font_size=m["fs"], text_align="left")
-        P.vis[el["id"]] = tf.visual_box(dict(el, text_align="left"), x, y, tw + m["fs"], m["fs"], m)
+        P.set(el["id"], x=tx - m["fs"] / 2, y=y, width=tw + m["fs"], height=m["height"], font_size=m["fs"], text_align=align)
+        P.vis[el["id"]] = tf.visual_box(dict(el, text_align=align), tx - m["fs"] / 2, y, tw + m["fs"], m["fs"], m)
         y += m["height"] + m["fs"] * 0.3
     return ms[0]["fs"] / texts[0].els[0]["font_size"]
 

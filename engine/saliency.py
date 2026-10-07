@@ -101,7 +101,7 @@ def analyze(asset_id: str) -> dict | None:
     thr = np.quantile(sal, 0.85)
     mask = sal >= thr
     ys, xs = np.where(mask)
-    if len(xs):
+    if len(xs) and float(sal[mask].sum()) > 0:
         sbox = (np.quantile(xs, 0.05) / sw, np.quantile(ys, 0.05) / sh,
                 (np.quantile(xs, 0.95) + 1) / sw, (np.quantile(ys, 0.95) + 1) / sh)
         wts = sal[mask]

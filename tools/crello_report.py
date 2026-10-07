@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.crello_compare import render, renderer_with  # noqa: E402
 from engine.analyze import analyze  # noqa: E402
 from engine.resize import resize  # noqa: E402
+from engine.debug import source_placed  # noqa: E402
+from engine import saliency  # noqa: E402
 
 PALETTE = [(230, 57, 70), (29, 120, 220), (42, 157, 92), (245, 160, 20), (142, 68, 173),
            (0, 160, 170), (220, 80, 160), (120, 120, 120), (180, 110, 40), (90, 90, 220)]
@@ -91,6 +93,108 @@ def annotate(img, design, units, modes, scale):
     return Image.alpha_composite(im.convert("RGBA"), ov).convert("RGB")
 
 
+def _role_of(model, eid):
+    for u in model["units"]:
+        if eid in u.ids:
+            r = model.get("troles", {}).get(eid) if u.kind == "frame" else None
+            return r or u.role
+    return "?"
+
+
+def weight_lines(P, model, design):
+    W, H = design["canvas"]["width"], design["canvas"]["height"]
+    items = getattr(P, "weight_items", None) or []
+    tot = sum(i[3] for i in items) or 1.0
+    agg = {}
+    for eid, cx, cy, w, kind in items:
+        name = "photo subject" if kind == "subject" else f"{_role_of(model, eid)} ({'text' if kind == 'text' else 'image'})"
+        agg[name] = agg.get(name, 0.0) + w
+    out = [f"{n:<24} {w / tot * 100:4.0f}%" for n, w in sorted(agg.items(), key=lambda kv: -kv[1])[:6]]
+    cm = getattr(P, "cm", None)
+    if cm:
+        dx, dy = (cm[0] / W - 0.5) * 100, (cm[1] / H - 0.5) * 100
+        out.append(f"mass centre: {abs(dx):.0f}% {'left' if dx < 0 else 'right'}, {abs(dy):.0f}% {'up' if dy < 0 else 'down'}")
+    return out
+
+
+def _arrow(d, a, b, col, w=4):
+    import math as _m
+    d.line([a, b], fill=col, width=w)
+    ang = _m.atan2(b[1] - a[1], b[0] - a[0])
+    for s_ in (-0.5, 0.5):
+        d.line([b, (b[0] - 18 * _m.cos(ang + s_), b[1] - 18 * _m.sin(ang + s_))], fill=col, width=w)
+
+
+def diag_panel(render_img, design, P, model, assets, pw, ph, ghost):
+    W, H = design["canvas"]["width"], design["canvas"]["height"]
+    bi = getattr(P, "bg_info", None)
+    x0, y0, x1, y1 = 0.0, 0.0, float(W), float(H)
+    if ghost and bi:
+        bx, by, bw, bh = bi["box"]
+        x0, y0, x1, y1 = min(x0, bx), min(y0, by), max(x1, bx + bw), max(y1, by + bh)
+    sc = min(pw / (x1 - x0), ph / (y1 - y0))
+    PW, PH = max(1, int((x1 - x0) * sc)), max(1, int((y1 - y0) * sc))
+    panel = Image.new("RGB", (PW, PH), (236, 236, 236))
+
+    def T(px, py):
+        return ((px - x0) * sc, (py - y0) * sc)
+    if ghost and bi and bi.get("asset"):
+        try:
+            ap = Path(assets) / bi["asset"]
+            g = Image.open(ap).convert("RGB")
+            bx, by, bw, bh = bi["box"]
+            g = g.resize((max(1, int(bw * sc)), max(1, int(bh * sc))))
+            g = Image.blend(g, Image.new("RGB", g.size, (236, 236, 236)), 0.6)
+            panel.paste(g, tuple(int(v) for v in T(bx, by)))
+        except Exception:
+            pass
+    cx0, cy0 = T(0, 0)
+    canvas = render_img.convert("RGB").resize((max(1, int(W * sc)), max(1, int(H * sc))))
+    panel.paste(canvas, (int(cx0), int(cy0)))
+    ov = Image.new("RGBA", panel.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(ov)
+    if bi and bi.get("concentrated") and bi.get("asset"):
+        info = saliency.analyze(bi["asset"])
+        if info is not None:
+            bx, by, bw, bh = bi["box"]
+            hm = Image.fromarray((info["sal"] * 255).astype("uint8")).resize((max(1, int(bw * sc)), max(1, int(bh * sc))))
+            red = Image.new("RGBA", hm.size, (230, 40, 40, 0))
+            red.putalpha(hm.point(lambda v: 0 if v < 140 else int((v - 140) * 1.4)))
+            ov.alpha_composite(red, tuple(max(0, int(v)) for v in T(bx, by)) if bx >= x0 else (0, 0))
+            sb = bi["sal_box"]
+            d.rectangle([*T(sb[0], sb[1]), *T(sb[2], sb[3])], outline=(230, 40, 40, 255), width=3)
+            fx, fy = T(*bi["focal"])
+            d.line([(fx - 16, fy), (fx + 16, fy)], fill=(230, 40, 40, 255), width=4)
+            d.line([(fx, fy - 16), (fx, fy + 16)], fill=(230, 40, 40, 255), width=4)
+            if ghost:
+                gx, gy = T(*bi["focal_centered"])
+                if abs(gx - fx) + abs(gy - fy) > 6:
+                    d.ellipse([gx - 10, gy - 10, gx + 10, gy + 10], outline=(230, 40, 40, 255), width=3)
+                    _arrow(d, (gx, gy), (fx, fy), (230, 40, 40, 255))
+    for k in (1, 2):  # thirds
+        xa, _ = T(W * k / 3, 0)
+        _, ya = T(0, H * k / 3)
+        d.line([(xa, cy0), (xa, cy0 + H * sc)], fill=(120, 120, 120, 150), width=2)
+        d.line([(cx0, ya), (cx0 + W * sc, ya)], fill=(120, 120, 120, 150), width=2)
+    cols = {"text": (29, 120, 220), "image": (245, 150, 20), "shape": (245, 150, 20), "subject": (230, 40, 40)}
+    A = W * H * sc * sc
+    for eid, ex, ey, w, kind in getattr(P, "weight_items", None) or []:
+        r = max(3.0, (w * A * 0.35 / 3.1416) ** 0.5)
+        px, py = T(ex, ey)
+        col = cols.get(kind, (120, 120, 120))
+        d.ellipse([px - r, py - r, px + r, py + r], fill=col + (70,), outline=col + (230,), width=2)
+    cx, cy = T(W / 2, H / 2)
+    d.ellipse([cx - 12, cy - 12, cx + 12, cy + 12], outline=(110, 110, 110, 255), width=3)
+    cm = getattr(P, "cm", None)
+    if cm:
+        mx, my = T(*cm)
+        for wdt, colr in ((9, (255, 255, 255, 255)), (5, (0, 0, 0, 255))):
+            d.line([(mx - 20, my), (mx + 20, my)], fill=colr, width=wdt)
+            d.line([(mx, my - 20), (mx, my + 20)], fill=colr, width=wdt)
+    d.rectangle([cx0 - 2, cy0 - 2, cx0 + W * sc + 1, cy0 + H * sc + 1], outline=(30, 30, 30, 255), width=3)
+    return Image.alpha_composite(panel.convert("RGBA"), ov).convert("RGB")
+
+
 def fit(im, w, h):
     s = min(w / im.width, h / im.height)
     return im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.LANCZOS), s
@@ -112,6 +216,8 @@ def main(root, picks):
         ref = json.loads((root / "designs" / ref_v["file"]).read_text())
         ours = resize(src, {"width": ref_v["w"], "height": ref_v["h"]})
         meta = resize.last_choice[0]
+        ourP = getattr(resize, "last_P", None)
+        model = analyze(src)
         (out / f"{p}_ours.json").write_text(json.dumps(ours, indent=1))
         cases.append({
             "name": p, "title": src_v.get("title", ""), "src": src, "ours": ours, "meta": meta,
@@ -119,7 +225,8 @@ def main(root, picks):
             "src_png": render(src, assets, out / f"{p}_source.png"),
             "ref_png": render(ref, assets, out / f"{p}_designer.png"),
             "our_png": render(ours, assets, out / f"{p}_ours.png"),
-            "units": [u for u in analyze(src)["units"] if u.role not in ("bg", "frame_bg", "deco", "missing")],
+            "units": [u for u in model["units"] if u.role not in ("bg", "frame_bg", "deco", "missing")],
+            "model": model, "srcP": source_placed(model), "ourP": ourP,
         })
         print(p, meta["template"], meta.get("frame_modes"))
 
@@ -144,7 +251,7 @@ def main(root, picks):
                               ["Source", "Designer", f"Ours · {c['meta']['template']}"], widths):
             t, _ = fit(im, int(w), row_h - 40)
             pg.paste(t, (int(x), y + 36))
-            d.rectangle([int(x), y + 36, int(x) + t.width - 1, y + 36 + t.height - 1], outline=(200, 200, 200), width=2)
+            d.rectangle([int(x) - 2, y + 34, int(x) + t.width + 1, y + 36 + t.height + 1], outline=(40, 40, 40), width=3)
             d.text((int(x), y), lab, fill=(110, 110, 110), font=font(26))
             x += w + gap
         y += row_h + 25
@@ -167,11 +274,13 @@ def main(root, picks):
         t, s = fit(c["src_png"], int(widths[0]), row_h - 40)
         sc = t.width / c["src"]["canvas"]["width"]
         pg.paste(annotate(t, c["src"], c["units"], modes, sc), (int(x), y + 36))
+        d.rectangle([int(x) - 2, y + 34, int(x) + t.width + 1, y + 36 + t.height + 1], outline=(40, 40, 40), width=3)
         d.text((int(x), y), "Source, grouped", fill=(110, 110, 110), font=font(26))
         x += widths[0] + gap
         t, s = fit(c["our_png"], int(widths[1]), row_h - 40)
         sc = t.width / c["ours"]["canvas"]["width"]
         pg.paste(annotate(t, c["ours"], c["units"], modes, sc), (int(x), y + 36))
+        d.rectangle([int(x) - 2, y + 34, int(x) + t.width + 1, y + 36 + t.height + 1], outline=(40, 40, 40), width=3)
         d.text((int(x), y), "Ours, groups repositioned", fill=(110, 110, 110), font=font(26))
         x += widths[1] + gap
         ly = y + 40
@@ -188,6 +297,53 @@ def main(root, picks):
                 break
         y += row_h + 25
     pages.append(pg)
+    # ---------------- page 3+: visual weight and crop ----------------
+    per_page = 4
+    for start in range(0, len(cases), per_page):
+        chunk = cases[start:start + per_page]
+        pg = Image.new("RGB", (PAGE_W, PAGE_H), "white")
+        d = ImageDraw.Draw(pg)
+        d.text((margin, margin - 10), "Visual weight, the photo's subject, and how the background was cropped",
+               fill=(20, 20, 20), font=font(48, True))
+        key = ("Red heat = saliency (what the eye goes to); red box = subject area; red + = subject centre.  "
+               "Circles = visual weight (area = weight): blue text, orange images, red the photo subject.  "
+               "Black + = centre of visual mass, grey ring = canvas centre.  Faded area = background cropped away; "
+               "arrow = where the subject moved vs. a plain centred crop.  Grey lines = thirds.")
+        import textwrap
+        ky = margin + 55
+        for ln in textwrap.wrap(key, 150):
+            d.text((margin, ky), ln, fill=(90, 90, 90), font=font(26))
+            ky += 34
+        y = ky + 30
+        rh = (PAGE_H - y - margin) // len(chunk) - 60
+        for c in chunk:
+            d.text((margin, y), f"{c['name']} · {c['title']}", fill=(30, 30, 30), font=font(30, True))
+            y += 45
+            avail = PAGE_W - 2 * margin - 2 * gap
+            widths = [avail * 0.27, avail * 0.45, avail * 0.28]
+            x = margin
+            sp = diag_panel(c["src_png"], c["src"], c["srcP"], c["model"], assets, int(widths[0]), rh, ghost=False)
+            pg.paste(sp, (int(x), y + 36))
+            d.text((int(x), y), "Source", fill=(110, 110, 110), font=font(26))
+            x += widths[0] + gap
+            if c["ourP"] is not None:
+                op = diag_panel(c["our_png"], c["ours"], c["ourP"], c["model"], assets, int(widths[1]), rh, ghost=True)
+                pg.paste(op, (int(x), y + 36))
+            d.text((int(x), y), "Ours (faded = cropped-away background)", fill=(110, 110, 110), font=font(26))
+            x += widths[1] + gap
+            ly = y + 40
+            for label, P, dz in (("Source", c["srcP"], c["src"]), ("Ours", c["ourP"], c["ours"])):
+                if P is None:
+                    continue
+                d.text((int(x), ly), label, fill=(30, 30, 30), font=font(26, True))
+                ly += 34
+                for line in weight_lines(P, c["model"], dz):
+                    d.text((int(x) + 10, ly), line, fill=(50, 50, 50), font=font(23))
+                    ly += 29
+                ly += 10
+            y += rh + 25
+        pages.append(pg)
+
     pdf = out / "chameleon_crello_report.pdf"
     pages[0].save(pdf, save_all=True, append_images=pages[1:], resolution=300)
     for i, p in enumerate(pages):

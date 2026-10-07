@@ -16,6 +16,8 @@ CTA_WORDS = re.compile(
     r"\b(shop|buy|order|learn|get|sign|try|download|join|book|start|discover|explore|"
     r"subscribe|register|reserve|claim|grab|see|watch|read|call|visit|apply|donate)\b", re.I)
 
+CTA_LEAD = re.compile(r"^\W*" + CTA_WORDS.pattern, re.I)  # "Shop now", not "We'll get through"
+
 PRIORITY = {
     "headline": 10, "logo": 9, "cta": 8.5, "hero": 7, "subhead": 5, "body": 4,
     "group": 4, "badges": 3, "ribbon": 2.5, "minor": 1.5, "legal": 1.2, "missing": 0,
@@ -127,6 +129,17 @@ def _edge_cover(e):
     return info["edge_cover"] if info else 0.0
 
 
+def _ink_density(e):
+    """Opaque share inside the image's own visible (alpha) box: low for line art."""
+    if e["type"] != "image":
+        return 1.0
+    info = saliency.analyze(e.get("asset_id") or "")
+    if info is None:
+        return 1.0
+    ab = info["alpha_box"]
+    return min(1.0, info["opaque_frac"] / max(1e-3, (ab[2] - ab[0]) * (ab[3] - ab[1])))
+
+
 def _opaque_frac(e):
     if e["type"] != "image":
         return 1.0
@@ -153,7 +166,7 @@ def _text_roles(texts):
     roles = {}
     if not texts:
         return roles
-    cta = [e for e in texts if CTA_WORDS.search(e["content"]) and len(e["content"]) <= 40]
+    cta = [e for e in texts if CTA_LEAD.match(e["content"]) and len(e["content"]) <= 30]
     others = [e for e in texts if e not in cta]
     for e in cta:
         roles[e["id"]] = "cta"
@@ -186,7 +199,15 @@ def _cluster(cand, carea, mind):
         return []
     uf = _UF([e["id"] for e in cand])
     opaque = {e["id"]: _opaque_frac(e) for e in cand}
-    big = {e["id"] for e in cand if e["type"] != "text" and _area(e) > 0.3 * carea and opaque[e["id"]] >= 0.3}
+    # large *detailed* images (photos) are backdrops, not glue; large *flat*
+    # panels (cards, colour blocks) are containers and keep their contents
+    def _detailed(e):
+        if e["type"] != "image":
+            return False
+        info = saliency.analyze(e.get("asset_id") or "")
+        return info is not None and info["busyness"] > 0.03
+    big = {e["id"] for e in cand if e["type"] != "text" and _area(e) > 0.3 * carea
+           and opaque[e["id"]] >= 0.3 and _detailed(e)}
     for i, a in enumerate(cand):
         for b in cand[i + 1:]:
             if a.get("group_id") and a.get("group_id") == b.get("group_id"):
@@ -211,7 +232,8 @@ def _cluster(cand, carea, mind):
                     uf.union(a["id"], b["id"])
                 elif not (ta and tb) and (
                         (_gap(a, b) <= 0.012 * mind and small < 0.015 * carea)
-                        or (_gap(a, b) <= 0.025 * mind and min(opaque[a["id"]], opaque[b["id"]]) < 0.4)):
+                        or (_gap(a, b) <= 0.025 * mind and small < 0.06 * carea
+                            and min(_ink_density(a), _ink_density(b)) < 0.4)):
                     uf.union(a["id"], b["id"])  # ornaments / line-art pieces of a lockup
     comps: dict[str, list] = {}
     for e in cand:
@@ -327,6 +349,36 @@ def analyze(source: dict) -> dict:
     # 3. Text roles are global (the headline may sit inside a lockup)
     troles = _text_roles([e for e in texts_all])
 
+    # 3b. Separators: dots, dashes, thin rules. They belong to the text next to
+    #     them and ride along with it; they never glue groups together.
+    seps = []
+    for e in els:
+        if e["id"] in used or e["type"] == "text":
+            continue
+        b = _box(e)
+        w, h = b[2] - b[0], b[3] - b[1]
+        tiny = w * h < 0.0008 * carea
+        thin = min(w, h) < 0.008 * mind and max(w, h) / max(1e-6, min(w, h)) > 5 and w * h < 0.02 * carea
+        if tiny or thin:
+            seps.append(e)
+            used.add(e["id"])
+
+    # 3c. Edge-anchored pieces: non-text elements that sit in a canvas corner
+    #     (touching two adjacent edges). A designer keeps them in that corner.
+    tol = 0.012 * mind
+    for e in els:
+        if e["id"] in used or e["type"] == "text" or abs(e.get("rotation", 0) or 0) > 1:
+            continue
+        b = _box(e)
+        touch_l, touch_t = b[0] <= tol, b[1] <= tol
+        touch_r, touch_b = b[2] >= cw - tol, b[3] >= ch - tol
+        corner = (touch_l or touch_r) and (touch_t or touch_b) and not (touch_l and touch_r) and not (touch_t and touch_b)
+        if corner and 0.03 * carea <= _area(e) <= 0.5 * carea:
+            u = Unit(e["id"], "anchored", "image", [e])
+            u.edges = ("l" if touch_l else "r") + ("t" if touch_t else "b")
+            units.append(u)
+            used.add(e["id"])
+
     # 4. Geometric grouping: what travels together
     cand = [e for e in els if e["id"] not in used]
     for e in list(cand):
@@ -406,8 +458,105 @@ def analyze(source: dict) -> dict:
         else:
             c[0].role = "cta" if c[0] is cta_unit else "badges"
 
+    # 7. Hero visual and hero text by visual weight (inked area). Every
+    #    composition gets one of each; multi-piece illustrations qualify.
+    def ink_w(e):
+        b = _box(e)
+        a = (b[2] - b[0]) * (b[3] - b[1]) / carea
+        if e["type"] == "text":
+            return 2.0 * a
+        if e["type"] != "image":
+            return a
+        info = saliency.analyze(e.get("asset_id") or "")
+        if info is None:
+            return 0.0
+        ab = info["alpha_box"]
+        return a * min(1.0, max(0.03, info["opaque_frac"] / max(1e-3, (ab[2] - ab[0]) * (ab[3] - ab[1]))))
+
+    def unit_weight(u, kind):
+        els_ = u.els if u.kind != "badges" else [e for m in u.members for e in m.els]
+        return sum(ink_w(e) for e in els_ if (e["type"] == "text") == (kind == "text"))
+
+    visual_cands = [u for u in units if u.role in ("hero", "minor", "group")
+                    and u.kind in ("image", "group") and unit_weight(u, "text") <= 0.25 * unit_weight(u, "image")]
+    if visual_cands:
+        hv = max(visual_cands, key=lambda u: unit_weight(u, "image"))
+        tot_img = sum(unit_weight(u, "image") for u in visual_cands)
+        if unit_weight(hv, "image") >= 0.03 and unit_weight(hv, "image") >= 0.35 * tot_img:
+            for u in units:
+                if u.role == "hero" and u is not hv:
+                    u.role = "minor"
+            hv.role = "hero"
+    text_units = [u for u in units if u.kind == "text" and u.role in ("headline", "subhead", "body")]
+    if text_units:
+        def tw(u):
+            e = u.els[0]
+            return ink_w(e) * (e["font_size"] / max(1.0, max(t.els[0]["font_size"] for t in text_units))) ** 0.5
+        ht = max(text_units, key=tw)
+        cur = next((u for u in text_units if u.role == "headline"), None)
+        if cur is not None and ht is not cur and tw(ht) > 1.5 * tw(cur):
+            cur.role, ht.role = "subhead", "headline"
+            troles[cur.els[0]["id"]], troles[ht.els[0]["id"]] = "subhead", "headline"
+
+    # 8. Separators join the unit of the nearest element. A text that carries
+    #    separators (dashed / dotted / ruled type) becomes one fixed piece, so
+    #    the ornaments stay exactly where the designer put them.
+    def _attach(sp, u):
+        if u.kind == "frame":
+            for i, ch_ in enumerate(u.children):
+                if anchor["id"] in ch_.ids:
+                    if ch_.kind in ("text", "image"):
+                        u.children[i] = Unit(ch_.uid, ch_.role, "group", ch_.els + [sp])
+                    else:
+                        ch_.els.append(sp)
+                    break
+            else:  # anchored to the frame itself: its own small piece inside the frame
+                u.children.append(Unit(sp["id"], "minor", "image", [sp]))
+            u.els.append(sp)
+        elif u.kind in ("text", "image"):
+            u.kind = "group"          # now a fixed piece: the element plus its ornaments
+            u.els.append(sp)
+        elif u.kind == "badges":
+            for m in u.members:
+                if anchor["id"] in m.ids:
+                    m.els.append(sp)
+        else:
+            u.els.append(sp)
+
+    owner_el = [(e, u) for u in units if u.role not in ("bg", "border", "deco", "missing", "anchored")
+                for e in (u.els if u.kind != "badges" else [x for m in u.members for x in m.els])]
+    for sp in seps:
+        if not owner_el:
+            units.append(Unit(sp["id"], "deco", "deco", [sp]))
+            continue
+        # prefer the nearest text (a rule under a headline, dots between words);
+        # fall back to the nearest element of any kind
+        texts_near = [eu for eu in owner_el if eu[0]["type"] == "text" and _gap(sp, eu[0]) <= 0.08 * mind]
+        anchor, au = min(texts_near or owner_el, key=lambda eu: _gap(sp, eu[0]))
+        if _gap(sp, anchor) > 0.08 * mind:
+            units.append(Unit(sp["id"], "deco", "deco", [sp]))   # a stray speck: decoration
+            continue
+        _attach(sp, au)
+
     for u in units:
         u.prio = PRIORITY.get(u.role, 0)
+
+    # 9. Which units sit on the background photo's subject in the source
+    photos = [u for u in units if u.role == "bg" and u.els[0]["type"] == "image"]
+    infos = [(u, saliency.analyze(u.els[0].get("asset_id") or "")) for u in photos]
+    infos = [(u, i) for u, i in infos if i is not None]
+    if infos:
+        bu, info = max(infos, key=lambda ui: ui[1]["busyness"])
+        sb = info["sal_box"]
+        if (sb[2] - sb[0]) * (sb[3] - sb[1]) < 0.45:
+            e = bu.els[0]
+            fx = e["x"] + info["centroid"][0] * e["width"]
+            fy = e["y"] + info["centroid"][1] * e["height"]
+            for u in units:
+                if u.role in ("bg", "border", "deco", "missing", "separator"):
+                    continue
+                b = u.bbox
+                u.on_subject = b[0] <= fx <= b[2] and b[1] <= fy <= b[3] and u.w * u.h < 0.6 * carea
 
     content = [u for u in units if u.role not in ("bg", "border", "deco", "missing")]
     centered = False

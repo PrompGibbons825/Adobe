@@ -52,12 +52,19 @@ def _templates(ctx, flow, alpha):
         yield th, with_alpha(make)
 
 
+def f_hero(flow):
+    return [u for u in flow if u.role == "hero"]
+
+
 def _templates_raw(ctx, flow):
     for region in ("full", "left", "right", "top", "bottom"):
         for align in ("center", "left"):
             if region == "full" or (region in ("left", "right") and ctx.W / ctx.H > 1.2) \
                     or (region in ("top", "bottom") and ctx.H / ctx.W > 1.2):
                 yield 0.0, lambda f=flow, a=align, r=region: tmpl_stack(ctx, f, a, r)
+                if any(u.role == "hero" for u in f_hero(flow)):
+                    # hero-first: hold text back so the hero visual can take the space
+                    yield 0.0, lambda f=flow, a=align, r=region: tmpl_stack(ctx, f, a, r, 0.72)
     for side in ("left", "right"):
         for frac in (0.4, 0.5):
             for align in ("left", "center"):
@@ -126,6 +133,7 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         if DEBUG:
             print(f"  -> {best_meta['template']} score={best_s:.2f}")
         resize.last_choice = (best_meta, best_s, best_br)
+        resize.last_P = best
         return _build(source, target_canvas, best)
     except Exception:
         if DEBUG:

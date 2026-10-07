@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import saliency
-from .blocks import GroupBlock, ImageBlock, rot_bounds
+from .blocks import GroupBlock, ImageBlock, img_vis_frac, rot_bounds
 
 HIDE_ROLES = {"missing"}
 
@@ -69,6 +69,14 @@ def place_bg(ctx, P, unit, model=None):
         P.set(el["id"], x=-x0 * bw, y=-y0 * bh, width=bw, height=bh)
     P.bg_map = (info["busy"], -x0 * bw, -y0 * bh, bw, bh)
     P.bg_sal = info["sal"] if concentrated else None
+    fx_, fy_ = info["centroid"]
+    P.bg_info = {
+        "id": el["id"], "asset": el.get("asset_id"), "box": (-x0 * bw, -y0 * bh, bw, bh),
+        "concentrated": concentrated,
+        "focal": (-x0 * bw + fx_ * bw, -y0 * bh + fy_ * bh),
+        "focal_centered": (-cx0 * bw + fx_ * bw, -cy0 * bh + fy_ * bh),
+        "sal_box": (-x0 * bw + sb[0] * bw, -y0 * bh + sb[1] * bh, -x0 * bw + sb[2] * bw, -y0 * bh + sb[3] * bh),
+    }
     if concentrated:
         fx, fy = info["centroid"]
         fcx, fcy = -x0 * bw + fx * bw, -y0 * bh + fy * bh
@@ -164,7 +172,7 @@ def hide(P, el, W, H):
 
 def clamp_inside(ctx, P, model):
     W, H = ctx.W, ctx.H
-    skip = {e["id"] for u in model["units"] if u.role in ("bg", "deco", "border") for e in u.els}
+    skip = {e["id"] for u in model["units"] if u.role in ("bg", "deco", "border", "anchored") for e in u.els}
     for eid, p in P.props.items():
         if eid in skip or eid in P.hidden:
             continue
@@ -202,22 +210,88 @@ def finalize(ctx, P, model, float_threshold=0.0):
     P.bg_map = None
     P.bg_sal = None
     P.bg_focal = None
+    P.bg_info = None
     t = P.meta.get("t", ctx.t_star)
+    def _detail(u):
+        info = saliency.analyze(u.els[0].get("asset_id") or "") if u.els[0]["type"] == "image" else None
+        return info["busyness"] if info else 0.0
+    # place background layers least-detailed first, so the photo (most detail)
+    # defines the crop, the subject and the busy map used for scoring
+    for u in sorted((u for u in model["units"] if u.role == "bg"), key=_detail):
+        place_bg(ctx, P, u, model)
     for u in model["units"]:
         if u.role == "bg":
-            place_bg(ctx, P, u, model)
+            continue
         elif u.role == "border":
             place_border(ctx, P, u)
         elif u.role == "deco":
             place_deco(ctx, P, u)
+    for u in model["units"]:
+        if u.role == "anchored":
+            place_anchored(ctx, P, u)
     for u in sorted(model["units"], key=lambda u: -u.prio):
         if u.role in ("ribbon", "minor"):
             place_float(ctx, P, u, min(t, 1.5))
     for u in model["units"]:
-        for eid in u.ids:
-            if u.role in HIDE_ROLES:
+        if u.role in HIDE_ROLES:
+            for eid in u.ids:
                 hide(P, model["els"][eid], ctx.W, ctx.H)  # missing asset: skip gracefully (FAQ)
-            elif eid not in P.props:
+    clamp_inside(ctx, P, model)
+    for u in model["units"]:
+        if u.role == "separator":
+            place_satellite(ctx, P, u, model)
+    for u in model["units"]:
+        for eid in u.ids:
+            if eid not in P.props:
                 return None
     clamp_inside(ctx, P, model)
     return P
+
+
+def place_anchored(ctx, P, unit):
+    """Corner pieces stay in their corner, scaled with the canvas."""
+    el = unit.els[0]
+    k = min(ctx.W / ctx.Ws, ctx.H / ctx.Hs) ** 0.5 * ctx.t_star ** 0.5
+    k = min(k, 0.6 * ctx.W / el["width"], 0.6 * ctx.H / el["height"])
+    w, h = el["width"] * k, el["height"] * k
+    edges = getattr(unit, "edges", "lt")
+    # keep any bleed past the edge proportional (a piece pushed 5px off stays a bit off)
+    ox = el["x"] * k if "l" in edges else (ctx.Ws - el["x"] - el["width"]) * k
+    oy = el["y"] * k if "t" in edges else (ctx.Hs - el["y"] - el["height"]) * k
+    x = ox if "l" in edges else ctx.W - w - ox
+    y = oy if "t" in edges else ctx.H - h - oy
+    P.set(el["id"], x=x, y=y, width=w, height=h)
+    v = img_vis_frac(el)
+    P.vis[el["id"]] = (x + v[0] * w, y + v[1] * h, x + v[2] * w, y + v[3] * h)
+
+
+def place_satellite(ctx, P, unit, model):
+    """Separators (dots, dashes, rules) keep their position relative to the
+    element they belong to, scaled with it."""
+    el = unit.els[0]
+    a = model["els"].get(unit.anchor)
+    pa = P.props.get(unit.anchor)
+    if a is None or pa is None:
+        sx, sy = ctx.W / ctx.Ws, ctx.H / ctx.Hs
+        P.set(el["id"], x=el["x"] * sx, y=el["y"] * sy, width=el["width"] * min(sx, sy), height=el["height"] * min(sx, sy))
+        return
+    def bounds(e, props=None):
+        x = (props or e).get("x", e["x"])
+        y = (props or e).get("y", e["y"])
+        w = (props or e).get("width", e["width"])
+        h = (props or e).get("height", e["height"])
+        if e["type"] == "text":
+            from . import textfit as tf
+            fs = int((props or e).get("font_size", e["font_size"]))
+            h = min(h, tf.measure(e, max(1, fs), w)["height"])
+        return rot_bounds(x, y, w, h, e.get("rotation", 0))
+    ob = bounds(a)
+    nb = bounds(a, pa)
+    sx = (nb[2] - nb[0]) / max(1e-6, ob[2] - ob[0])
+    sy = (nb[3] - nb[1]) / max(1e-6, ob[3] - ob[1])
+    s = min(sx, sy) if min(sx, sy) > 0 else 1.0
+    rx, ry, rw, rh = unit.rel
+    w, h = el["width"] * s, el["height"] * s
+    x = nb[0] + rx * (nb[2] - nb[0])
+    y = nb[1] + ry * (nb[3] - nb[1])
+    P.set(el["id"], x=x, y=y, width=w, height=h)

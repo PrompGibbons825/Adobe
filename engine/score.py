@@ -12,6 +12,40 @@ MIN_REL = {"headline": 0.045, "cta": 0.022, "subhead": 0.018, "body": 0.016, "gr
            "badges": 0.014, "badge": 0.014, "ribbon": 0.014, "legal": 0.008}
 
 
+def ink_fraction(el):
+    """Share of an image's visible box that actually carries pixels: ~1 for a
+    photo or solid icon, a few % for a thin outline frame."""
+    if el["type"] != "image":
+        return 1.0
+    info = saliency.analyze(el.get("asset_id") or "")
+    if info is None or el.get("fit") == "cover":
+        return 1.0
+    ab = info["alpha_box"]
+    box_frac = max(1e-3, (ab[2] - ab[0]) * (ab[3] - ab[1]))
+    return float(min(1.0, max(0.03, info["opaque_frac"] / box_frac)))
+
+
+def weight_items(P, model, W, H, ids, units):
+    """Visual weight of every visible element (inked area share; text x2)
+    plus the photo subject. Returns (items, center_of_mass)
+    with items = [(eid, cx, cy, weight, kind)]."""
+    items = []
+    for eid in ids:
+        v = P.vis[eid]
+        a = (v[2] - v[0]) * (v[3] - v[1]) / (W * H)
+        el = model["els"][eid]
+        typ = el["type"]
+        w = a * (2.0 if typ == "text" else ink_fraction(el))
+        items.append((eid, (v[0] + v[2]) / 2, (v[1] + v[3]) / 2, w, typ))
+    if getattr(P, "bg_focal", None) is not None:
+        fcx, fcy, fw = P.bg_focal
+        items.append(("photo subject", fcx, fcy, fw, "subject"))
+    tot = sum(i[3] for i in items)
+    if tot <= 0:
+        return items, None
+    return items, (sum(i[1] * i[3] for i in items) / tot, sum(i[2] * i[3] for i in items) / tot)
+
+
 def score(ctx, P, model):
     W, H = ctx.W, ctx.H
     br = {}
@@ -54,13 +88,19 @@ def score(ctx, P, model):
         ideal = max(e["font_size"] for e in head.els if e["type"] == "text") * ctx.t_star
         prom += 4 * min(1.0, hfs / ideal)
     hero = next((u for u in units if u.role == "hero"), None)
-    if hero and hero.els[0]["id"] in P.vis:
+    if hero and all(i in P.vis for i in hero.ids if model["els"][i]["type"] != "text"):
         from .blocks import img_vis_frac
-        e = hero.els[0]
-        v = img_vis_frac(e)
-        src_a = e["width"] * e["height"] * (v[2] - v[0]) * (v[3] - v[1])
-        a = _area(P.vis[e["id"]])
-        prom += 3 * min(1.0, a / (src_a * ctx.t_star ** 2 * 0.8))
+        src_a, a = 0.0, 0.0
+        for e in hero.els:
+            if e["type"] == "text":
+                continue
+            v = img_vis_frac(e)
+            src_a += e["width"] * e["height"] * (v[2] - v[0]) * (v[3] - v[1])
+            a += _area(P.vis[e["id"]])
+        if src_a > 0:
+            prom += 2 * min(1.0, a / (src_a * ctx.t_star ** 2 * 0.8))
+            # the hero visual should command the canvas: reward up to ~30% of it
+            prom += 3 * min(1.0, a / (0.30 * W * H))
     br["prominence"] = prom
 
     # 4. collisions between different units
@@ -116,24 +156,11 @@ def score(ctx, P, model):
 
     # 7. visual weight balance (center of mass of text, images and the photo's subject)
     #    and the rule of thirds for the subject
-    wsum, mx, my = 0.0, 0.0, 0.0
-    frame_conts = {u.container["id"] for u in units if u.kind == "frame" and u.container}
-    for eid in ids:
-        v = P.vis[eid]
-        a = (v[2] - v[0]) * (v[3] - v[1]) / (W * H)
-        typ = model["els"][eid]["type"]
-        w = a * (2.0 if typ == "text" else 1.0) * (0.25 if eid in frame_conts else 1.0)
-        wsum += w
-        mx += w * (v[0] + v[2]) / 2
-        my += w * (v[1] + v[3]) / 2
-    if P.bg_focal is not None:
-        fcx, fcy, fw = P.bg_focal
-        wsum += fw
-        mx += fw * fcx
-        my += fw * fcy
+    items, cm = weight_items(P, model, W, H, ids, units)
+    P.weight_items, P.cm = items, cm
     wb = 0.0
-    if wsum > 0:
-        cmx, cmy = mx / wsum / W, my / wsum / H
+    if cm is not None:
+        cmx, cmy = cm[0] / W, cm[1] / H
         k = 12.0 if model.get("centered") else 8.0
         wb -= k * abs(cmx - 0.5) + 0.5 * k * abs(cmy - 0.5)
     if P.bg_focal is not None and W > 1.2 * H:
@@ -141,5 +168,22 @@ def score(ctx, P, model):
         d = min(abs(fx - 1 / 3), abs(fx - 2 / 3), abs(fx - 0.5) * 1.5)
         wb += 1.5 * max(0.0, 1 - d / (1 / 6))
     br["weight_balance"] = wb
+
+    # 8. figure-ground relations: a unit that sat on the photo's subject in the
+    #    source (a frame around the heart, a caption on the product) stays on it
+    rel = 0.0
+    if P.bg_focal is not None:
+        fx, fy = P.bg_focal[0], P.bg_focal[1]
+        for u in units:
+            if not getattr(u, "on_subject", False):
+                continue
+            bs = [P.vis[i] for i in u.ids if i in P.vis]
+            if not bs:
+                continue
+            x0, y0 = min(b[0] for b in bs), min(b[1] for b in bs)
+            x1, y1 = max(b[2] for b in bs), max(b[3] for b in bs)
+            inside = x0 <= fx <= x1 and y0 <= fy <= y1
+            rel += 2.5 if inside else -2.5
+    br["subject_relation"] = rel
 
     return sum(br.values()), br
