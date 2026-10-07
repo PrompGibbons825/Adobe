@@ -24,3 +24,4 @@ output/*
 # Crello test data (downloaded, large)
 /crello/
 /crello_holdout/
+/writeup_figs/

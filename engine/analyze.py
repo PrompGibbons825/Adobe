@@ -568,4 +568,5 @@ def analyze(source: dict) -> dict:
         on_axis = all(abs((u.bbox[0] + u.bbox[2]) / 2 - cw / 2) < 0.08 * cw for u in key)
         centered = abs(cx - cw / 2) < 0.06 * cw and on_axis
     return {"canvas": (cw, ch), "units": units, "els": {e["id"]: e for e in els}, "troles": troles,
+            "separators": [e["id"] for e in seps],
             "centered": centered}
