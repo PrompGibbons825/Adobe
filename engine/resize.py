@@ -59,9 +59,10 @@ def f_hero(flow):
 def _templates_raw(ctx, flow):
     for region in ("full", "left", "right", "top", "bottom"):
         for align in ("center", "left"):
-            # top/bottom bands are allowed on any canvas: on a wide photo the
-            # quiet, high-contrast part is often a horizontal band
-            if region == "full" or region in ("top", "bottom") or (region in ("left", "right") and ctx.W / ctx.H > 1.2):
+            # top/bottom bands on tall canvases, and on clearly wide ones too: on a
+            # wide photo the quiet, high-contrast part is often a horizontal band
+            if region == "full" or (region in ("top", "bottom") and (ctx.H / ctx.W > 1.2 or ctx.W / ctx.H >= 1.5)) \
+                    or (region in ("left", "right") and ctx.W / ctx.H > 1.2):
                 yield 0.0, lambda f=flow, a=align, r=region: tmpl_stack(ctx, f, a, r)
                 if any(u.role == "hero" for u in f_hero(flow)):
                     # hero-first: hold text back so the hero visual can take the space

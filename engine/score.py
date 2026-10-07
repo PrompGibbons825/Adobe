@@ -242,6 +242,21 @@ def score(ctx, P, model):
             share -= 6 * max(0.0, 0.7 - out / src)
     br["share"] = share
 
+    # faithfulness: reshaping a frame has to pay for itself
+    import math
+    reshape = 0.0
+    for u in units:
+        if u.kind != "frame" or u.container is None:
+            continue
+        c = u.container
+        pc = P.props.get(c["id"])
+        if not pc or getattr(P, "panel", None) and P.panel["id"] == c["id"]:
+            continue
+        a_src = c["width"] / max(1e-6, c["height"])
+        a_out = pc.get("width", c["width"]) / max(1e-6, pc.get("height", c["height"]))
+        reshape -= 1.5 * abs(math.log(max(1e-6, a_out / a_src)))
+    br["reshape"] = reshape
+
     # 4. collisions between different units
     col = 0.0
     ids = [i for i in P.vis if i not in P.hidden and i in owner]
