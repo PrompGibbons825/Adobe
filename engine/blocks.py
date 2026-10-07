@@ -56,6 +56,8 @@ class TextBlock:
         self.unit = unit
         self.el = unit.els[0]
         self.wfrac = max(0.55, min(1.0, self.el["width"] / (src_w * 0.86)))
+        if getattr(unit, "_in_strip", False):
+            self.wfrac = 1.0          # in a rotated strip a line uses the strip's full length
 
     def _fit(self, t, max_w):
         el = self.el
@@ -297,6 +299,10 @@ class FrameBlock:
             P.set(c["id"], fit="cover")
         P.vis[c["id"]] = (bx, by, bx + w, by + h)
         # padding keeps its proportion on each axis, but never more than it was at uniform scale
+        if getattr(self.unit, "_in_strip", False):
+            # a strip is short: padding at most 6% of its length
+            p6 = 0.06 * max(w, h)
+            self.pad = tuple(min(pv, p6 / max(1e-6, w if i % 2 == 0 else h)) for i, pv in enumerate(self.pad))
         pl = min(self.pad[0] * w, self.pad[0] * self.cw * t * 1.5)
         pr = min(self.pad[2] * w, self.pad[2] * self.cw * t * 1.5)
         pt = min(self.pad[1] * h, self.pad[1] * self.ch * t * 1.5)

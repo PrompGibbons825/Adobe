@@ -83,6 +83,24 @@ def _templates_raw(ctx, flow):
     for scale in (1.0, 0.8, 0.6, 0.4):
         for ncols in (1, 2):
             yield 0.0, lambda f=flow, sc=scale, nc=ncols: tmpl_row(ctx, f, sc, nc)
+    # text cards turned into vertical strips (reading bottom to top); text
+    # ribbons turned sideways in the source join the row upright
+    turned = [u for u in ctx.model["units"] if u.role == "ribbon" and any(e["type"] == "text" for e in u.els)
+              and all(abs(abs(e.get("rotation", 0) or 0) - 90) < 2 for e in u.els)]
+    for scale in (1.0, 0.8):
+        yield 0.0, lambda f=flow + turned, sc=scale: tmpl_row(ctx, f, sc, 1, rotate=True)
+    if ctx.W / ctx.H >= 2.2:
+        for side in ("left", "right"):
+            def rot_panel(f=flow, s=side):
+                ctx.rotate = True
+                try:
+                    P = tmpl_panel(ctx, f, s, 0.45)
+                finally:
+                    ctx.rotate = False
+                if P is not None:
+                    P.meta["template"] += "-rot"
+                return P
+            yield 0.0, rot_panel
 
 
 def _build(source, target, P):
@@ -125,6 +143,7 @@ def _broken(tight, loose):
 
 BREAK_COST = 2.0   # per composition taken apart: it has to buy readability or space
 RESTACK_COST = 0.5  # per composition re-stacked along the other axis
+ROTATE_COST = 0.5   # per text piece turned into a vertical strip
 
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
@@ -159,6 +178,9 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                     if broken:
                         br["grouping"] = -BREAK_COST * broken
                         s += br["grouping"]
+                    if getattr(P, "rotated", 0):
+                        br["rotate"] = -ROTATE_COST * P.rotated
+                        s += br["rotate"]
                     if getattr(P, "restacked", 0):
                         br["restack"] = -RESTACK_COST * P.restacked
                         s += br["restack"]

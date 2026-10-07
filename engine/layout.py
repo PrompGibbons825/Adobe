@@ -221,7 +221,94 @@ def _fit_column(texts, col_w, h_avail, fs_cap):
     return layout(lo) if lo > 0 else None
 
 
-def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None):
+def _rot_frame(fb, u, L, S):
+    """A card in a strip takes the thickness that gives its text the largest size."""
+    best = None
+    for f in (0.35, 0.5, 0.7, 1.0, 1.4):
+        th = min(S, f * L)
+        Pv = Placed()
+        fb.place_box(Pv, 0.0, 0.0, L, th, 3.0)
+        fss = [Pv.props[i]["font_size"] for i in u.ids if "font_size" in Pv.props.get(i, {})]
+        if not fss:
+            continue
+        key = (min(fss), -th)
+        if best is None or key > best[0]:
+            best = (key, Pv, th)
+    if best is None:
+        return None
+    return best[1], best[2], 0.0
+
+
+def _rot_layout(ctx, u, L, S):
+    """Lay a unit out in a virtual rect L long and up to S thick (text reflows
+    to lines L long, using the strip's full length). Returns (placed,
+    thickness used, offset) or None."""
+    from .blocks import FrameBlock
+    if u.kind == "frame":
+        marks = [u] + list(u.children)
+        for m in marks:
+            m._in_strip = True
+        try:
+            return _rot_frame(FrameBlock(u, ctx), u, L, S)
+        finally:
+            for m in marks:
+                m._in_strip = False
+    Pv = Placed()
+    t = stack(ctx, Pv, [u], (0.0, 0.0, L, S), "center", t_cap(ctx, L) * 1.5)
+    if t is None:
+        return None
+    bs = [Pv.vis[i] for i in u.ids if i in Pv.vis]
+    if not bs:
+        return None
+    v0, v1 = min(b[1] for b in bs), max(b[3] for b in bs)
+    return Pv, v1 - v0, -v0
+
+
+def _put_rotated(P, Pv, u, model_els, x, y0, L, dv):
+    """Map a virtual layout into a vertical strip at (x, y0), turned -90
+    degrees so its lines read bottom to top along the strip."""
+    for eid in u.ids:
+        p = Pv.props.get(eid)
+        if p is None:
+            continue
+        el = model_els[eid]
+        w, h = p.get("width", el["width"]), p.get("height", el["height"])
+        cu, cv = p["x"] + w / 2, p["y"] + h / 2 + dv
+        cx, cy = x + cv, y0 + L - cu
+        rot = ((el.get("rotation", 0) or 0) - 90) % 360
+        q = dict(p)
+        q.update(x=cx - w / 2, y=cy - h / 2, rotation=rot - 360 if rot > 180 else rot)
+        P.set(eid, **q)
+        if eid in Pv.vis:
+            a0, b0, a1, b1 = Pv.vis[eid]
+            P.vis[eid] = (x + b0 + dv, y0 + L - a1, x + b1 + dv, y0 + L - a0)
+
+
+def _upright(u):
+    """A copy of a group whose pieces are all turned ~90 degrees, turned back
+    upright as a whole about its centre. Returns (unit copy, {id: rotation})."""
+    from .analyze import Unit
+    rots = [(e.get("rotation", 0) or 0) for e in u.els]
+    r = rots[0]
+    if not all(abs(abs(x) - 90) < 2 and abs(x - r) < 2 for x in rots):
+        return None
+    x0, y0, x1, y1 = u.bbox
+    gx, gy = (x0 + x1) / 2, (y0 + y1) / 2
+    import math
+    a = math.radians(-r)
+    ca, sa = math.cos(a), math.sin(a)
+    els, newrot = [], {}
+    for e in u.els:
+        cx, cy = e["x"] + e["width"] / 2 - gx, e["y"] + e["height"] / 2 - gy
+        nx, ny = cx * ca - cy * sa, cx * sa + cy * ca
+        c = dict(e, rotation=0)
+        c["x"], c["y"] = gx + nx - e["width"] / 2, gy + ny - e["height"] / 2
+        els.append(c)
+        newrot[e["id"]] = 0
+    return Unit(u.uid, u.role, "group", els), newrot
+
+
+def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False):
     """Everything on one line, every unit kept: logo | hero | text column(s) | groups | badges | cta.
     `area` = (x, width) restricts the row to a vertical band of the canvas.
     Aligned pieces are left to finalize, which keeps them on their anchor's line."""
@@ -240,6 +327,22 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None):
     items = []  # dict(order, kind, block, w, h, s, unit)
     for u in others:
         it = {"order": ROW_ORDER.get(u.role, 3), "unit": u, "x0": u.bbox[0]}
+        has_txt = any(e["type"] == "text" for e in u.els)
+        if rotate and has_txt and u.kind in ("group", "ribbon"):
+            up = _upright(u)
+            if up is not None:
+                b = GroupBlock(up[0])
+                sc = b.scale_for(10.0, 0.32 * W * item_scale, hA * 0.9 * item_scale)
+                it.update(kind="group", block=b, w=b.w * sc, h=b.h * sc, s=sc, upright=up[1])
+                items.append(it)
+                continue
+        if rotate and has_txt and u.kind in ("frame", "group") and u.role not in ("headline", "cta") \
+                and not any(abs(e.get("rotation", 0) or 0) > 1 for e in u.els):
+            r = _rot_layout(ctx, u, hA, 0.2 * W)
+            if r is not None:
+                it.update(kind="rot", Pv=r[0], w=r[1], h=hA, dv=r[2])
+                items.append(it)
+                continue
         if u.kind == "image":
             b = ImageBlock(u)
             fh = {"hero": 1.15, "logo": 0.75}.get(u.role, 0.6)
@@ -324,12 +427,19 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None):
             it["block"].place_vis(P, x, cy - it["h"] / 2, it["s"])
         elif k == "group":
             it["block"].place_at(P, x, cy - it["h"] / 2, it["s"])
+            for eid, r in it.get("upright", {}).items():
+                P.set(eid, rotation=r)
+            if it.get("upright"):
+                P.rotated = getattr(P, "rotated", 0) + 1
             if it["unit"].role == "headline":
                 head_t = it["s"]       # a headline lockup: its scale is the text scale
         elif k == "frame":
             it["block"].place_box(P, x, cy - it["h"] / 2, it["w"], it["h"], it["s"])
             if it["unit"].role == "headline":
                 head_t = it["s"]
+        elif k == "rot":
+            _put_rotated(P, it["Pv"], it["unit"], ctx.model["els"], x, cy - it["h"] / 2, it["h"], it["dv"])
+            P.rotated = getattr(P, "rotated", 0) + 1
         elif k == "badges":
             it["block"].place(P, x, cy - it["h"] / 2, it["s"], it["w"] + 1, "left")
         elif k == "ctatext":
@@ -356,7 +466,7 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None):
                 v = P.vis[i]
                 P.vis[i] = (v[0], v[1] + dy, v[2], v[3] + dy)
         x += it["w"] + g
-    P.meta = {"template": f"row-s{item_scale}-c{len(tcols)}", "t": head_t}
+    P.meta = {"template": f"row-s{item_scale}-c{len(tcols)}" + ("-rot" if rotate else ""), "t": head_t}
     return P
 
 
@@ -530,9 +640,9 @@ def tmpl_panel(ctx, flow, side="left", frac=0.4):
         cx0 = rect[2] if side == "left" else 0.0
         cw = W - rect[2]
         if cw / H >= 2.2:
-            R = tmpl_row(ctx, rest, 1.0, 1, area=(cx0, cw), P=P)
+            R = tmpl_row(ctx, rest, 1.0, 1, area=(cx0, cw), P=P, rotate=getattr(ctx, "rotate", False))
             if R is None:
-                R = tmpl_row(ctx, rest, 0.7, 1, area=(cx0, cw), P=P)
+                R = tmpl_row(ctx, rest, 0.7, 1, area=(cx0, cw), P=P, rotate=getattr(ctx, "rotate", False))
             if R is None:
                 return None
             t = R.meta["t"]

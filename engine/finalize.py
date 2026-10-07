@@ -381,7 +381,7 @@ def finalize(ctx, P, model, float_threshold=0.0):
                 place_float(ctx, P, u, min(t, 1.5))
     content = list(P.vis.values())
     for u in sorted(model["units"], key=lambda u: -u.prio):
-        if u.role == "ribbon":
+        if u.role == "ribbon" and u.els[0]["id"] not in P.props:   # not already in the row
             place_float(ctx, P, u, min(t, 1.5))
         elif u.role == "minor":
             # decoration never outgrows the canvas's own shape-preserving scale

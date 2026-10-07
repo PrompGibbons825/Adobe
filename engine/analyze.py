@@ -441,7 +441,7 @@ def _group_unit(members, troles, carea, mind, depth=0):
         aid = " ".join((m.get("asset_id") or "").lower() for m in non)
         role = "logo" if "logo" in aid else "group"
     cont = _find_container(members) if depth < 2 and not rotated else None
-    if cont is not None and len(members) >= 3:
+    if cont is not None and (len(members) >= 3 or txt):   # a card holding even one text reflows
         inner = [m for m in members if m is not cont]
         children = []
         for sub in _cluster(inner, carea, mind):
