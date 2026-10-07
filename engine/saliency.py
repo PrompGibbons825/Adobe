@@ -110,8 +110,16 @@ def analyze(asset_id: str) -> dict | None:
     else:
         sbox, cx, cy = (0.25, 0.25, 0.75, 0.75), 0.5, 0.5
 
+    # relative luminance (WCAG), for text contrast; transparent pixels count as unknown (nan)
+    lin = np.where(arr[..., :3] <= 0.04045, arr[..., :3] / 12.92, ((arr[..., :3] + 0.055) / 1.055) ** 2.4)
+    lum = lin @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    lum = np.where(alpha > 0.5, lum, np.nan).astype(np.float32)
+    mean_lum = float(np.nanmean(lum)) if np.isfinite(lum).any() else 1.0
+
     return {
         "size": (w, h),
+        "lum": lum,
+        "mean_lum": mean_lum,
         "sal": sal,
         "busy": busy,
         "alpha_box": abox,

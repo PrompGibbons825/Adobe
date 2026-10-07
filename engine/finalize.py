@@ -68,6 +68,7 @@ def place_bg(ctx, P, unit, model=None):
     else:
         P.set(el["id"], x=-x0 * bw, y=-y0 * bh, width=bw, height=bh)
     P.bg_map = (info["busy"], -x0 * bw, -y0 * bh, bw, bh)
+    P.bg_lum = (info["lum"], -x0 * bw, -y0 * bh, bw, bh)
     P.bg_sal = info["sal"] if concentrated else None
     fx_, fy_ = info["centroid"]
     P.bg_info = {
@@ -350,6 +351,7 @@ def finalize(ctx, P, model, float_threshold=0.0):
     P.hidden = set()
     P.min_z = min(e.get("z_index", 0) for e in model["els"].values())
     P.bg_map = None
+    P.bg_lum = None
     P.bg_sal = None
     P.bg_focal = None
     P.bg_info = None

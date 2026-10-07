@@ -46,6 +46,72 @@ def weight_items(P, model, W, H, ids, units):
     return items, (sum(i[1] * i[3] for i in items) / tot, sum(i[2] * i[3] for i in items) / tot)
 
 
+def _rel_lum_rgb(r, g, b):
+    def lin(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
+def _color_lum(col):
+    """Relative luminance of a CSS colour (rgb()/rgba()/#hex), or None."""
+    import re
+    if not col:
+        return None
+    m = re.match(r"rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)", col)
+    if m:
+        return _rel_lum_rgb(*(float(v) for v in m.groups()))
+    m = re.match(r"#([0-9a-fA-F]{6})", col)
+    if m:
+        h = m.group(1)
+        return _rel_lum_rgb(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    return None
+
+
+def _surface_lum(el):
+    """Luminance of what a card or plate shows, or None if unknown."""
+    if el["type"] == "shape":
+        return _color_lum(el.get("fill_color", ""))
+    info = saliency.analyze(el.get("asset_id") or "")
+    return info["mean_lum"] if info else None
+
+
+def _behind_lum(P, model, eid, v):
+    """Luminance behind a text's inked box: the topmost card or plate under
+    it, else the background image under it, else the plain background."""
+    import numpy as np
+    z = model["els"][eid].get("z_index", 0)
+    best = None
+    for i, pv in P.vis.items():
+        el = model["els"].get(i)
+        if el is None or el["type"] == "text" or i in P.hidden or el.get("z_index", 0) >= z:
+            continue
+        if (el.get("opacity", 1) or 1) < 0.6:
+            continue
+        if _overlap(v, pv) < 0.6 * max(1.0, _area(v)):
+            continue
+        if el["type"] == "image":
+            info = saliency.analyze(el.get("asset_id") or "")
+            if info is None or info["opaque_frac"] < 0.6 or info["busyness"] > 0.03:
+                continue          # a detailed picture is read through the image map below
+        if best is None or el.get("z_index", 0) > best[0]:
+            best = (el.get("z_index", 0), el)
+    if best is not None:
+        return _surface_lum(best[1])
+    if getattr(P, "bg_lum", None) is not None:
+        lmap, bx, by, bw, bh = P.bg_lum
+        hh, ww = lmap.shape
+        x0 = int(np.clip((v[0] - bx) / bw * ww, 0, ww - 1)); x1 = int(np.clip((v[2] - bx) / bw * ww, x0 + 1, ww))
+        y0 = int(np.clip((v[1] - by) / bh * hh, 0, hh - 1)); y1 = int(np.clip((v[3] - by) / bh * hh, y0 + 1, hh))
+        reg = lmap[y0:y1, x0:x1]
+        if np.isfinite(reg).any():
+            return float(np.nanmean(reg))
+    bgs = [u for u in model["units"] if u.role == "bg"]
+    if bgs:
+        return _surface_lum(bgs[0].els[0])
+    return 1.0                    # an empty canvas renders white
+
+
 def _plates(P, model):
     """Opaque flat pieces (cards, bars, plates) as placed: (box, z)."""
     from .analyze import _fills_box
@@ -216,6 +282,21 @@ def score(ctx, P, model):
                 sm = saliency.region_mean(P.bg_sal, (v[0] - bx) / bw, (v[1] - by) / bh, (v[2] - bx) / bw, (v[3] - by) / bh)
                 busy -= 8 * max(0.0, sm - 0.3)
     br["busy_bg"] = busy
+
+    # contrast: text colour against what is actually behind it (WCAG ratio)
+    con = 0.0
+    for eid in ids:
+        el = model["els"][eid]
+        if el["type"] != "text":
+            continue
+        tl = _color_lum(el.get("color", ""))
+        bl = _behind_lum(P, model, eid, P.vis[eid])
+        if tl is None or bl is None:
+            continue
+        ratio = (max(tl, bl) + 0.05) / (min(tl, bl) + 0.05)
+        if ratio < 3.0:
+            con -= (owner[eid].prio + 3) * (3.0 - ratio) / 2.0
+    br["contrast"] = con
 
     # 6. balance: content should use the canvas, and stay off the edges
     vis = [P.vis[i] for i in ids]
