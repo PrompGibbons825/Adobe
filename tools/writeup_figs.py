@@ -150,7 +150,7 @@ def crello(root):
     for k, lab in ((2, "One lockup: 9 pieces glued by overlap and touch"), (3, "A frame: the box + what it encloses")):
         src, _ = load(root, k)
         m = analyze(src)
-        units = [u for u in m["units"] if u.role not in ("bg", "frame_bg", "border", "deco", "missing")]
+        units = [u for u in m["units"] if u.role not in ("bg", "frame_bg", "border", "deco", "missing", "rule")]
         t, s = fit(render(src, assets, f"p{k}_src"), 700, 820)
         panels.append((annotate(t, src, units, {}, s), lab))
     sheet(panels).save(OUT / "step5_groups.png")

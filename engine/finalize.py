@@ -94,6 +94,18 @@ def place_border(ctx, P, unit):
     P.set(el["id"], x=l, y=t, width=max(1.0, ctx.W - l - r), height=max(1.0, ctx.H - t - b))
 
 
+def place_rule(ctx, P, unit):
+    """A structural line keeps its proportional place on the page: its length
+    follows the canvas along its axis, its thickness scales like a border."""
+    el = unit.els[0]
+    sx, sy = ctx.W / ctx.Ws, ctx.H / ctx.Hs
+    k = max(1e-6, ctx.border_scale)
+    if el["width"] >= el["height"]:
+        P.set(el["id"], x=el["x"] * sx, y=el["y"] * sy, width=el["width"] * sx, height=max(1.0, el["height"] * k))
+    else:
+        P.set(el["id"], x=el["x"] * sx, y=el["y"] * sy, width=max(1.0, el["width"] * k), height=el["height"] * sy)
+
+
 def place_deco(ctx, P, unit):
     el = unit.els[0]
     sx, sy = ctx.W / ctx.Ws, ctx.H / ctx.Hs
@@ -168,6 +180,72 @@ def place_float(ctx, P, unit, s0):
     return False
 
 
+def place_scatter(ctx, P, unit, s0, content):
+    """Decoration keeps its proportional place on the canvas, scaled with the
+    design. If it lands on content it slides toward its nearest edge, then
+    shrinks. It may bleed past an edge only as far as it did in the source."""
+    W, H = ctx.W, ctx.H
+    if unit.kind == "image":
+        blk = ImageBlock(unit)
+        el = unit.els[0]
+        sb = rot_bounds(el["x"], el["y"], el["width"], el["height"], el.get("rotation", 0))
+    else:
+        blk = GroupBlock(unit)
+        sb = blk.bounds_at(unit.bbox[0], unit.bbox[1], 1.0)
+    sw, sh = max(1e-6, sb[2] - sb[0]), max(1e-6, sb[3] - sb[1])
+    bleed = (max(0.0, -sb[0]) / sw, max(0.0, -sb[1]) / sh,
+             max(0.0, sb[2] - ctx.Ws) / sw, max(0.0, sb[3] - ctx.Hs) / sh)
+    fx, fy = (sb[0] + sb[2]) / 2 / ctx.Ws, (sb[1] + sb[3]) / 2 / ctx.Hs
+    step = 0.04 * min(W, H)
+
+    def clamp(x, y, bw, bh):
+        x = min(max(x, -bleed[0] * bw), W - bw + bleed[2] * bw)
+        y = min(max(y, -bleed[1] * bh), H - bh + bleed[3] * bh)
+        return x, y
+
+    def free(x, y, bw, bh):
+        box = (x, y, x + bw, y + bh)
+        return all(_overlap(box, o) <= 0.005 * min(_area(box), _area(o)) for o in content)
+
+    s = s0
+    found = None
+    for attempt in range(4):
+        bw, bh = sw * s, sh * s
+        x, y = clamp(fx * W - bw / 2, fy * H - bh / 2, bw, bh)
+        last = (x, y, s)
+        if free(x, y, bw, bh):
+            found = (x, y, s)
+            break
+        # slide toward the edges, nearest first
+        cx, cy = x + bw / 2, y + bh / 2
+        dirs = sorted([(cx, -1, 0), (W - cx, 1, 0), (cy, 0, -1), (H - cy, 0, 1)])
+        for _, dx, dy in dirs:
+            nx, ny = x, y
+            for _ in range(int(max(W, H) / step) + 1):
+                px, py = nx, ny
+                nx, ny = clamp(nx + dx * step, ny + dy * step, bw, bh)
+                if (nx, ny) == (px, py):
+                    break
+                if free(nx, ny, bw, bh):
+                    found = (nx, ny, s)
+                    break
+            if found:
+                break
+        if found:
+            break
+        s *= 0.75
+    x, y, s = found or last      # nowhere free: the smallest try, in its own place
+    if unit.kind == "image":
+        el = unit.els[0]
+        ew, eh = el["width"] * s, el["height"] * s
+        P.set(el["id"], x=x, y=y, width=ew, height=eh)
+        v = blk.v
+        P.vis[el["id"]] = (x + v[0] * ew, y + v[1] * eh, x + v[2] * ew, y + v[3] * eh)
+    else:
+        b = blk.bounds_at(0, 0, s)
+        blk.place_at(P, x - b[0], y - b[1], s)
+
+
 def hide(P, el, W, H):
     # Kept in the JSON (ids must survive) but invisible and out of the way.
     w, h = el["width"], el["height"]
@@ -183,7 +261,7 @@ def hide(P, el, W, H):
 
 def clamp_inside(ctx, P, model):
     W, H = ctx.W, ctx.H
-    skip = {e["id"] for u in model["units"] if u.role in ("bg", "deco", "border", "anchored") for e in u.els}
+    skip = {e["id"] for u in model["units"] if u.role in ("bg", "deco", "border", "anchored", "rule", "minor") for e in u.els}
     if getattr(P, "panel", None):
         skip.add(P.panel["id"])   # a photo panel bleeds off the canvas edges it touches
     if getattr(P, "backdrop", None) is not None:
@@ -290,6 +368,8 @@ def finalize(ctx, P, model, float_threshold=0.0):
             continue
         elif u.role == "border":
             place_border(ctx, P, u)
+        elif u.role == "rule":
+            place_rule(ctx, P, u)
         elif u.role == "deco":
             place_deco(ctx, P, u)
     for u in model["units"]:
@@ -299,9 +379,13 @@ def finalize(ctx, P, model, float_threshold=0.0):
         if u.role == "aligned" and u.els[0]["id"] not in P.props:
             if not place_aligned(ctx, P, u, model):
                 place_float(ctx, P, u, min(t, 1.5))
+    content = list(P.vis.values())
     for u in sorted(model["units"], key=lambda u: -u.prio):
-        if u.role in ("ribbon", "minor"):
+        if u.role == "ribbon":
             place_float(ctx, P, u, min(t, 1.5))
+        elif u.role == "minor":
+            # decoration never outgrows the canvas's own shape-preserving scale
+            place_scatter(ctx, P, u, min(t, 1.5, ctx.W / ctx.Ws, ctx.H / ctx.Hs), content)
     for u in model["units"]:
         if u.role in HIDE_ROLES:
             for eid in u.ids:

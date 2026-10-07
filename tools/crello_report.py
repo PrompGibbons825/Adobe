@@ -225,7 +225,7 @@ def main(root, picks):
             "src_png": render(src, assets, out / f"{p}_source.png"),
             "ref_png": render(ref, assets, out / f"{p}_designer.png"),
             "our_png": render(ours, assets, out / f"{p}_ours.png"),
-            "units": [u for u in model["units"] if u.role not in ("bg", "frame_bg", "deco", "missing")],
+            "units": [u for u in model["units"] if u.role not in ("bg", "frame_bg", "deco", "missing", "rule")],
             "model": model, "srcP": source_placed(model), "ourP": ourP,
         })
         print(p, meta["template"], meta.get("frame_modes"))

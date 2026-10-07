@@ -211,13 +211,49 @@ def _fragments(a, b):
     return _gap(a, b) <= 0.3 * min(fa, fb)
 
 
+def _contact(a, b, mind, carea):
+    """Two substantial pieces sharing an edge: no gap, and side by side along
+    at least half of the shorter one. They read as one object."""
+    if a["type"] == "text" or b["type"] == "text":
+        return False
+    if min(_area(a), _area(b)) < 0.02 * carea:
+        return False
+    A, B = _box(a), _box(b)
+    tol = 0.004 * mind
+    dx = max(A[0], B[0]) - min(A[2], B[2])     # > 0: horizontal gap, < 0: overlap
+    dy = max(A[1], B[1]) - min(A[3], B[3])
+    span_y = min(A[3], B[3]) - max(A[1], B[1])
+    span_x = min(A[2], B[2]) - max(A[0], B[0])
+    side = abs(dx) <= tol and span_y >= 0.5 * min(A[3] - A[1], B[3] - B[1])
+    stacked = abs(dy) <= tol and span_x >= 0.5 * min(A[2] - A[0], B[2] - B[0])
+    return side or stacked
+
+
 def _cluster(cand, carea, mind):
-    """Union-find over elements: designer groups, frames enclosing content,
-    overlapping pieces, and small ornaments touching their neighbour."""
+    """Union-find over elements, in three passes.
+
+    strong:  designer groups, word fragments, overlapping texts, and enclosure
+             (a piece belongs to the enclosure directly beneath it)
+    contact: substantial pieces sharing an edge
+    weak:    partial overlaps and small ornaments, strongest first. A weak
+             link never bridges two groups that each frame their own text:
+             a sketch overlapping two cards does not fuse the cards."""
     if not cand:
         return []
     uf = _UF([e["id"] for e in cand])
     opaque = {e["id"]: _opaque_frac(e) for e in cand}
+    has_text = {e["id"]: e["type"] == "text" for e in cand}
+    framed = {e["id"]: False for e in cand}
+
+    def union(x, y):
+        rx, ry = uf.find(x), uf.find(y)
+        if rx == ry:
+            return
+        uf.union(rx, ry)
+        r = uf.find(rx)
+        has_text[r] = has_text[rx] or has_text[ry]
+        framed[r] = framed[rx] or framed[ry]
+
     # large *detailed* images (photos) are backdrops, not glue; large *flat*
     # panels (cards, colour blocks) are containers and keep their contents
     def _detailed(e):
@@ -227,10 +263,12 @@ def _cluster(cand, carea, mind):
         return info is not None and info["busyness"] > 0.03
     big = {e["id"] for e in cand if e["type"] != "text" and _area(e) > 0.3 * carea
            and opaque[e["id"]] >= 0.3 and _detailed(e)}
+    enclosers: dict[str, list] = {}
+    contacts, weak = [], []
     for i, a in enumerate(cand):
         for b in cand[i + 1:]:
             if a.get("group_id") and a.get("group_id") == b.get("group_id"):
-                uf.union(a["id"], b["id"])
+                union(a["id"], b["id"])
                 continue
             if a.get("group_id") and b.get("group_id"):
                 continue
@@ -238,25 +276,44 @@ def _cluster(cand, carea, mind):
                 continue
             ta, tb = a["type"] == "text", b["type"] == "text"
             if ta and tb and _fragments(a, b):
-                uf.union(a["id"], b["id"])   # one word split across texts ("PA" / "IN")
+                union(a["id"], b["id"])   # one word split across texts ("PA" / "IN")
                 continue
             inter = _inter(a, b)
             small = min(_area(a), _area(b))
             for f, o in ((a, b), (b, a)):
                 if f["type"] != "text" and _area(f) > _area(o) * 1.5 and _inside(o, f):
-                    uf.union(a["id"], b["id"])
+                    enclosers.setdefault(o["id"], []).append(f)
                     break
             else:
-                if ta and tb:
+                if not ta and not tb and (_inside(a, b, 0.05) or _inside(b, a, 0.05)):
+                    union(a["id"], b["id"])   # layers of one object (a card and its inset outline)
+                elif ta and tb:
                     if inter >= 0.2 * small:
-                        uf.union(a["id"], b["id"])
+                        union(a["id"], b["id"])
+                elif _contact(a, b, mind, carea):
+                    contacts.append((a["id"], b["id"]))
                 elif inter >= 0.15 * small:
-                    uf.union(a["id"], b["id"])
+                    weak.append((inter / max(1e-6, small), a["id"], b["id"]))
                 elif not (ta and tb) and (
                         (_gap(a, b) <= 0.012 * mind and small < 0.015 * carea)
                         or (_gap(a, b) <= 0.025 * mind and small < 0.06 * carea
                             and min(_ink_density(a), _ink_density(b)) < 0.4)):
-                    uf.union(a["id"], b["id"])  # ornaments / line-art pieces of a lockup
+                    weak.append((0.1, a["id"], b["id"]))  # ornaments / line-art pieces of a lockup
+    byid = {e["id"]: e for e in cand}
+    for oid, fs in enclosers.items():
+        z = byid[oid]["z_index"]
+        below = [f for f in fs if f["z_index"] < z]
+        f = max(below, key=lambda f: f["z_index"]) if below else min(fs, key=_area)
+        union(oid, f["id"])
+        if byid[oid]["type"] == "text":
+            framed[uf.find(oid)] = True
+    for x, y in contacts:
+        union(x, y)
+    for _, x, y in sorted(weak, reverse=True):
+        rx, ry = uf.find(x), uf.find(y)
+        if rx != ry and framed[rx] and framed[ry]:
+            continue          # a bridge between two framed text blocks
+        union(x, y)
     comps: dict[str, list] = {}
     for e in cand:
         comps.setdefault(uf.find(e["id"]), []).append(e)
@@ -461,6 +518,17 @@ def analyze(source: dict) -> dict:
         w, h = b[2] - b[0], b[3] - b[1]
         tiny = w * h < 0.0008 * carea
         thin = min(w, h) < 0.008 * mind and max(w, h) / max(1e-6, min(w, h)) > 5 and w * h < 0.02 * carea
+        if thin:
+            # a line that spans half the canvas or runs from a canvas edge is
+            # page structure (a grid rule), not an ornament of nearby text
+            horiz = w >= h
+            span = w / cw if horiz else h / ch
+            t_ = 0.01 * mind
+            from_edge = (b[0] <= t_ or b[2] >= cw - t_) if horiz else (b[1] <= t_ or b[3] >= ch - t_)
+            if span >= 0.5 or from_edge:
+                units.append(Unit(e["id"], "rule", "bg", [e]))
+                used.add(e["id"])
+                continue
         if tiny or thin:
             seps.append(e)
             used.add(e["id"])
@@ -589,6 +657,12 @@ def analyze(source: dict) -> dict:
                 if u.role == "hero" and u is not hv:
                     u.role = "minor"
             hv.role = "hero"
+    # Decoration is decided by what a unit is, not how many pieces it has: a
+    # text-free group that is not the hero visual or a logo is decoration,
+    # exactly like a lone small image.
+    for u in units:
+        if u.role == "group" and u.kind == "group" and not any(e["type"] == "text" for e in u.els):
+            u.role = "minor"
     text_units = [u for u in units if u.kind == "text" and u.role in ("headline", "subhead", "body")]
     if text_units:
         def tw(u):
@@ -625,7 +699,7 @@ def analyze(source: dict) -> dict:
         else:
             u.els.append(sp)
 
-    owner_el = [(e, u) for u in units if u.role not in ("bg", "border", "deco", "missing", "anchored")
+    owner_el = [(e, u) for u in units if u.role not in ("bg", "border", "deco", "missing", "anchored", "rule")
                 for e in (u.els if u.kind != "badges" else [x for m in u.members for x in m.els])]
     for sp in seps:
         if not owner_el:
@@ -640,7 +714,7 @@ def analyze(source: dict) -> dict:
             continue
         _attach(sp, au)
 
-    deco_ids = {e["id"] for u in units if u.role in ("bg", "border", "deco", "missing") for e in u.els}
+    deco_ids = {e["id"] for u in units if u.role in ("bg", "border", "deco", "missing", "rule") for e in u.els}
 
     # 8b. Alignment inheritance: a small piece right above or below a text unit,
     #     on the same centre / left / right line, stays on that line.
@@ -689,12 +763,12 @@ def analyze(source: dict) -> dict:
             fx = e["x"] + info["centroid"][0] * e["width"]
             fy = e["y"] + info["centroid"][1] * e["height"]
             for u in units:
-                if u.role in ("bg", "border", "deco", "missing", "separator"):
+                if u.role in ("bg", "border", "deco", "missing", "separator", "rule"):
                     continue
                 b = u.bbox
                 u.on_subject = b[0] <= fx <= b[2] and b[1] <= fy <= b[3] and u.w * u.h < 0.6 * carea
 
-    content = [u for u in units if u.role not in ("bg", "border", "deco", "missing")]
+    content = [u for u in units if u.role not in ("bg", "border", "deco", "missing", "rule")]
     centered = False
     if content:
         # area-weighted horizontal center of the content, and whether the key units sit on the axis
@@ -703,6 +777,13 @@ def analyze(source: dict) -> dict:
         key = [u for u in content if u.role in ("headline", "logo", "cta", "subhead")] or content
         on_axis = all(abs((u.bbox[0] + u.bbox[2]) / 2 - cw / 2) < 0.08 * cw for u in key)
         centered = abs(cx - cw / 2) < 0.06 * cw and on_axis
-    return {"canvas": (cw, ch), "units": units, "els": {e["id"]: e for e in els}, "troles": troles,
+    # how much of the canvas the designer's content spanned (decoration excluded)
+    core = [u for u in content if u.role not in ("minor", "anchored", "ribbon", "aligned")]
+    src_fill = 0.55
+    if core:
+        bx0 = max(0.0, min(u.bbox[0] for u in core)); by0 = max(0.0, min(u.bbox[1] for u in core))
+        bx1 = min(cw, max(u.bbox[2] for u in core)); by1 = min(ch, max(u.bbox[3] for u in core))
+        src_fill = max(0.0, bx1 - bx0) * max(0.0, by1 - by0) / carea
+    return {"canvas": (cw, ch), "units": units, "src_fill": src_fill, "els": {e["id"]: e for e in els}, "troles": troles,
             "separators": [e["id"] for e in seps],
             "centered": centered}

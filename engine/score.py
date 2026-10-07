@@ -49,7 +49,7 @@ def weight_items(P, model, W, H, ids, units):
 def score(ctx, P, model):
     W, H = ctx.W, ctx.H
     br = {}
-    units = [u for u in model["units"] if u.role not in ("bg", "deco", "border")]
+    units = [u for u in model["units"] if u.role not in ("bg", "deco", "border", "rule")]
     owner = {}
     for u in units:
         for eid in u.ids:
@@ -80,6 +80,26 @@ def score(ctx, P, model):
             if fs < mn:
                 read -= (u.prio + 3) * 3 * (1 - fs / mn)
     br["readability"] = read
+
+    # hierarchy: text sizes keep their source proportions (two texts set equal
+    # stay equal; a headline stays bigger than its subhead by the same factor)
+    import math
+    sizes = []
+    for u in units:
+        if u.kind not in ("text", "group", "button", "frame"):
+            continue
+        for eid in u.ids:
+            el = model["els"][eid]
+            if el["type"] == "text" and eid not in P.hidden and eid in P.props:
+                sizes.append((el["font_size"], P.props[eid].get("font_size", el["font_size"])))
+    sizes.sort(reverse=True)
+    sizes = sizes[:4]          # the type that carries the message
+    drift = 0.0
+    for i in range(len(sizes)):
+        for j in range(i + 1, len(sizes)):
+            (s1, o1), (s2, o2) = sizes[i], sizes[j]
+            drift += abs(math.log(max(1e-6, o1 / max(1e-6, o2)) / max(1e-6, s1 / s2)))
+    br["hierarchy"] = -2.0 * drift
 
     # 3. prominence: headline + hero reasonably large vs the ideal scale
     prom = 0.0
@@ -121,6 +141,8 @@ def score(ctx, P, model):
                 continue
             if owner[a].kind == "badges" and owner[b] is owner[a]:
                 continue
+            if owner[a].role == "minor" and owner[b].role == "minor":
+                continue          # decoration layered on decoration is the designer's texture
             va, vb = P.vis[a], P.vis[b]
             ov = _overlap(va, vb)
             if ov <= 0:
@@ -150,17 +172,22 @@ def score(ctx, P, model):
     vis = [P.vis[i] for i in ids]
     bal = 0.0
     if vis:
-        x0 = min(v[0] for v in vis)
-        y0 = min(v[1] for v in vis)
-        x1 = max(v[2] for v in vis)
-        y1 = max(v[3] for v in vis)
+        cvis = [P.vis[i] for i in ids if owner[i].role != "minor"] or vis   # content, not decoration
+        x0 = min(v[0] for v in cvis)
+        y0 = min(v[1] for v in cvis)
+        x1 = max(v[2] for v in cvis)
+        y1 = max(v[3] for v in cvis)
         fill = ((x1 - x0) * (y1 - y0)) / (W * H)
-        bal += 3 * min(1.0, fill / 0.55)
+        # use the canvas about as much as the designer did (never asked for more than 55%)
+        target = min(0.55, max(0.15, 1.1 * model.get("src_fill", 0.55)))
+        bal += 3 * min(1.0, fill / target)
         edge = 0.015 * min(W, H)
         panel = getattr(P, "panel", None)
         for eid, v in zip(ids, vis):
             if panel and eid == panel["id"]:
                 continue          # a full-bleed photo panel is meant to touch the edges
+            if owner[eid].role == "minor":
+                continue          # decoration may sit at (or bleed past) the edge
             if v[0] < edge or v[1] < edge or v[2] > W - edge or v[3] > H - edge:
                 bal -= 0.5
     br["balance"] = bal

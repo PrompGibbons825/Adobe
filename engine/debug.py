@@ -17,7 +17,7 @@ def source_placed(model):
     W, H = model["canvas"]
     P = Placed()
     P.bg_focal, P.bg_info = None, None
-    units = [u for u in model["units"] if u.role not in ("bg", "deco", "border")]
+    units = [u for u in model["units"] if u.role not in ("bg", "deco", "border", "rule")]
     for u in units:
         for eid in u.ids:
             e = model["els"][eid]
