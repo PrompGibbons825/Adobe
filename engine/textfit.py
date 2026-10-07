@@ -95,10 +95,11 @@ def measure(el: dict, fs: int, max_w: float) -> dict:
     widths = _widths(el.get("font_family", ""), weight, style, float(fs), text)
     wrapped = _wrap(text, widths, max_w)
     lines = wrapped.split("\n")
+    ls = float(el.get("letter_spacing", 0) or 0)
     line_ws = []
     idx = 0
     for ln in lines:
-        line_ws.append(sum(widths[idx: idx + len(ln)]))
+        line_ws.append(sum(widths[idx: idx + len(ln)]) + ls * max(0, len(ln) - 1))
         idx += len(ln) + 1
     # longest word
     word_w, cur = 0.0, 0.0
@@ -107,7 +108,7 @@ def measure(el: dict, fs: int, max_w: float) -> dict:
             word_w = max(word_w, cur)
             cur = 0.0
         else:
-            cur += w
+            cur += w + ls
     word_w = max(word_w, cur)
     lh = float(el.get("line_height", 1.2))
     return {

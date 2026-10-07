@@ -233,7 +233,69 @@ class BadgesBlock:
                 cx += it.w * u + g
 
 
-def make_block(unit, src_w):
+class FrameBlock:
+    """A container (frame, card, outline) plus its contents. The container
+    may change aspect ratio toward the new canvas; its contents are laid out
+    again inside it, as a column or as a row (icons beside a text column)."""
+
+    def __init__(self, unit, ctx):
+        self.unit, self.ctx = unit, ctx
+        c = unit.container
+        self.c = c
+        self.cw, self.ch = c["width"], c["height"]
+        self.aspect = self.cw / max(1e-6, self.ch)
+        boxes = [ch.bbox for ch in unit.children]
+        ix0, iy0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+        ix1, iy1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+        cx0, cy0 = c["x"], c["y"]
+        self.pad = (max(0.0, ix0 - cx0) / self.cw, max(0.0, iy0 - cy0) / self.ch,
+                    max(0.0, cx0 + self.cw - ix1) / self.cw, max(0.0, cy0 + self.ch - iy1) / self.ch)
+        alpha = getattr(ctx, "frame_alpha", 0.0)
+        src_ca = ctx.Ws / ctx.Hs
+        tgt_ca = ctx.W / ctx.H
+        self.t_aspect = self.aspect * (tgt_ca / src_ca) ** alpha
+        self.t_aspect = min(max(self.t_aspect, self.aspect / 4), self.aspect * 4)
+
+    def dims(self, t):
+        area = self.cw * self.ch * t * t
+        return (area * self.t_aspect) ** 0.5, (area / self.t_aspect) ** 0.5
+
+    def scale_for(self, t, max_w, max_h=None):
+        w, h = self.dims(t)
+        k = 1.0
+        if w > max_w:
+            k = max_w / w
+        if max_h is not None and h * k > max_h:
+            k = max_h / h
+        return t * k
+
+    def size(self, t, max_w):
+        return self.dims(self.scale_for(t, max_w))
+
+    def place(self, P, x, y, t, max_w, align):
+        t = self.scale_for(t, max_w)
+        w, h = self.dims(t)
+        bx = x + (max_w - w) / 2 if align == "center" else x
+        self.place_box(P, bx, y, w, h, t)
+
+    def place_box(self, P, bx, by, w, h, t):
+        from .layout import inner_layout
+        c = self.c
+        P.set(c["id"], x=bx, y=by, width=w, height=h)
+        P.vis[c["id"]] = (bx, by, bx + w, by + h)
+        # padding keeps its proportion on each axis, but never more than it was at uniform scale
+        pl = min(self.pad[0] * w, self.pad[0] * self.cw * t * 1.5)
+        pr = min(self.pad[2] * w, self.pad[2] * self.cw * t * 1.5)
+        pt = min(self.pad[1] * h, self.pad[1] * self.ch * t * 1.5)
+        pb = min(self.pad[3] * h, self.pad[3] * self.ch * t * 1.5)
+        rect = (bx + pl, by + pt, max(1.0, w - pl - pr), max(1.0, h - pt - pb))
+        P.frame_modes = getattr(P, "frame_modes", {})
+        P.frame_modes[self.unit.uid] = inner_layout(self.ctx, P, self.unit.children, rect, t)
+
+
+def make_block(unit, src_w, ctx=None):
+    if unit.kind == "frame" and ctx is not None:
+        return FrameBlock(unit, ctx)
     if unit.kind == "text":
         return TextBlock(unit, src_w)
     if unit.kind == "image":

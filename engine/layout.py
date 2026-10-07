@@ -63,7 +63,7 @@ def _stack(ctx: Ctx, P: Placed, units, rect, align, t_hi, boost):
     if not units:
         return t_hi
     units = sorted(units, key=lambda u: u.cy)
-    blocks = [make_block(u, ctx.Ws) for u in units]
+    blocks = [make_block(u, ctx.Ws, ctx) for u in units]
     rx, ry, rw, rh = rect
     base_gaps = [min(max(g, 0.02 * ctx.Hs), 0.08 * ctx.Hs) for g in _src_gaps(units)]
     has_hero = any(u.role == "hero" for u in units)
@@ -232,6 +232,13 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1):
             if mm is None:
                 return None
             it.update(kind="ctatext", block=u, w=mm["width"], h=mm["height"], s=mm)
+        elif u.kind == "frame":
+            from .blocks import FrameBlock
+            b = FrameBlock(u, ctx)
+            h = hA * 0.98 * item_scale
+            w = min(h * b.t_aspect, 0.5 * W)
+            h = w / b.t_aspect
+            it.update(kind="frame", block=b, w=w, h=h, s=h / b.dims(1.0)[1])
         else:
             b = GroupBlock(u)
             fh = {"cta": 0.7, "badges": 0.5, "headline": 1.0}.get(u.role, 0.8)
@@ -286,6 +293,8 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1):
             it["block"].place_vis(P, x, cy - it["h"] / 2, it["s"])
         elif k == "group":
             it["block"].place_at(P, x, cy - it["h"] / 2, it["s"])
+        elif k == "frame":
+            it["block"].place_box(P, x, cy - it["h"] / 2, it["w"], it["h"], it["s"])
         elif k == "badges":
             it["block"].place(P, x, cy - it["h"] / 2, it["s"], it["w"] + 1, "left")
         elif k == "ctatext":
@@ -314,3 +323,79 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1):
         x += it["w"] + g
     P.meta = {"template": f"row-s{item_scale}-c{len(tcols)}", "t": head_t}
     return P
+
+
+def _inner_row(ctx, P, units, rect, t):
+    """Row inside a frame: non-text pieces on the left, one text column on
+    the right. Returns the text scale achieved, or None."""
+    rx, ry, rw, rh = rect
+    texts = sorted([u for u in units if u.kind == "text"], key=lambda u: (u.bbox[1], u.bbox[0]))
+    rest = [u for u in units if u.kind != "text"]
+    if not rest or not texts:
+        return None
+    g = 0.06 * rh
+    placed_w = 0.0
+    blocks = []
+    for u in sorted(rest, key=lambda u: (u.bbox[0], u.bbox[1])):
+        b = make_block(u, ctx.Ws, ctx)
+        if isinstance(b, ImageBlock):
+            s = b.scale_for(t * 1.6, 0.3 * rw, 0.8 * rh)
+            w, h = b.vw * s, b.vh * s
+        elif isinstance(b, GroupBlock):
+            s = b.scale_for(t * 1.6, 0.3 * rw, 0.8 * rh)
+            w, h = b.w * s, b.h * s
+        else:
+            s = t
+            w, h = b.size(s, 0.3 * rw)
+        blocks.append((b, s, w, h))
+        placed_w += w + g
+    col_w = rw - placed_w
+    if col_w < 0.25 * rw:
+        return None
+    cap = max(u.els[0]["font_size"] for u in texts) * t * 1.6
+    ms = _fit_column(texts, col_w, rh, cap)
+    if ms is None:
+        return None
+    tw = max(m["width"] for m in ms)
+    th = sum(m["height"] for m in ms) + sum(m["fs"] * 0.3 for m in ms[1:])
+    x = rx + (rw - placed_w - tw) / 2
+    cy = ry + rh / 2
+    for b, s, w, h in blocks:
+        if isinstance(b, ImageBlock):
+            b.place_vis(P, x, cy - h / 2, s)
+        elif isinstance(b, GroupBlock):
+            b.place_at(P, x, cy - h / 2, s)
+        else:
+            b.place(P, x, cy - h / 2, s, w, "left")
+        x += w + g
+    y = cy - th / 2
+    for u, m in zip(texts, ms):
+        el = u.els[0]
+        P.set(el["id"], x=x, y=y, width=tw + m["fs"], height=m["height"], font_size=m["fs"], text_align="left")
+        P.vis[el["id"]] = tf.visual_box(dict(el, text_align="left"), x, y, tw + m["fs"], m["fs"], m)
+        y += m["height"] + m["fs"] * 0.3
+    return ms[0]["fs"] / texts[0].els[0]["font_size"]
+
+
+def inner_layout(ctx, P, units, rect, t):
+    """Lay out a frame's contents inside rect, trying both a column and a row
+    (icons beside a text column); keep whichever lets the text be larger."""
+    options = []
+    col = Placed()
+    tt = stack(ctx, col, units, rect, "center", t * 1.6)
+    if tt is not None:
+        options.append((tt * 1.2, "column", col))  # slight preference: keeps the designer's structure
+    if rect[2] / max(1.0, rect[3]) > 1.3:
+        row = Placed()
+        tr = _inner_row(ctx, row, units, rect, t)
+        if tr is not None:
+            options.append((tr, "row", row))
+    if not options:
+        return None
+    _, mode, best = max(options, key=lambda o: o[0])
+    for k, v in best.props.items():
+        P.set(k, **v)
+    P.vis.update(best.vis)
+    P.frame_modes = getattr(P, "frame_modes", {})
+    P.frame_modes.update(getattr(best, "frame_modes", {}))
+    return mode

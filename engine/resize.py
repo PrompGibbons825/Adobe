@@ -33,6 +33,26 @@ def _candidates(ctx, model):
     flow = [u for u in model["units"] if u.role in FLOW_ROLES]
     if not flow:
         return
+    has_frame = any(u.kind == "frame" for u in model["units"])
+    for alpha in ((0.0, 0.5, 0.9) if has_frame else (0.0,)):
+        for item in _templates(ctx, flow, alpha):
+            yield item
+
+
+def _templates(ctx, flow, alpha):
+    def with_alpha(make):
+        def run():
+            ctx.frame_alpha = alpha
+            P = make()
+            if P is not None:
+                P.meta["template"] += f" a{alpha}" if alpha else ""
+            return P
+        return run
+    for th, make in _templates_raw(ctx, flow):
+        yield th, with_alpha(make)
+
+
+def _templates_raw(ctx, flow):
     for region in ("full", "left", "right", "top", "bottom"):
         for align in ("center", "left"):
             if region == "full" or (region in ("left", "right") and ctx.W / ctx.H > 1.2) \
@@ -99,7 +119,8 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                 print(f"    {P.meta['template']:<28} drop>={th:<4} score={s:7.2f} "
                       + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
             if s > best_s:
-                best, best_s, best_br, best_meta = P, s, br, P.meta
+                best, best_s, best_br = P, s, br
+                best_meta = dict(P.meta, frame_modes=dict(getattr(P, "frame_modes", {})))
         if best is None:
             return _fallback(source, target_canvas)
         if DEBUG:

@@ -32,6 +32,8 @@ class Unit:
     els: list          # source element dicts
     members: list = field(default_factory=list)  # for badges: list[Unit]
     prio: float = 0.0
+    container: dict | None = None                  # for frames: the enclosing element
+    children: list = field(default_factory=list)   # for frames: inner units (re-laid out)
 
     @property
     def ids(self):
@@ -164,6 +166,99 @@ def _text_roles(texts):
     return roles
 
 
+ROLE_ORDER = ["headline", "cta", "subhead", "body", "legal"]
+
+
+def _cluster(cand, carea, mind):
+    """Union-find over elements: designer groups, frames enclosing content,
+    overlapping pieces, and small ornaments touching their neighbour."""
+    if not cand:
+        return []
+    uf = _UF([e["id"] for e in cand])
+    opaque = {e["id"]: _opaque_frac(e) for e in cand}
+    big = {e["id"] for e in cand if e["type"] != "text" and _area(e) > 0.3 * carea and opaque[e["id"]] >= 0.3}
+    for i, a in enumerate(cand):
+        for b in cand[i + 1:]:
+            if a.get("group_id") and a.get("group_id") == b.get("group_id"):
+                uf.union(a["id"], b["id"])
+                continue
+            if a.get("group_id") and b.get("group_id"):
+                continue
+            if a["id"] in big or b["id"] in big:
+                continue
+            ta, tb = a["type"] == "text", b["type"] == "text"
+            inter = _inter(a, b)
+            small = min(_area(a), _area(b))
+            for f, o in ((a, b), (b, a)):
+                if f["type"] != "text" and _area(f) > _area(o) * 1.5 and _inside(o, f):
+                    uf.union(a["id"], b["id"])
+                    break
+            else:
+                if ta and tb:
+                    if inter >= 0.2 * small:
+                        uf.union(a["id"], b["id"])
+                elif inter >= 0.15 * small:
+                    uf.union(a["id"], b["id"])
+                elif _gap(a, b) <= 0.012 * mind and small < 0.015 * carea and not (ta and tb):
+                    uf.union(a["id"], b["id"])
+    comps: dict[str, list] = {}
+    for e in cand:
+        comps.setdefault(uf.find(e["id"]), []).append(e)
+    out = list(comps.values())
+    for m in out:
+        m.sort(key=lambda e: e["z_index"])
+    return out
+
+
+def _find_container(members):
+    """The element that encloses most of the others (a frame, card, pill)."""
+    best = None
+    for f in members:
+        if f["type"] == "text" or abs(f.get("rotation", 0) or 0) > 1:
+            continue
+        others = [o for o in members if o is not f]
+        inside = [o for o in others if _area(f) > _area(o) * 1.5 and _inside(o, f)]
+        if others and len(inside) >= max(1, 0.7 * len(others)) and len(inside) == len(others):
+            if best is None or _area(f) > _area(best):
+                best = f
+    return best
+
+
+def _group_unit(members, troles, carea, mind, depth=0):
+    gid = members[0].get("group_id") or ("cl_" + members[0]["id"])
+    txt = [m for m in members if m["type"] == "text"]
+    non = [m for m in members if m["type"] != "text"]
+    rotated = any(abs(m.get("rotation", 0) or 0) > 1 for m in members)
+    explicit = all(m.get("group_id") for m in members)
+    if rotated and explicit and len(members) <= 3:
+        return Unit(gid, "ribbon", "ribbon", members)
+    if len(txt) == 1 and len(non) == 1 and not rotated and _inside(txt[0], non[0], 0.25) \
+            and _area(non[0]) < 0.12 * carea and len(txt[0]["content"]) <= 40:
+        return Unit(gid, "button", "button", members)
+    rs = [troles.get(t["id"], "body") for t in txt]
+    role = min(rs, key=ROLE_ORDER.index) if rs else "group"
+    if not txt:
+        aid = " ".join((m.get("asset_id") or "").lower() for m in non)
+        role = "logo" if "logo" in aid else "group"
+    cont = _find_container(members) if depth < 2 and not rotated else None
+    if cont is not None and len(members) >= 3:
+        inner = [m for m in members if m is not cont]
+        children = []
+        for sub in _cluster(inner, carea, mind):
+            if len(sub) == 1:
+                e = sub[0]
+                if e["type"] == "text":
+                    children.append(Unit(e["id"], troles.get(e["id"], "body"), "text", [e]))
+                elif e["type"] == "image":
+                    children.append(Unit(e["id"], "minor", "image", [e]))
+                else:
+                    children.append(Unit(e["id"], "group", "group", [e]))
+            else:
+                children.append(_group_unit(sub, troles, carea, mind, depth + 1))
+        return Unit(gid, role, "frame", members, container=cont, children=children)
+    return Unit(gid, role, "group", members)
+
+
 def analyze(source: dict) -> dict:
     cw, ch = source["canvas"]["width"], source["canvas"]["height"]
     els = [dict(e) for e in source["elements"]]
@@ -204,41 +299,8 @@ def analyze(source: dict) -> dict:
             units.append(Unit(e["id"], "missing", "image", [e]))
             used.add(e["id"])
             cand.remove(e)
-    uf = _UF([e["id"] for e in cand])
-    opaque = {e["id"]: _opaque_frac(e) for e in cand}
-    big = {e["id"] for e in cand if e["type"] != "text" and _area(e) > 0.3 * carea and opaque[e["id"]] >= 0.3}
-    for i, a in enumerate(cand):
-        for b in cand[i + 1:]:
-            if a.get("group_id") and a.get("group_id") == b.get("group_id"):
-                uf.union(a["id"], b["id"])
-                continue
-            if a.get("group_id") and b.get("group_id"):
-                continue  # two designer groups stay separate
-            if a["id"] in big or b["id"] in big:
-                continue  # large photos are backdrops/heroes, not glue
-            ta, tb = a["type"] == "text", b["type"] == "text"
-            inter = _inter(a, b)
-            small = min(_area(a), _area(b))
-            # frame (outline / container) enclosing other pieces
-            for f, o in ((a, b), (b, a)):
-                if f["type"] != "text" and _area(f) > _area(o) * 1.5 and _inside(o, f):
-                    uf.union(a["id"], b["id"])
-                    break
-            else:
-                if ta and tb:
-                    if inter >= 0.2 * small:
-                        uf.union(a["id"], b["id"])
-                elif inter >= 0.15 * small:
-                    uf.union(a["id"], b["id"])
-                elif _gap(a, b) <= 0.012 * mind and min(_area(a), _area(b)) < 0.015 * carea and not (ta and tb):
-                    uf.union(a["id"], b["id"])  # small icon touching a word, ornaments in a lockup
-    comps: dict[str, list] = {}
-    for e in cand:
-        comps.setdefault(uf.find(e["id"]), []).append(e)
-
     singles_img = []
-    for members in comps.values():
-        members.sort(key=lambda e: e["z_index"])
+    for members in _cluster(cand, carea, mind):
         for e in members:
             used.add(e["id"])
         if len(members) == 1:
@@ -250,25 +312,7 @@ def analyze(source: dict) -> dict:
             else:
                 units.append(Unit(e["id"], "deco", "deco", [e]))
             continue
-        gid = members[0].get("group_id") or ("cl_" + members[0]["id"])
-        txt = [m for m in members if m["type"] == "text"]
-        non = [m for m in members if m["type"] != "text"]
-        rotated = any(abs(m.get("rotation", 0) or 0) > 1 for m in members)
-        explicit = all(m.get("group_id") for m in members)
-        if rotated and explicit and len(members) <= 3:
-            units.append(Unit(gid, "ribbon", "ribbon", members))
-            continue
-        if len(txt) == 1 and len(non) == 1 and not rotated and _inside(txt[0], non[0], 0.25) \
-                and _area(non[0]) < 0.12 * carea and len(txt[0]["content"]) <= 40:
-            units.append(Unit(gid, "button", "button", members))
-            continue
-        order = ["headline", "cta", "subhead", "body", "legal"]
-        rs = [troles.get(t["id"], "body") for t in txt]
-        role = min(rs, key=order.index) if rs else "group"
-        if not txt:
-            aid = " ".join((m.get("asset_id") or "").lower() for m in non)
-            role = "logo" if "logo" in aid else "group"
-        units.append(Unit(gid, role, "group", members))
+        units.append(_group_unit(members, troles, carea, mind))
 
     # 5. Single images: missing / logo / hero / minor
     real = []
@@ -330,4 +374,4 @@ def analyze(source: dict) -> dict:
     for u in units:
         u.prio = PRIORITY.get(u.role, 0)
 
-    return {"canvas": (cw, ch), "units": units, "els": {e["id"]: e for e in els}}
+    return {"canvas": (cw, ch), "units": units, "els": {e["id"]: e for e in els}, "troles": troles}
