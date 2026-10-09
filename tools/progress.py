@@ -19,7 +19,7 @@ img = out / "img"
 img.mkdir(parents=True, exist_ok=True)
 STEPS = [("0_before", "Before today"), ("A", "A · grouping by contact"), ("B1", "B1 · keep or break groups"),
          ("B2", "B2 · re-stack groups"), ("C", "C · cards resize, share, hierarchy"),
-         ("D", "D · rotated text strips"), ("E", "E · contrast"), ("F", "F · rotation-correct geometry, no thumbnails"), ("G", "G · faces, fill, frame corners, relative costs"), ("H", "H · grid fallback, upright text (final)")]
+         ("D", "D · rotated text strips"), ("E", "E · contrast"), ("F", "F · rotation-correct geometry, no thumbnails"), ("G", "G · faces, fill, frame corners, relative costs"), ("H", "H · grid fallback, upright text"), ("I", "I · real faces, edge pinning, picture coverage (final)")]
 try:
     LF = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 26)
 except Exception:
