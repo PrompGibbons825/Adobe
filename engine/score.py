@@ -355,6 +355,64 @@ def score(ctx, P, model):
         hid = -8 * max(0.0, cov - src_cov - 0.1)
     br["subject_hidden"] = hid
 
+    # picture coverage: the share of the canvas showing pictures (minus what
+    # opaque cards hide) should not fall far below the source's
+    import numpy as np
+    def _kinds():
+        pics, cards = [], []
+        for i, el in model["els"].items():
+            if el["type"] == "text":
+                continue
+            if el["type"] == "image":
+                info = saliency.analyze(el.get("asset_id") or "")
+                if not info:
+                    continue
+                if info.get("plain", 1.0) < 0.85 and info["opaque_frac"] > 0.5:
+                    pics.append(i)
+                    continue
+                if info["opaque_frac"] > 0.9 and (el.get("opacity", 1) or 1) >= 0.8:
+                    cards.append(i)
+            elif (el.get("opacity", 1) or 1) >= 0.8:
+                cards.append(i)
+        return pics, cards
+    kinds = model.get("_pic_kinds")
+    if kinds is None:
+        kinds = model["_pic_kinds"] = _kinds()
+    pics, cards = kinds
+
+    def _cov(boxof, region):
+        n = 64
+        rx0, ry0, rx1, ry1 = region
+        g = np.zeros((n, n), np.int8)
+        def paint(bx, val, z):
+            i0 = int(np.clip((bx[0] - rx0) / (rx1 - rx0) * n, 0, n)); i1 = int(np.clip(np.ceil((bx[2] - rx0) / (rx1 - rx0) * n), 0, n))
+            j0 = int(np.clip((bx[1] - ry0) / (ry1 - ry0) * n, 0, n)); j1 = int(np.clip(np.ceil((bx[3] - ry0) / (ry1 - ry0) * n), 0, n))
+            g[j0:j1, i0:i1] = val
+        layers = [(model["els"][i].get("z_index", 0), i, 1) for i in pics] + \
+                 [(model["els"][i].get("z_index", 0), i, 0) for i in cards]
+        for z, i, val in sorted(layers):
+            bx = boxof(i)
+            if bx is not None:
+                paint(bx, val, z)
+        return float(g.mean())
+
+    def src_box(i):
+        e = model["els"][i]
+        return (e["x"], e["y"], e["x"] + e["width"], e["y"] + e["height"])
+
+    def out_box(i):
+        if i in P.hidden:
+            return None
+        e = model["els"][i]
+        p_ = P.props.get(i, {})
+        x, y = p_.get("x", e["x"]), p_.get("y", e["y"])
+        return (x, y, x + p_.get("width", e["width"]), y + p_.get("height", e["height"]))
+    src_pc = model.get("_src_pic_cov")
+    if src_pc is None:
+        src_pc = model["_src_pic_cov"] = _cov(src_box, (0, 0, Ws, Hs))
+    out_pc = _cov(out_box, (0, 0, W, H))
+    br["picture_cover"] = -5 * max(0.0, src_pc - out_pc - 0.1)
+
     # faithfulness: reshaping a frame has to pay for itself
     import math
     reshape = 0.0

@@ -52,8 +52,9 @@ _CASCADES = None
 def _faces(im: Image.Image) -> list:
     """Faces in a picture, as (x0, y0, x1, y1) fractions. OpenCV's bundled Haar
     cascades (frontal x2 + profile) on a 900px copy; a hit counts only if at
-    least 45% of its box is skin-toned (YCrCb), which drops textures that
-    merely look face-like. Returns [] if OpenCV is unavailable."""
+    least 45% of its box is skin-toned (YCrCb) and two eyes are found in its
+    upper part, which drops skin, fabric and lights that merely look
+    face-like. Returns [] if OpenCV is unavailable."""
     global _CASCADES
     try:
         import cv2
@@ -62,7 +63,8 @@ def _faces(im: Image.Image) -> list:
     if _CASCADES is None:
         _CASCADES = [cv2.CascadeClassifier(cv2.data.haarcascades + n) for n in
                      ("haarcascade_frontalface_default.xml", "haarcascade_frontalface_alt2.xml",
-                      "haarcascade_profileface.xml")]
+                      "haarcascade_profileface.xml", "haarcascade_eye.xml")]
+    eye = _CASCADES[3]
     w, h = im.size
     if w * h < 120 * 120:
         return []
@@ -73,9 +75,13 @@ def _faces(im: Image.Image) -> list:
     ycc = cv2.cvtColor(rgb, cv2.COLOR_RGB2YCrCb)
     skin = (ycc[..., 1] >= 135) & (ycc[..., 1] <= 180) & (ycc[..., 2] >= 85) & (ycc[..., 2] <= 135)
     out = []
-    for k, c in enumerate(_CASCADES):
+    for k, c in enumerate(_CASCADES[:3]):
         for (x, y, fw, fh) in c.detectMultiScale(gray, 1.08, 4 if k < 2 else 5, minSize=(mn, mn)):
             if skin[y:y + fh, x:x + fw].mean() < 0.45:
+                continue
+            # a face has two eyes in its upper part (drops skin, fabric, lights)
+            roi = gray[y:y + int(fh * 0.6), x:x + fw]
+            if len(eye.detectMultiScale(roi, 1.1, 3, minSize=(max(5, fw // 10), max(5, fw // 10)))) < 2:
                 continue
             box = (x / rgb.shape[1], y / rgb.shape[0], (x + fw) / rgb.shape[1], (y + fh) / rgb.shape[0])
             if not any(max(0, min(box[2], o[2]) - max(box[0], o[0])) * max(0, min(box[3], o[3]) - max(box[1], o[1]))

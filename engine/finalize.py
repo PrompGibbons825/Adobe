@@ -377,6 +377,50 @@ def place_aligned(ctx, P, unit, model):
     return True
 
 
+def pin_edges(ctx, P, model):
+    """Content that touched or bled off a canvas edge in the source goes back
+    to that edge (same proportional bleed), if it can without landing on other
+    content (photo panels included). Left/right and top/bottom independently;
+    never both sides."""
+    Ws, Hs = ctx.Ws, ctx.Hs
+    W, H = ctx.W, ctx.H
+    tol = 0.01 * min(Ws, Hs)
+    panel_ids = {pn["id"] for pn in (getattr(P, "panels", None) or ([P.panel] if getattr(P, "panel", None) else []))}
+    for u in model["units"]:
+        if u.role not in ("headline", "subhead", "body", "group", "cta", "logo", "legal", "badges") or u.kind == "badges":
+            continue
+        ids = [i for i in u.ids if i in P.vis and i in P.props and i not in P.hidden]
+        if not ids or set(ids) & panel_ids:
+            continue
+        b = u.bbox
+        L, T, R_, B = b[0] <= tol, b[1] <= tol, b[2] >= Ws - tol, b[3] >= Hs - tol
+        vb = [P.vis[i] for i in ids]
+        cur = (min(v[0] for v in vb), min(v[1] for v in vb), max(v[2] for v in vb), max(v[3] for v in vb))
+        sw, sh = max(1e-6, b[2] - b[0]), max(1e-6, b[3] - b[1])
+        dx = dy = 0.0
+        if L != R_:
+            want = -max(0.0, -b[0]) / sw * (cur[2] - cur[0]) if L else W - (cur[2] - cur[0]) + max(0.0, b[2] - Ws) / sw * (cur[2] - cur[0])
+            dx = want - cur[0]
+        if T != B:
+            want = -max(0.0, -b[1]) / sh * (cur[3] - cur[1]) if T else H - (cur[3] - cur[1]) + max(0.0, b[3] - Hs) / sh * (cur[3] - cur[1])
+            dy = want - cur[1]
+        if not dx and not dy:
+            continue
+        moved = (cur[0] + dx, cur[1] + dy, cur[2] + dx, cur[3] + dy)
+        others = [v for i, v in P.vis.items() if i not in u.ids and i not in P.hidden
+                  and model["els"].get(i, {}).get("type") is not None
+                  and not any(i in w.ids for w in model["units"] if w.role in ("bg", "deco", "border", "rule", "minor"))]
+        if any(_overlap(moved, o) > 0.02 * _area(o) for o in others):
+            continue
+        for i in u.ids:
+            if i in P.props:
+                P.props[i]["x"] = P.props[i].get("x", model["els"][i]["x"]) + dx
+                P.props[i]["y"] = P.props[i].get("y", model["els"][i]["y"]) + dy
+            if i in P.vis:
+                v = P.vis[i]
+                P.vis[i] = (v[0] + dx, v[1] + dy, v[2] + dx, v[3] + dy)
+
+
 def finalize(ctx, P, model, float_threshold=0.0):
     """Returns P, or None if the template failed to place some unit
     (nothing may be dropped)."""
@@ -432,6 +476,7 @@ def finalize(ctx, P, model, float_threshold=0.0):
         for eid in u.ids:
             if eid not in P.props:
                 return None
+    pin_edges(ctx, P, model)
     clamp_inside(ctx, P, model)
     return P
 

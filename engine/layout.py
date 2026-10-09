@@ -565,8 +565,14 @@ def _inner_row(ctx, P, units, rect, t):
     y = cy - th / 2
     for u, m in zip(texts, ms):
         el = u.els[0]
-        P.set(el["id"], x=tx - m["fs"] / 2, y=y, width=tw + m["fs"], height=m["height"], font_size=m["fs"], text_align=align)
-        P.vis[el["id"]] = tf.visual_box(dict(el, text_align=align), tx - m["fs"] / 2, y, tw + m["fs"], m["fs"], m)
+        # a little slack around the column, but never past the frame's inner edges
+        bx = max(rx, tx - m["fs"] / 2)
+        bw = min(tw + m["fs"], rx + rw - bx)
+        if align == "center":
+            bw = 2 * min(tx + tw / 2 - bx, bx + bw - (tx + tw / 2))
+            bx = tx + tw / 2 - bw / 2
+        P.set(el["id"], x=bx, y=y, width=bw, height=m["height"], font_size=m["fs"], text_align=align)
+        P.vis[el["id"]] = tf.visual_box(dict(el, text_align=align), bx, y, bw, m["fs"], m)
         y += m["height"] + m["fs"] * 0.3
     return ms[0]["fs"] / texts[0].els[0]["font_size"]
 
@@ -578,7 +584,7 @@ def inner_layout(ctx, P, units, rect, t):
     col = Placed()
     tt = stack(ctx, col, units, rect, "center", t * 1.6)
     if tt is not None:
-        options.append((tt * 1.2, "column", col))  # slight preference: keeps the designer's structure
+        options.append((tt * 1.5, "column", col))  # keeps the designer's structure unless a row is much larger
     if rect[2] / max(1.0, rect[3]) > 1.3:
         row = Placed()
         tr = _inner_row(ctx, row, units, rect, t)
@@ -733,6 +739,65 @@ def tmpl_backdrop(ctx, flow, align="center", region="full"):
     return P
 
 
+def _picture_card_panel(ctx, flow, side, frac):
+    """A group made of a plain card carrying a picture (an illustration on a
+    coloured card) becomes the band: the card fills the band (cropped, never
+    stretched) and the picture scales with the band's cross size."""
+    from . import saliency
+    from .analyze import _fills_box
+    W, H = ctx.W, ctx.H
+    wide = side in ("left", "right")
+    best = None
+    for u in flow:
+        if u.kind != "group":
+            continue
+        cards = [e for e in u.els if e["type"] == "image" and _fills_box(e)
+                 and (saliency.analyze(e.get("asset_id") or "") or {}).get("plain", 0) >= 0.85]
+        pics = [e for e in u.els if e["type"] == "image"
+                and (saliency.analyze(e.get("asset_id") or "") or {}).get("plain", 1) < 0.85]
+        if not cards or not pics:
+            continue
+        c = max(cards, key=lambda e: e["width"] * e["height"])
+        b = u.bbox
+        if c["width"] * c["height"] < 0.5 * (b[2] - b[0]) * (b[3] - b[1]):
+            continue
+        if best is None or c["width"] * c["height"] > best[1]["width"] * best[1]["height"]:
+            best = (u, c)
+    if best is None:
+        return None
+    u, c = best
+    P = Placed()
+    if wide:
+        rect = (0.0, 0.0, W * frac, H) if side == "left" else (W - W * frac, 0.0, W * frac, H)
+        s = H / c["height"]
+    else:
+        rect = (0.0, 0.0, W, H * frac) if side == "top" else (0.0, H - H * frac, W, H * frac)
+        s = W / c["width"]
+    rx, ry, rw, rh = rect
+    # the group keeps its arrangement around the card's centre, at the band's scale
+    ccx, ccy = c["x"] + c["width"] / 2, c["y"] + c["height"] / 2
+    tx, ty = rx + rw / 2, ry + rh / 2
+    from .blocks import GroupBlock
+    gb = GroupBlock(u)
+    gb.place_at(P, tx + (gb.x0 - ccx) * s, ty + (gb.y0 - ccy) * s, s)
+    P.set(c["id"], x=rx, y=ry, width=rw, height=rh, fit="cover")
+    P.vis[c["id"]] = rect
+    P.panel = {"id": c["id"], "rect": rect, "side": side}
+    rest = [v for v in flow if v is not u]
+    m = ctx.margin
+    if wide:
+        ox = rect[2] if side == "left" else 0.0
+        area = (ox + m, m, W - rect[2] - 2 * m, H - 2 * m)
+    else:
+        oy = rect[3] if side == "top" else 0.0
+        area = (m, oy + m, W - 2 * m, H - rect[3] - 2 * m)
+    t = stack(ctx, P, rest, area, src_align(rest), t_cap(ctx, area[2])) if rest else 1.0
+    if t is None:
+        return None
+    P.meta = {"template": f"cardpanel-{side}-{frac}", "t": t}
+    return P
+
+
 def tmpl_card_panel(ctx, flow, side="left", frac=0.5):
     """A card (a frame whose container is a flat, box-filling piece) becomes a
     full-bleed band on one side, its text reflowed inside; the background
@@ -745,7 +810,7 @@ def tmpl_card_panel(ctx, flow, side="left", frac=0.5):
         return None
     frames = [u for u in flow if u.kind == "frame"]
     if not frames:
-        return None
+        return _picture_card_panel(ctx, flow, side, frac)
     card = max(frames, key=lambda u: u.container["width"] * u.container["height"])
     fb = FrameBlock(card, ctx)
     if not fb.crop_card and card.container["type"] != "shape":
@@ -802,14 +867,28 @@ def tmpl_card_panel(ctx, flow, side="left", frac=0.5):
     if rest:
         if wide:
             ox = rect[2] if side == "left" else 0.0
-            t = stack(ctx, P, rest, (ox + m, m, W - rect[2] - 2 * m, H - 2 * m), "center", t_cap(ctx, W))
+            t = stack(ctx, P, rest, (ox + m, m, W - rect[2] - 2 * m, H - 2 * m), src_align(rest), t_cap(ctx, W))
         else:
             oy = rect[3] if side == "top" else 0.0
-            t = stack(ctx, P, rest, (m, oy + m, W - 2 * m, H - rect[3] - 2 * m), "center", t_cap(ctx, W))
+            t = stack(ctx, P, rest, (m, oy + m, W - 2 * m, H - rect[3] - 2 * m), src_align(rest), t_cap(ctx, W))
         if t is None:
             return None
     P.meta = {"template": f"cardpanel-{side}-{frac}", "t": t}
     return P
+
+
+def src_align(units):
+    """The alignment most of the text (by ink area) had in the source."""
+    tot = {}
+    for u in units:
+        for e in u.els:
+            if e["type"] == "text":
+                a = e.get("text_align", "left")
+                tot[a] = tot.get(a, 0.0) + e["width"] * e["height"]
+    if not tot:
+        return "center"
+    a = max(tot, key=tot.get)
+    return "left" if a == "left" else "center"
 
 
 def _columns(units, k):
@@ -835,13 +914,14 @@ def _stack_t(ctx, units, rect, align):
     return stack(ctx, Placed(), units, rect, align, t_cap(ctx, rect[2]))
 
 
-def tmpl_grid(ctx, flow, k=2, tiers=False, panel=None, align="center"):
+def tmpl_grid(ctx, flow, k=2, tiers=False, panel=None, align=None):
     """Units in reading order split into k side-by-side columns sharing one
     text scale. tiers: the headline (and subhead/logo) take a band across
     the top first. panel: 'left'/'right' puts a croppable main picture as a
     full-bleed band on that side. Every text keeps its own line breaks."""
     W, H = ctx.W, ctx.H
     flow = [u for u in flow if u.role != "aligned"]
+    align = align or src_align(flow)
     P = Placed()
     m = ctx.margin
     x0, x1 = m, W - m
