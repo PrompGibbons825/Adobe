@@ -272,13 +272,18 @@ def clamp_inside(ctx, P, model):
             continue
         el = model["els"][eid]
         w, h = p.get("width", el["width"]), p.get("height", el["height"])
-        if w > W or h > H:
-            k = min(W / w, H / h)
+        rot = p.get("rotation", el.get("rotation", 0))      # as placed
+        b = rot_bounds(p["x"], p["y"], w, h, rot)
+        bw, bh = b[2] - b[0], b[3] - b[1]                  # its footprint on the canvas
+        if bw > W or bh > H:
+            k = min(W / bw, H / bh)
+            cx, cy = p["x"] + w / 2, p["y"] + h / 2
             p["width"], p["height"] = w * k, h * k
+            p["x"], p["y"] = cx - w * k / 2, cy - h * k / 2
             if "font_size" in p:
                 p["font_size"] = max(1, int(p["font_size"] * k))
             w, h = p["width"], p["height"]
-        b = rot_bounds(p["x"], p["y"], w, h, el.get("rotation", 0))
+            b = rot_bounds(p["x"], p["y"], w, h, rot)
         dx = -b[0] if b[0] < 0 else (W - b[2] if b[2] > W else 0)
         dy = -b[1] if b[1] < 0 else (H - b[3] if b[3] > H else 0)
         if dx or dy:
@@ -416,6 +421,11 @@ def place_anchored(ctx, P, unit):
     oy = el["y"] * k if "t" in edges else (ctx.Hs - el["y"] - el["height"]) * k
     x = ox if "l" in edges else ctx.W - w - ox
     y = oy if "t" in edges else ctx.H - h - oy
+    if len(unit.els) > 1:
+        # a corner card with its text: the whole piece scales and pins together
+        blk = GroupBlock(unit)
+        blk.place_at(P, x - (el["x"] - blk.x0) * k, y - (el["y"] - blk.y0) * k, k)
+        return
     P.set(el["id"], x=x, y=y, width=w, height=h)
     v = img_vis_frac(el)
     P.vis[el["id"]] = (x + v[0] * w, y + v[1] * h, x + v[2] * w, y + v[3] * h)
@@ -440,7 +450,7 @@ def place_satellite(ctx, P, unit, model):
             from . import textfit as tf
             fs = int((props or e).get("font_size", e["font_size"]))
             h = min(h, tf.measure(e, max(1, fs), w)["height"])
-        return rot_bounds(x, y, w, h, e.get("rotation", 0))
+        return rot_bounds(x, y, w, h, (props or e).get("rotation", e.get("rotation", 0)))
     ob = bounds(a)
     nb = bounds(a, pa)
     sx = (nb[2] - nb[0]) / max(1e-6, ob[2] - ob[0])

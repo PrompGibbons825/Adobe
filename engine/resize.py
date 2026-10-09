@@ -19,7 +19,7 @@ import copy
 import os
 from typing import Any
 
-from .analyze import FLOW_ROLES, analyze
+from .analyze import FLOW_ROLES, analyze, norm_rot
 from .finalize import finalize
 from .layout import Ctx, tmpl_backdrop, tmpl_card_panel, tmpl_panel, tmpl_row, tmpl_split, tmpl_stack
 from .score import score
@@ -88,7 +88,7 @@ def _templates_raw(ctx, flow):
     # text cards turned into vertical strips (reading bottom to top); text
     # ribbons turned sideways in the source join the row upright
     turned = [u for u in ctx.model["units"] if u.role == "ribbon" and any(e["type"] == "text" for e in u.els)
-              and all(abs(abs(e.get("rotation", 0) or 0) - 90) < 2 for e in u.els)]
+              and all(abs(abs(norm_rot(e.get("rotation", 0))) - 90) < 2 for e in u.els)]
     for scale in (1.0, 0.8):
         yield 0.0, lambda f=flow + turned, sc=scale: tmpl_row(ctx, f, sc, 1, rotate=True)
     if ctx.W / ctx.H >= 2.2:
@@ -180,6 +180,9 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                     if broken:
                         br["grouping"] = -BREAK_COST * broken
                         s += br["grouping"]
+                    if getattr(P, "lifted", 0):
+                        br["grouping"] = br.get("grouping", 0.0) - BREAK_COST * P.lifted
+                        s -= BREAK_COST * P.lifted
                     if getattr(P, "rotated", 0):
                         br["rotate"] = -ROTATE_COST * P.rotated
                         s += br["rotate"]

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from .analyze import norm_rot
 from .blocks import GroupBlock, ImageBlock, Placed, TextBlock, make_block
 from . import textfit as tf
 
@@ -288,9 +289,13 @@ def _upright(u):
     """A copy of a group whose pieces are all turned ~90 degrees, turned back
     upright as a whole about its centre. Returns (unit copy, {id: rotation})."""
     from .analyze import Unit
-    rots = [(e.get("rotation", 0) or 0) for e in u.els]
-    r = rots[0]
-    if not all(abs(abs(x) - 90) < 2 and abs(x - r) < 2 for x in rots):
+    from .analyze import norm_rot
+    # every text turned the same way (+-90); the card under it turns with it
+    trots = [norm_rot(e.get("rotation", 0)) for e in u.els if e["type"] == "text"]
+    if not trots:
+        return None
+    r = trots[0]
+    if not all(abs(abs(x) - 90) < 2 and abs(x - r) < 2 for x in trots):
         return None
     x0, y0, x1, y1 = u.bbox
     gx, gy = (x0 + x1) / 2, (y0 + y1) / 2
@@ -301,10 +306,11 @@ def _upright(u):
     for e in u.els:
         cx, cy = e["x"] + e["width"] / 2 - gx, e["y"] + e["height"] / 2 - gy
         nx, ny = cx * ca - cy * sa, cx * sa + cy * ca
-        c = dict(e, rotation=0)
+        nr = norm_rot((e.get("rotation", 0) or 0) - r)
+        c = dict(e, rotation=nr)
         c["x"], c["y"] = gx + nx - e["width"] / 2, gy + ny - e["height"] / 2
         els.append(c)
-        newrot[e["id"]] = 0
+        newrot[e["id"]] = nr
     return Unit(u.uid, u.role, "group", els), newrot
 
 
@@ -337,7 +343,7 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False
                 items.append(it)
                 continue
         if rotate and has_txt and u.kind in ("frame", "group") and u.role not in ("headline", "cta") \
-                and not any(abs(e.get("rotation", 0) or 0) > 1 for e in u.els):
+                and not any(abs(norm_rot(e.get("rotation", 0))) > 1 for e in u.els):
             r = _rot_layout(ctx, u, hA, 0.2 * W)
             if r is not None:
                 it.update(kind="rot", Pv=r[0], w=r[1], h=hA, dv=r[2])
@@ -400,6 +406,20 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False
     n = len(items)
     col_total = W - mL - mR - fixed - gut * (n - 1)
     tcols = [it for it in items if it["kind"] == "textcol"]
+    # the largest type already set in cards/groups: loose secondary text in a
+    # column must not outgrow it (a legal line is never bigger than the headline)
+    refs = []          # (source size, size set here) of texts already placed in cards and groups
+    for it in items:
+        u = it.get("unit")
+        if u is None or not any(e["type"] == "text" for e in u.els):
+            continue
+        for e in u.els:
+            if e["type"] != "text":
+                continue
+            if it["kind"] == "rot" and e["id"] in it["Pv"].props:
+                refs.append((e["font_size"], it["Pv"].props[e["id"]].get("font_size", 0)))
+            elif it["kind"] in ("group", "frame"):
+                refs.append((e["font_size"], e["font_size"] * it["s"]))
     if tcols:
         if col_total < 0.14 * W * len(tcols):
             return None
@@ -407,6 +427,11 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False
         for it, sh in zip(tcols, shares):
             cw = col_total * sh
             cap = hA * (0.5 if len(it["texts"]) > 1 else 0.62)
+            # stay smaller than every text that was larger than this column's in the source
+            col_src = max(u.els[0]["font_size"] for u in it["texts"])
+            above = [out for src, out in refs if src > 1.05 * col_src and out > 0]
+            if above:
+                cap = min(cap, max(7.0, 0.9 * min(above)))
             ms = _fit_column(it["texts"], cw, hA, cap)
             if ms is None or ms[0]["fs"] < 7:
                 return None
@@ -603,16 +628,47 @@ def place_photo_panel(ctx, P, hero, rect, side):
     return True
 
 
+def _main_picture(ctx, flow):
+    """If no croppable hero exists, offer the design's largest box-filling
+    detailed picture as one, lifting it out of its group (the rest of the
+    group stays together). Returns (flow, number of groups split)."""
+    from . import saliency
+    from .analyze import Unit, _fills_box
+    if any(u.role == "hero" and getattr(u, "croppable", False) for u in flow):
+        return flow, 0
+    best = None
+    for u in flow:
+        for e in u.els:
+            if e["type"] != "image" or not _fills_box(e):
+                continue
+            info = saliency.analyze(e.get("asset_id") or "")
+            if info is None or info["busyness"] < 0.03:
+                continue
+            a = e["width"] * e["height"]
+            if a >= 0.15 * ctx.Ws * ctx.Hs and (best is None or a > best[0]):
+                best = (a, u, e)
+    if best is None:
+        return flow, 0
+    _, u, e = best
+    pic = Unit(e["id"], "hero", "image", [e])
+    pic.croppable = True
+    if len(u.els) == 1:
+        return [pic if v is u else v for v in flow], 0
+    rest = Unit(u.uid + ":rest", u.role, "group", [x for x in u.els if x is not e])
+    return [v for v in flow if v is not u] + [pic, rest], 1
+
+
 def tmpl_panel(ctx, flow, side="left", frac=0.4):
     """A croppable hero fills a full-bleed band on one side of the canvas;
     everything else is laid out in the rest (as a row on extreme banners,
     as a stack otherwise)."""
-    heroes = [u for u in flow if u.role == "hero" and getattr(u, "croppable", False)]
-    if not heroes:
-        return None
     W, H = ctx.W, ctx.H
     wide = side in ("left", "right")
     if (wide and W / H < 1.2) or (not wide and H / W < 1.2):
+        return None
+    flow, lifted = _main_picture(ctx, flow)
+    heroes = [u for u in flow if u.role == "hero" and getattr(u, "croppable", False)]
+    if not heroes:
         return None
     hero = heroes[0]
     rest = [u for u in flow if u is not hero]
@@ -654,7 +710,8 @@ def tmpl_panel(ctx, flow, side="left", frac=0.4):
         t = stack(ctx, P, rest, (m, cy0 + m, W - 2 * m, ch - 2 * m), "center", t_cap(ctx, W))
     if t is None:
         return None
-    P.meta = {"template": f"panel-{side}-{frac}", "t": t}
+    P.meta = {"template": f"panel-{side}-{frac}" + ("-lifted" if lifted else ""), "t": t}
+    P.lifted = lifted
     return P
 
 

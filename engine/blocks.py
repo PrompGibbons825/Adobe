@@ -130,7 +130,11 @@ class GroupBlock:
 
     def __init__(self, unit):
         self.unit = unit
-        x0, y0, x1, y1 = unit.bbox
+        # measured on what the pieces cover once rotated (a sideways text is tall, not wide)
+        bs = [rot_bounds(e["x"], e["y"], e["width"], e["height"], e.get("rotation", 0)) for e in unit.els] \
+            if unit.kind != "badges" else [unit.bbox]
+        x0, y0 = min(b[0] for b in bs), min(b[1] for b in bs)
+        x1, y1 = max(b[2] for b in bs), max(b[3] for b in bs)
         self.x0, self.y0, self.w, self.h = x0, y0, x1 - x0, y1 - y0
         self.shape = unit.shape_el()
 

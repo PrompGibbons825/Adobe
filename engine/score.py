@@ -242,6 +242,35 @@ def score(ctx, P, model):
             share -= 6 * max(0.0, 0.7 - out / src)
     br["share"] = share
 
+    # pictures never collapse into thumbnails: every picture covering 8%+ of the
+    # source keeps at least 40% of its source share of the canvas (the part
+    # actually on canvas, so cropping into a panel or backdrop counts)
+    thumb = 0.0
+    for eid, el in model["els"].items():
+        if el["type"] != "image" or eid in P.hidden or eid not in P.props:
+            continue
+        info = saliency.analyze(el.get("asset_id") or "")
+        if info is None or info["busyness"] < 0.03:
+            continue
+        sx0, sy0 = max(0.0, el["x"]), max(0.0, el["y"])
+        sx1, sy1 = min(Ws, el["x"] + el["width"]), min(Hs, el["y"] + el["height"])
+        s_src = max(0.0, sx1 - sx0) * max(0.0, sy1 - sy0) / (Ws * Hs)
+        if s_src < 0.08 or s_src > 0.95:
+            continue
+        p = P.props[eid]
+        x, y = p.get("x", el["x"]), p.get("y", el["y"])
+        w, h = p.get("width", el["width"]), p.get("height", el["height"])
+        s_out = max(0.0, min(W, x + w) - max(0.0, x)) * max(0.0, min(H, y + h) - max(0.0, y)) / (W * H)
+        target = 0.4
+        from .analyze import _fills_box
+        if not _fills_box(el):
+            # a cut-out can't be cropped: aim at most of the largest share it can have whole
+            A = el["width"] / max(1e-6, el["height"])
+            fit = W / (A * H) if A >= W / H else A * H / W
+            target = min(target, 0.7 * min(1.0, fit) / s_src)
+        thumb -= 25 * max(0.0, target - s_out / s_src) * min(1.0, s_src / 0.3)
+    br["thumbnail"] = thumb
+
     # faithfulness: reshaping a frame has to pay for itself
     import math
     reshape = 0.0

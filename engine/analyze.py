@@ -80,12 +80,77 @@ class Unit:
         return None
 
 
+def norm_rot(r):
+    """Rotation in degrees mapped to (-180, 180]: 269.86 is -90.14."""
+    r = ((r or 0) + 180.0) % 360.0 - 180.0
+    return 180.0 if r == -180.0 else r
+
+
+def _poly(e):
+    """The element's real footprint: its rectangle turned about its centre."""
+    import math
+    r = norm_rot(e.get("rotation", 0))
+    x, y, w, h = e["x"], e["y"], e["width"], e["height"]
+    if abs(r) <= 1:
+        b = _box(e)
+        return [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])]
+    cx, cy = x + w / 2, y + h / 2
+    a = math.radians(r)
+    ca, sa = math.cos(a), math.sin(a)
+    return [(cx + dx * ca - dy * sa, cy + dx * sa + dy * ca)
+            for dx, dy in ((-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2))]
+
+
+def _poly_area(pts):
+    return abs(sum(pts[i][0] * pts[i - 1][1] - pts[i - 1][0] * pts[i][1] for i in range(len(pts)))) / 2
+
+
+def _clip(subject, clip):
+    """Sutherland-Hodgman: subject polygon clipped by a convex clip polygon."""
+    def inside(p, a, b):
+        return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= 0
+
+    def cross(p, q, a, b):
+        x1, y1, x2, y2 = p[0], p[1], q[0], q[1]
+        x3, y3, x4, y4 = a[0], a[1], b[0], b[1]
+        den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+        if abs(den) < 1e-12:
+            return q
+        t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den
+        return (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+    # orient the clip polygon counter-clockwise in screen coordinates
+    if sum(clip[i][0] * clip[i - 1][1] - clip[i - 1][0] * clip[i][1] for i in range(len(clip))) > 0:
+        clip = clip[::-1]
+    out = subject
+    for i in range(len(clip)):
+        a, b = clip[i - 1], clip[i]
+        inp, out = out, []
+        if not inp:
+            break
+        for j in range(len(inp)):
+            p, q = inp[j - 1], inp[j]
+            if inside(q, a, b):
+                if not inside(p, a, b):
+                    out.append(cross(p, q, a, b))
+                out.append(q)
+            elif inside(p, a, b):
+                out.append(cross(p, q, a, b))
+    return out
+
+
 def _area(e):
+    if abs(norm_rot(e.get("rotation", 0))) > 1:
+        return e["width"] * e["height"]
     b = _box(e)
     return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
 
 
 def _box(e):
+    r = norm_rot(e.get("rotation", 0))
+    if abs(r) > 1:
+        # a turned piece covers its rotated footprint (rotation is about the box centre)
+        from .blocks import rot_bounds
+        return rot_bounds(e["x"], e["y"], e["width"], e["height"], r)
     h = e["height"]
     if e["type"] == "text":
         h = min(h, _ink_h(e))
@@ -102,10 +167,16 @@ def _ink_h(e):
 
 
 def _inter(a, b):
+    """Overlap area of two elements' real footprints (turned pieces included)."""
     A, B = _box(a), _box(b)
     ix = max(0.0, min(A[2], B[2]) - max(A[0], B[0]))
     iy = max(0.0, min(A[3], B[3]) - max(A[1], B[1]))
-    return ix * iy
+    if ix * iy <= 0:
+        return 0.0
+    if abs(norm_rot(a.get("rotation", 0))) <= 1 and abs(norm_rot(b.get("rotation", 0))) <= 1:
+        return ix * iy
+    pts = _clip(_poly(a), _poly(b))
+    return _poly_area(pts) if len(pts) >= 3 else 0.0
 
 
 def _gap(a, b):
@@ -195,7 +266,7 @@ ROLE_ORDER = ["headline", "cta", "subhead", "body", "legal"]
 def _same_line(a, b):
     """Two texts set side by side on one line (HOHOHO | AGENCY): same baseline,
     similar size, a word space apart. They read as one line."""
-    if any(abs(e.get("rotation", 0) or 0) > 1 for e in (a, b)):
+    if any(abs(norm_rot(e.get("rotation", 0))) > 1 for e in (a, b)):
         return False
     fa, fb = a["font_size"], b["font_size"]
     if abs(fa - fb) > 0.2 * max(fa, fb):
@@ -226,7 +297,7 @@ def _same_line(a, b):
 def _fragments(a, b):
     """Two texts that are pieces of one word: same style, touching, and at
     least one is a fragment of a few letters."""
-    if any(abs(e.get("rotation", 0) or 0) > 1 for e in (a, b)):
+    if any(abs(norm_rot(e.get("rotation", 0))) > 1 for e in (a, b)):
         return False
     short = min(len(re.sub(r"\s", "", e["content"])) for e in (a, b))
     if short == 0 or short > 3:
@@ -414,7 +485,7 @@ def _find_container(members):
     """The element that encloses most of the others (a frame, card, pill)."""
     best = None
     for f in members:
-        if f["type"] == "text" or abs(f.get("rotation", 0) or 0) > 1:
+        if f["type"] == "text" or abs(norm_rot(f.get("rotation", 0))) > 1:
             continue
         others = [o for o in members if o is not f]
         inside = [o for o in others if _area(f) > _area(o) * 1.5 and _inside(o, f)]
@@ -428,7 +499,7 @@ def _group_unit(members, troles, carea, mind, depth=0):
     gid = members[0].get("group_id") or ("cl_" + members[0]["id"])
     txt = [m for m in members if m["type"] == "text"]
     non = [m for m in members if m["type"] != "text"]
-    rotated = any(abs(m.get("rotation", 0) or 0) > 1 for m in members)
+    rotated = any(abs(norm_rot(m.get("rotation", 0))) > 1 for m in members)
     explicit = all(m.get("group_id") for m in members)
     if rotated and explicit and len(members) <= 3:
         return Unit(gid, "ribbon", "ribbon", members)
@@ -556,7 +627,7 @@ def analyze(source: dict, compose: bool = True) -> dict:
     #     A designer keeps these hugging the edge at the same inset, whatever the shape.
     borders = []
     for e in els:
-        if e["type"] == "text" or e.get("group_id") or abs(e.get("rotation", 0) or 0) > 1:
+        if e["type"] == "text" or e.get("group_id") or abs(norm_rot(e.get("rotation", 0))) > 1:
             continue
         ins = (e["x"], e["y"], cw - e["x"] - e["width"], ch - e["y"] - e["height"])
         outline = (_opaque_frac(e) < 0.35 and _edge_cover(e) > 0.4 and _corners(e)) if e["type"] == "image" else (
@@ -627,14 +698,24 @@ def analyze(source: dict, compose: bool = True) -> dict:
     #     (touching two adjacent edges). A designer keeps them in that corner.
     tol = 0.012 * mind
     for e in els:
-        if e["id"] in used or e["type"] == "text" or abs(e.get("rotation", 0) or 0) > 1:
+        if e["id"] in used or e["type"] == "text" or abs(norm_rot(e.get("rotation", 0))) > 1:
             continue
         b = _box(e)
         touch_l, touch_t = b[0] <= tol, b[1] <= tol
         touch_r, touch_b = b[2] >= cw - tol, b[3] >= ch - tol
         corner = (touch_l or touch_r) and (touch_t or touch_b) and not (touch_l and touch_r) and not (touch_t and touch_b)
+        # a corner card carrying text stays in its corner and its text travels
+        # with it; in the loose reading it is an ordinary container instead
+        def _on(t):
+            cx, cy = t["x"] + t["width"] / 2, t["y"] + t["height"] / 2
+            return b[0] <= cx <= b[2] and b[1] <= cy <= b[3]
+        riders = [t for t in els if t["type"] == "text" and t["id"] not in used and _on(t)]
+        if corner and riders and not compose:
+            continue
         if corner and 0.03 * carea <= _area(e) <= 0.5 * carea:
-            u = Unit(e["id"], "anchored", "image", [e])
+            u = Unit(e["id"], "anchored", "group" if riders else "image", [e] + riders)
+            for t in riders:
+                used.add(t["id"])
             u.edges = ("l" if touch_l else "r") + ("t" if touch_t else "b")
             units.append(u)
             used.add(e["id"])
@@ -814,7 +895,7 @@ def analyze(source: dict, compose: bool = True) -> dict:
     for u in units:
         if u.role != "minor" or u.kind not in ("image", "group"):
             continue
-        if any(abs(e.get("rotation", 0) or 0) > 1 for e in u.els):
+        if any(abs(norm_rot(e.get("rotation", 0))) > 1 for e in u.els):
             continue
         hit = _aligned_anchor(u, units, cw, mind)
         if hit:
