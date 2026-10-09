@@ -257,7 +257,13 @@ def _text_roles(texts):
     roles = {}
     if not texts:
         return roles
-    cta = [e for e in texts if CTA_LEAD.match(e["content"]) and len(e["content"]) <= 30]
+    # a call to action is a button-sized label: the design's largest type
+    # (clearly bigger than the rest) is the headline even if it starts with a verb
+    fs_sorted = sorted((e["font_size"] for e in texts), reverse=True)
+    biggest = fs_sorted[0] if fs_sorted else 0
+    dominant = len(fs_sorted) == 1 or biggest >= 1.3 * fs_sorted[1]
+    cta = [e for e in texts if CTA_LEAD.match(e["content"]) and len(e["content"]) <= 30
+           and not (dominant and e["font_size"] == biggest)]
     others = [e for e in texts if e not in cta]
     for e in cta:
         roles[e["id"]] = "cta"
@@ -351,6 +357,14 @@ def _contact(a, b, mind, carea):
     return side or stacked
 
 
+def _picture(e, carea):
+    """A large detailed picture (the thing the loose reading frees content from)."""
+    if e["type"] != "image" or _area(e) < 0.15 * carea or not _fills_box(e):
+        return False
+    info = saliency.analyze(e.get("asset_id") or "")
+    return info is not None and info["busyness"] > 0.03
+
+
 def _flush(a, b, mind):
     """Touching or overlapping pieces that share two or more edge lines (same
     left, right, top or bottom, or one's edge on the other's): designed as one."""
@@ -421,7 +435,7 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False
         big |= {e["id"] for e in cand if e["type"] == "image" and _fills_box(e) and _area(e) > 0.15 * carea
                 and (saliency.analyze(e.get("asset_id") or "") or {}).get("busyness", 0) > 0.03}
     enclosers: dict[str, list] = {}
-    contacts, weak, overlaps = [], [], []
+    contacts, weak, overlaps, loose_joins = [], [], [], []
     for i, a in enumerate(cand):
         for b in cand[i + 1:]:
             if a.get("group_id") and a.get("group_id") == b.get("group_id"):
@@ -430,8 +444,11 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False
             if a.get("group_id") and b.get("group_id"):
                 continue
             ta, tb = a["type"] == "text", b["type"] == "text"
-            if compose and not ta and not tb and _flush(a, b, mind):
-                union(a["id"], b["id"])   # designed together: two or more shared edge lines
+            if not ta and not tb and _flush(a, b, mind):
+                if compose:
+                    union(a["id"], b["id"])   # designed together: two or more shared edge lines
+                elif not (_picture(a, carea) or _picture(b, carea)):
+                    loose_joins.append((a["id"], b["id"]))
                 continue
             if a["id"] in big or b["id"] in big:
                 if not ta and not tb and _contact(a, b, mind, carea):
@@ -477,9 +494,29 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False
         union(oid, f["id"])
         if byid[oid]["type"] == "text":
             framed[uf.find(oid)] = True
-    if compose:
-        for x, y in contacts:
+    for x, y in contacts:
+        if compose:
             union(x, y)
+        elif not (_picture(byid[x], carea) or _picture(byid[y], carea)):
+            loose_joins.append((x, y))
+    if loose_joins:
+        # the loose reading keeps touching cards together as one object, unless
+        # together they tile most of the canvas (then they are the page grid)
+        tmp = _UF([e["id"] for e in cand])
+        for x, y in loose_joins:
+            tmp.union(x, y)
+        comp = {}
+        for e in cand:
+            comp.setdefault(tmp.find(e["id"]), []).append(e)
+        for members in comp.values():
+            if len(members) < 2:
+                continue
+            bs = [_box(e) for e in members]
+            ext = (max(b[2] for b in bs) - min(b[0] for b in bs)) * (max(b[3] for b in bs) - min(b[1] for b in bs))
+            if ext < 0.6 * carea:
+                for e in members[1:]:
+                    union(members[0]["id"], e["id"])
+    if compose:
         # two text cards that overlap at all, however little, are one composition
         for x, y in overlaps:
             if framed[uf.find(x)] and framed[uf.find(y)]:

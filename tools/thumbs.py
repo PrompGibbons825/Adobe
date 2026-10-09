@@ -34,7 +34,7 @@ for k, pair in enumerate(idx):
         if e["type"] != "image":
             continue
         info = saliency.analyze(e.get("asset_id") or "")
-        if info is None or info["busyness"] < 0.03:   # pictures only, not flat shapes
+        if info is None or info["busyness"] < 0.03 or info["opaque_frac"] < 0.3:   # pictures only
             continue
         s0 = share(e, Ws, Hs)
         if s0 < 0.08 or s0 > 0.95:                     # skip small pieces and full backgrounds

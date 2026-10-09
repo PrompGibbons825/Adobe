@@ -99,6 +99,8 @@ class TextBlock:
         lh = float(self.el.get("line_height", 1.2))
         P.set(self.el["id"], x=bx, y=y, width=box_w, height=m["lines"] * fs * lh,
               font_size=fs, text_align=align)
+        if getattr(self, "upright", False):
+            P.set(self.el["id"], rotation=0)
         el2 = dict(self.el, text_align=align)
         P.vis[self.el["id"]] = tf.visual_box(el2, bx, y, box_w, fs, m)
         return fs
@@ -462,6 +464,13 @@ def make_block(unit, src_w, ctx=None):
         if cut:
             return RestackBlock(unit, cut)
     if unit.kind == "text":
+        from .analyze import norm_rot
+        if abs(norm_rot(unit.els[0].get("rotation", 0))) > 1:
+            if ctx is not None and getattr(ctx, "upright", False):
+                tb = TextBlock(unit, src_w)   # restructuring: the turned text is set upright and reflows
+                tb.upright = True
+                return tb
+            return GroupBlock(unit)       # a turned text moves as a rigid piece, lines kept
         return TextBlock(unit, src_w)
     if unit.kind == "image":
         return ImageBlock(unit)

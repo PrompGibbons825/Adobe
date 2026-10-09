@@ -810,3 +810,103 @@ def tmpl_card_panel(ctx, flow, side="left", frac=0.5):
             return None
     P.meta = {"template": f"cardpanel-{side}-{frac}", "t": t}
     return P
+
+
+def _columns(units, k):
+    """Contiguous splits of units (reading order) into k columns, most
+    balanced first (by source area). Yields lists of columns."""
+    import itertools
+    n = len(units)
+    if k > n or k < 1:
+        return []
+    area = [max(1.0, (u.bbox[2] - u.bbox[0]) * (u.bbox[3] - u.bbox[1])) for u in units]
+    out = []
+    for cuts in itertools.combinations(range(1, n), k - 1):
+        b = (0,) + cuts + (n,)
+        cols = [units[b[i]:b[i + 1]] for i in range(k)]
+        sums = [sum(area[b[i]:b[i + 1]]) for i in range(k)]
+        out.append((max(sums) / max(1.0, min(sums)), cols))
+    out.sort(key=lambda x: x[0])
+    return [c for _, c in out[:2]]
+
+
+def _stack_t(ctx, units, rect, align):
+    """Largest text scale at which units fit in rect (dry run)."""
+    return stack(ctx, Placed(), units, rect, align, t_cap(ctx, rect[2]))
+
+
+def tmpl_grid(ctx, flow, k=2, tiers=False, panel=None, align="center"):
+    """Units in reading order split into k side-by-side columns sharing one
+    text scale. tiers: the headline (and subhead/logo) take a band across
+    the top first. panel: 'left'/'right' puts a croppable main picture as a
+    full-bleed band on that side. Every text keeps its own line breaks."""
+    W, H = ctx.W, ctx.H
+    flow = [u for u in flow if u.role != "aligned"]
+    P = Placed()
+    m = ctx.margin
+    x0, x1 = m, W - m
+    if panel:
+        flow2, lifted = _main_picture(ctx, flow)
+        heroes = [u for u in flow2 if u.role == "hero" and getattr(u, "croppable", False)]
+        if not heroes:
+            return None
+        hero = heroes[0]
+        el = hero.els[0]
+        A = el["width"] / max(1e-6, el["height"])
+        frac = min(0.45, max(0.25, A * H / W))
+        pw = W * frac
+        rect = (0.0, 0.0, pw, H) if panel == "left" else (W - pw, 0.0, pw, H)
+        if not place_photo_panel(ctx, P, hero, rect, panel):
+            return None
+        P.lifted = lifted
+        flow = [u for u in flow2 if u is not hero]
+        if panel == "left":
+            x0 = pw + m
+        else:
+            x1 = W - pw - m
+    if not flow or x1 - x0 < 0.2 * W:
+        return None
+    order = sorted(flow, key=lambda u: (u.bbox[1], u.bbox[0]))
+    y0, y1 = m, H - m
+    top = []
+    if tiers:
+        top = [u for u in order if u.role in ("headline", "subhead", "logo")]
+        rest = [u for u in order if u not in top]
+        if not top or not rest:
+            return None
+        th = 0.42 * (y1 - y0)
+        t_top = stack(ctx, P, top, (x0, y0, x1 - x0, th), align, t_cap(ctx, x1 - x0))
+        if t_top is None:
+            return None
+        y0 = y0 + th + 0.04 * H
+        order = rest
+    if len(order) < k:
+        return None
+    gut = 0.03 * W
+    best = None
+    for cols in _columns(order, k):
+        widths = [max(u.bbox[2] - u.bbox[0] for u in c) for c in cols]
+        tot = sum(widths)
+        avail = x1 - x0 - gut * (k - 1)
+        rects, x = [], x0
+        for wv in widths:
+            cw = avail * (0.5 * wv / tot + 0.5 / k)
+            rects.append((x, y0, cw, y1 - y0))
+            x += cw + gut
+        ts = [_stack_t(ctx, c, r, align) for c, r in zip(cols, rects)]
+        if any(t is None for t in ts):
+            continue
+        tc = min(ts)
+        if best is None or tc > best[0]:
+            best = (tc, cols, rects)
+    if best is None:
+        return None
+    tc, cols, rects = best
+    for c, r in zip(cols, rects):
+        # each column as large as it can be, but within 1.3x of the tightest one
+        tk = _stack_t(ctx, c, r, align) or tc
+        if stack(ctx, P, c, r, align, min(tk, 1.3 * tc)) is None:
+            return None
+    P.meta = {"template": f"grid-{k}" + ("-tiers" if tiers else "") + (f"-panel-{panel}" if panel else ""),
+              "t": tc}
+    return P

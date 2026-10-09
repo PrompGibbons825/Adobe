@@ -274,8 +274,8 @@ def score(ctx, P, model):
         if el["type"] != "image" or eid in P.hidden or eid not in P.props:
             continue
         info = saliency.analyze(el.get("asset_id") or "")
-        if info is None or info["busyness"] < 0.03:
-            continue
+        if info is None or info["busyness"] < 0.03 or info["opaque_frac"] < 0.3:
+            continue          # outlines and sparse line art are not pictures
         sx0, sy0 = max(0.0, el["x"]), max(0.0, el["y"])
         sx1, sy1 = min(Ws, el["x"] + el["width"]), min(Hs, el["y"] + el["height"])
         s_src = max(0.0, sx1 - sx0) * max(0.0, sy1 - sy0) / (Ws * Hs)
@@ -324,6 +324,37 @@ def score(ctx, P, model):
             covered -= 10 * max(0.0, on - was)
     br["faces"] = covered
 
+    # the background photo's subject stays visible: cards and panels may not
+    # hide more of it than they did in the source
+    hid = 0.0
+    bi = getattr(P, "bg_info", None)
+    if bi and bi.get("concentrated"):
+        sbx = bi["sal_box"]
+        sa = max(1e-6, _area(sbx))
+        blockers = [i for i in P.vis if i in owner and i not in P.hidden and model["els"][i]["type"] != "text"
+                    and owner[i].role not in ("minor",) and _area(P.vis[i]) > 0.02 * W * H]
+        cov = min(1.0, sum(_overlap(sbx, P.vis[i]) for i in blockers) / sa)
+        cache = model.setdefault("_src_subject_cov", {})
+        pid = bi["id"]
+        if pid not in cache:
+            g = model["els"][pid]
+            info = saliency.analyze(g.get("asset_id") or "")
+            src_cov = 0.0
+            if info:
+                sb = info["sal_box"]
+                ssb = (g["x"] + sb[0] * g["width"], g["y"] + sb[1] * g["height"],
+                       g["x"] + sb[2] * g["width"], g["y"] + sb[3] * g["height"])
+                Ws_, Hs_ = model["canvas"]
+                bl = [e for uu in model["units"] if uu.role not in ("bg", "deco", "border", "rule", "minor", "missing")
+                      for e in uu.els if e["type"] != "text" and e["id"] != pid
+                      and e.get("z_index", 0) > g.get("z_index", 0) and e["width"] * e["height"] > 0.02 * Ws_ * Hs_]
+                src_cov = min(1.0, sum(_overlap(ssb, (e["x"], e["y"], e["x"] + e["width"], e["y"] + e["height"]))
+                                       for e in bl) / max(1e-6, _area(ssb)))
+            cache[pid] = src_cov
+        src_cov = cache[pid]
+        hid = -8 * max(0.0, cov - src_cov - 0.1)
+    br["subject_hidden"] = hid
+
     # faithfulness: reshaping a frame has to pay for itself
     import math
     reshape = 0.0
@@ -338,6 +369,33 @@ def score(ctx, P, model):
         a_out = pc.get("width", c["width"]) / max(1e-6, pc.get("height", c["height"]))
         reshape -= 1.5 * abs(math.log(max(1e-6, a_out / a_src)))
     br["reshape"] = reshape
+
+    # arrangement: pieces that were stacked (one above the other, overlapping
+    # horizontally) and now sit side by side cost 1 per pair
+    flow_u = [u for u in units if u.role not in ("minor", "aligned", "anchored", "ribbon", "rule")
+              and any(i in P.vis and i not in P.hidden for i in u.ids)]
+    def obox(u):
+        bs = [P.vis[i] for i in u.ids if i in P.vis and i not in P.hidden]
+        return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+    arr = 0.0
+    for i in range(len(flow_u)):
+        for j in range(i + 1, len(flow_u)):
+            a, b = flow_u[i].bbox, flow_u[j].bbox
+            hov = min(a[2], b[2]) - max(a[0], b[0])
+            vgap = max(a[1], b[1]) - min(a[3], b[3])
+            if hov < 0.3 * min(a[2] - a[0], b[2] - b[0]) or vgap < -0.2 * min(a[3] - a[1], b[3] - b[1]):
+                continue                      # not stacked in the source
+            A, B = obox(flow_u[i]), obox(flow_u[j])
+            ohov = min(A[2], B[2]) - max(A[0], B[0])
+            ovov = min(A[3], B[3]) - max(A[1], B[1])
+            if ohov <= 0 and ovov > 0:
+                arr -= 1.0                    # now side by side
+    # the more the canvas changed shape, the more re-arranging is expected
+    import math
+    ratio = (W / H) / (Ws / Hs)
+    ratio = max(ratio, 1 / ratio)
+    arr *= max(0.0, 1 - math.log(ratio) / math.log(3))
+    br["arrangement"] = arr
 
     # 4. collisions between different units
     col = 0.0

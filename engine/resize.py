@@ -21,7 +21,7 @@ from typing import Any
 
 from .analyze import FLOW_ROLES, analyze, norm_rot
 from .finalize import finalize
-from .layout import Ctx, tmpl_backdrop, tmpl_card_panel, tmpl_panel, tmpl_row, tmpl_split, tmpl_stack
+from .layout import Ctx, tmpl_backdrop, tmpl_card_panel, tmpl_grid, tmpl_panel, tmpl_row, tmpl_split, tmpl_stack
 from .score import score
 
 DEBUG = os.environ.get("CHAMELEON_DEBUG") == "1"
@@ -57,6 +57,15 @@ def f_hero(flow):
 
 
 def _templates_raw(ctx, flow):
+    # grids: units side by side in columns (optionally under a headline tier,
+    # optionally beside a full-bleed picture); a separate, fallback stage
+    if getattr(ctx, "grids", False):
+        for k in (2, 3, 4):
+            for tiers in (False, True):
+                for panel in (None, "left", "right"):
+                    if ctx.W / ctx.H >= 1.0:
+                        yield 0.0, lambda f=flow, k=k, ti=tiers, pa=panel: tmpl_grid(ctx, f, k, ti, pa)
+        return
     for region in ("full", "left", "right", "top", "bottom"):
         for align in ("center", "left"):
             # top/bottom bands on tall canvases, and on clearly wide ones too: on a
@@ -166,9 +175,16 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
             carea = model["canvas"][0] * model["canvas"][1]
             if any(u.kind == "group" and u.role in FLOW_ROLES and find_cut(u, carea) for u in model["units"]):
                 passes.append((model, broken, True))     # compositions may re-stack
-        for model, broken, restack in passes:
+        # grids restructure the design: tried only when no faithful layout
+        # can make every text legible
+        stages = [False, True]
+        for grids, (model, broken, restack) in [(g, p) for g in stages for p in passes]:
+            if grids and best_br is not None and best_br.get("readability", 0.0) >= -5.0:
+                break
             ctx = Ctx(model, target_canvas)
             ctx.restack = restack
+            ctx.grids = grids
+            ctx.upright = grids
             for th, make in _candidates(ctx, model):
                 try:
                     P = make()
