@@ -153,8 +153,22 @@ def _box(e):
         return rot_bounds(e["x"], e["y"], e["width"], e["height"], r)
     h = e["height"]
     if e["type"] == "text":
+        # what the letters actually cover: inked height, and inked width placed
+        # by the text's alignment inside its box
         h = min(h, _ink_h(e))
+        iw = _ink_w(e)
+        al = e.get("text_align", "left")
+        x0 = e["x"] + (e["width"] - iw) * (0.5 if al == "center" else 1.0 if al == "right" else 0.0)
+        return (x0, e["y"], x0 + iw, e["y"] + h)
     return (e["x"], e["y"], e["x"] + e["width"], e["y"] + h)
+
+
+def _ink_w(e):
+    from . import textfit
+    try:
+        return min(e["width"], textfit.measure(e, max(1, int(e["font_size"])), e["width"])["width"])
+    except Exception:
+        return e["width"]
 
 
 def _ink_h(e):
@@ -184,6 +198,12 @@ def _gap(a, b):
     dx = max(0.0, max(A[0], B[0]) - min(A[2], B[2]))
     dy = max(0.0, max(A[1], B[1]) - min(A[3], B[3]))
     return max(dx, dy)
+
+
+def _tol(o):
+    """How much of a piece may stick out of a card and still belong to it:
+    a text mostly on a card (60%+) is on it; text widths are only estimates."""
+    return 0.4 if o["type"] == "text" else 0.15
 
 
 def _inside(inner, outer, tol=0.15):
@@ -423,7 +443,7 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False
             inter = _inter(a, b)
             small = min(_area(a), _area(b))
             for f, o in ((a, b), (b, a)):
-                if f["type"] != "text" and _area(f) > _area(o) * 1.5 and _inside(o, f):
+                if f["type"] != "text" and _area(f) > _area(o) * 1.5 and _inside(o, f, _tol(o)):
                     enclosers.setdefault(o["id"], []).append(f)
                     break
             else:
@@ -449,6 +469,9 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False
     byid = {e["id"]: e for e in cand}
     for oid, fs in enclosers.items():
         z = byid[oid]["z_index"]
+        if byid[oid]["type"] == "text":
+            # only something solid can hold text (sparse line art behind it does not)
+            fs = [f for f in fs if f["type"] != "image" or opaque[f["id"]] >= 0.3] or fs
         below = [f for f in fs if f["z_index"] < z]
         f = max(below, key=lambda f: f["z_index"]) if below else min(fs, key=_area)
         union(oid, f["id"])
@@ -488,7 +511,7 @@ def _find_container(members):
         if f["type"] == "text" or abs(norm_rot(f.get("rotation", 0))) > 1:
             continue
         others = [o for o in members if o is not f]
-        inside = [o for o in others if _area(f) > _area(o) * 1.5 and _inside(o, f)]
+        inside = [o for o in others if _area(f) > _area(o) * 1.5 and _inside(o, f, _tol(o))]
         if others and len(inside) >= max(1, 0.7 * len(others)) and len(inside) == len(others):
             if best is None or _area(f) > _area(best):
                 best = f
@@ -565,17 +588,7 @@ def _unit_ink(u):
     """Inked horizontal extent and vertical extent of a unit, in source px."""
     boxes = []
     for e in (u.els if u.kind != "badges" else [x for m in u.members for x in m.els]):
-        x0, y0, x1, y1 = _box(e)
-        if e["type"] == "text":
-            from . import textfit
-            try:
-                w = min(e["width"], textfit.measure(e, max(1, int(e["font_size"])), e["width"])["width"])
-            except Exception:
-                w = e["width"]
-            al = e.get("text_align", "left")
-            x0 = x0 + (e["width"] - w) * (0.5 if al == "center" else 1.0 if al == "right" else 0.0)
-            x1 = x0 + w
-        boxes.append((x0, y0, x1, y1))
+        boxes.append(_box(e))      # _box is already the inked extent for text
     return (min(b[0] for b in boxes), min(b[1] for b in boxes),
             max(b[2] for b in boxes), max(b[3] for b in boxes))
 
@@ -821,7 +834,19 @@ def analyze(source: dict, compose: bool = True) -> dict:
         els_ = u.els if u.kind != "badges" else [e for m in u.members for e in m.els]
         return sum(ink_w(e) for e in els_ if (e["type"] == "text") == (kind == "text"))
 
-    visual_cands = [u for u in units if u.role in ("hero", "minor", "group")
+    def pictorial(u):
+        """Carries something to look at: at least one image that is not a plain shape."""
+        for e in u.els:
+            if e["type"] == "image":
+                info = saliency.analyze(e.get("asset_id") or "")
+                if info is not None and info.get("plain", 1.0) < 0.85:
+                    return True
+        return False
+
+    for u in units:                     # a plain shape is a surface, not the hero visual
+        if u.role == "hero" and not pictorial(u):
+            u.role = "minor"
+    visual_cands = [u for u in units if u.role in ("hero", "minor", "group") and pictorial(u)
                     and u.kind in ("image", "group") and unit_weight(u, "text") <= 0.25 * unit_weight(u, "image")]
     if visual_cands:
         hv = max(visual_cands, key=lambda u: unit_weight(u, "image"))
@@ -907,7 +932,10 @@ def analyze(source: dict, compose: bool = True) -> dict:
     for u in units:
         if u.role == "hero" and u.kind == "image":
             info = saliency.analyze(u.els[0].get("asset_id") or "")
-            u.croppable = _fills_box(u.els[0]) and abs(u.els[0].get("rotation", 0) or 0) < 1
+            # cropping shows part of a picture: it needs detail to show (a flat
+            # colour block is a card, not a picture)
+            u.croppable = _fills_box(u.els[0]) and abs(norm_rot(u.els[0].get("rotation", 0))) < 1 \
+                and info is not None and info["busyness"] > 0.03 and info.get("plain", 1.0) < 0.85
             # a hero that bleeds off three or more edges and fills much of the
             # canvas is the scene everything sits in: it may become a backdrop
             x0, y0, x1, y1 = _box(u.els[0])

@@ -112,6 +112,30 @@ def _behind_lum(P, model, eid, v):
     return 1.0                    # an empty canvas renders white
 
 
+def _src_busy(model, eid):
+    """Busyness under a text in the source design (its background photo at
+    the source position), cached on the model."""
+    cache = model.setdefault("_src_busy", {})
+    if eid in cache:
+        return cache[eid]
+    val = 0.0
+    el = model["els"][eid]
+    for u in model["units"]:
+        if u.role != "bg" or u.els[0]["type"] != "image":
+            continue
+        g = u.els[0]
+        info = saliency.analyze(g.get("asset_id") or "")
+        if info is None:
+            continue
+        from .analyze import _box
+        v = _box(el)
+        gw, gh = max(1e-6, g["width"]), max(1e-6, g["height"])
+        val = max(val, saliency.region_mean(info["busy"], (v[0] - g["x"]) / gw, (v[1] - g["y"]) / gh,
+                                            (v[2] - g["x"]) / gw, (v[3] - g["y"]) / gh))
+    cache[eid] = val
+    return val
+
+
 def _plates(P, model):
     """Opaque flat pieces (cards, bars, plates) as placed: (box, z)."""
     from .analyze import _fills_box
@@ -261,15 +285,44 @@ def score(ctx, P, model):
         x, y = p.get("x", el["x"]), p.get("y", el["y"])
         w, h = p.get("width", el["width"]), p.get("height", el["height"])
         s_out = max(0.0, min(W, x + w) - max(0.0, x)) * max(0.0, min(H, y + h) - max(0.0, y)) / (W * H)
-        target = 0.4
+        target = 0.6
         from .analyze import _fills_box
         if not _fills_box(el):
             # a cut-out can't be cropped: aim at most of the largest share it can have whole
             A = el["width"] / max(1e-6, el["height"])
             fit = W / (A * H) if A >= W / H else A * H / W
             target = min(target, 0.7 * min(1.0, fit) / s_src)
-        thumb -= 25 * max(0.0, target - s_out / s_src) * min(1.0, s_src / 0.3)
+        thumb -= 25 * max(0.0, target - s_out / s_src) * min(1.0, s_src / 0.3)   # 60% of its source share
     br["thumbnail"] = thumb
+
+    # faces stay uncovered: nothing else may sit on a face in a picture
+    covered = 0.0
+    for eid, el in model["els"].items():
+        if el["type"] != "image" or eid in P.hidden or eid not in P.props:
+            continue
+        info = saliency.analyze(el.get("asset_id") or "")
+        if not info or not info.get("faces"):
+            continue
+        p = P.props[eid]
+        x, y = p.get("x", el["x"]), p.get("y", el["y"])
+        w, h = p.get("width", el["width"]), p.get("height", el["height"])
+        mine = set(owner[eid].ids) if eid in owner else {eid}
+        others = [i for i in owner if i not in mine and owner[i].role != "minor"]
+        for f in info["faces"]:
+            fb = (max(0.0, x + f[0] * w), max(0.0, y + f[1] * h), min(W, x + f[2] * w), min(H, y + f[3] * h))
+            fa = _area(fb)
+            if fa <= 0:
+                continue
+            on = max((_overlap(fb, P.vis[i]) for i in others if i in P.vis and i not in P.hidden), default=0.0) / fa
+            # only covering a face more than the designer did costs anything
+            sfb = (el["x"] + f[0] * el["width"], el["y"] + f[1] * el["height"],
+                   el["x"] + f[2] * el["width"], el["y"] + f[3] * el["height"])
+            sfa = max(1e-6, _area(sfb))
+            was = max((_overlap(sfb, (model["els"][i]["x"], model["els"][i]["y"],
+                                      model["els"][i]["x"] + model["els"][i]["width"],
+                                      model["els"][i]["y"] + model["els"][i]["height"])) for i in others), default=0.0) / sfa
+            covered -= 10 * max(0.0, on - was)
+    br["faces"] = covered
 
     # faithfulness: reshaping a frame has to pay for itself
     import math
@@ -321,7 +374,8 @@ def score(ctx, P, model):
             if any(pz < z and _overlap(v, pb) >= 0.9 * max(1.0, _area(v)) for pb, pz in plates):
                 continue          # text on its own card or plate is not on the background
             b = saliency.region_mean(bmap, (v[0] - bx) / bw, (v[1] - by) / bh, (v[2] - bx) / bw, (v[3] - by) / bh)
-            busy -= 10 * max(0.0, b - 0.06)
+            # the designer already accepted this much texture under this text
+            busy -= 10 * max(0.0, b - max(0.06, _src_busy(model, eid)))
             if P.bg_sal is not None:
                 sm = saliency.region_mean(P.bg_sal, (v[0] - bx) / bw, (v[1] - by) / bh, (v[2] - bx) / bw, (v[3] - by) / bh)
                 busy -= 8 * max(0.0, sm - 0.3)
@@ -356,10 +410,10 @@ def score(ctx, P, model):
         target = min(0.55, max(0.15, 1.1 * model.get("src_fill", 0.55)))
         bal += 3 * min(1.0, fill / target)
         edge = 0.015 * min(W, H)
-        panel = getattr(P, "panel", None)
+        panel_ids = {pn["id"] for pn in (getattr(P, "panels", None) or ([P.panel] if getattr(P, "panel", None) else []))}
         for eid, v in zip(ids, vis):
-            if panel and eid == panel["id"]:
-                continue          # a full-bleed photo panel is meant to touch the edges
+            if eid in panel_ids:
+                continue          # a full-bleed panel is meant to touch the edges
             if owner[eid].role == "minor":
                 continue          # decoration may sit at (or bleed past) the edge
             if v[0] < edge or v[1] < edge or v[2] > W - edge or v[3] > H - edge:

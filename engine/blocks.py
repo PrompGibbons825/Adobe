@@ -29,6 +29,18 @@ def img_vis_frac(el: dict) -> tuple:
     return (fx0 + ax0 * fw, fy0 + ay0 * fh, fx0 + ax1 * fw, fy0 + ay1 * fh)
 
 
+def rotate_box_about(box, cx, cy, deg):
+    """Axis-aligned bounds of a box turned by deg about (cx, cy): the inked
+    part of a rotated text turns about its element's centre, as the renderer does."""
+    if abs(((deg or 0) + 180) % 360 - 180) < 0.5:
+        return box
+    a = math.radians(deg or 0)
+    ca, sa = math.cos(a), math.sin(a)
+    pts = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
+    rp = [(cx + (x - cx) * ca - (y - cy) * sa, cy + (x - cx) * sa + (y - cy) * ca) for x, y in pts]
+    return (min(p[0] for p in rp), min(p[1] for p in rp), max(p[0] for p in rp), max(p[1] for p in rp))
+
+
 def rot_bounds(x, y, w, h, deg):
     """Axis-aligned bounds of a box rotated about its center."""
     a = math.radians(deg or 0)
@@ -172,9 +184,9 @@ class GroupBlock:
                     ey = tf.optical_top(e, fs, m["lines"], scy)
                 lh = float(e.get("line_height", 1.2))
                 P.set(e["id"], x=ex, y=ey, width=ew, height=max(eh, m["lines"] * fs * lh), font_size=fs)
-                P.vis[e["id"]] = rot_bounds(*tf.visual_box(e, ex, ey, ew, fs, m)[:2],
-                                            min(ew, m["width"]), m["lines"] * fs * lh,
-                                            e.get("rotation", 0))
+                vb = tf.visual_box(e, ex, ey, ew, fs, m)
+                P.vis[e["id"]] = rotate_box_about(vb, ex + ew / 2, ey + max(eh, m["lines"] * fs * lh) / 2,
+                                                  e.get("rotation", 0))
             else:
                 P.set(e["id"], x=ex, y=ey, width=ew, height=eh)
                 if e["type"] == "image":
@@ -250,7 +262,25 @@ class FrameBlock:
         self.c = c
         self.cw, self.ch = c["width"], c["height"]
         self.aspect = self.cw / max(1e-6, self.ch)
-        boxes = [ch.bbox for ch in unit.children]
+        # small text-free pieces sitting in a corner of the frame keep that corner;
+        # only the rest is laid out again inside the frame
+        cx0, cy0, cw0, ch0 = c["x"], c["y"], c["width"], c["height"]
+        self.cornered = []
+        flow_children = []
+        for ch in unit.children:
+            b = ch.bbox
+            mx, my = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+            near_x = mx - cx0 < 0.25 * cw0 or cx0 + cw0 - mx < 0.25 * cw0
+            near_y = my - cy0 < 0.25 * ch0 or cy0 + ch0 - my < 0.25 * ch0
+            small = (b[2] - b[0]) * (b[3] - b[1]) < 0.05 * cw0 * ch0
+            if near_x and near_y and small and not any(e["type"] == "text" for e in ch.els):
+                self.cornered.append(ch)
+            else:
+                flow_children.append(ch)
+        if not flow_children:
+            flow_children, self.cornered = list(unit.children), []
+        self.flow_children = flow_children
+        boxes = [ch.bbox for ch in flow_children]
         ix0, iy0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
         ix1, iy1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
         cx0, cy0 = c["x"], c["y"]
@@ -313,7 +343,28 @@ class FrameBlock:
         pb = min(self.pad[3] * h, self.pad[3] * self.ch * t * 1.5)
         rect = (bx + pl, by + pt, max(1.0, w - pl - pr), max(1.0, h - pt - pb))
         P.frame_modes = getattr(P, "frame_modes", {})
-        P.frame_modes[self.unit.uid] = inner_layout(self.ctx, P, self.unit.children, rect, t)
+        P.frame_modes[self.unit.uid] = inner_layout(self.ctx, P, self.flow_children, rect, t)
+        # corner pieces: same corner, same proportional inset, scaled with the frame
+        s = (w * h / max(1e-6, self.cw * self.ch)) ** 0.5
+        for ch in self.cornered:
+            b = ch.bbox
+            left = (b[0] + b[2]) / 2 - c["x"] < c["x"] + self.cw - (b[0] + b[2]) / 2
+            top = (b[1] + b[3]) / 2 - c["y"] < c["y"] + self.ch - (b[1] + b[3]) / 2
+            ox = (b[0] - c["x"]) / self.cw if left else (c["x"] + self.cw - b[2]) / self.cw
+            oy = (b[1] - c["y"]) / self.ch if top else (c["y"] + self.ch - b[3]) / self.ch
+            pw, ph = (b[2] - b[0]) * s, (b[3] - b[1]) * s
+            px = bx + ox * w if left else bx + w - ox * w - pw
+            py = by + oy * h if top else by + h - oy * h - ph
+            blk = make_block(ch, self.ctx.Ws, None)
+            if isinstance(blk, ImageBlock):
+                el = ch.els[0]
+                ew, eh = el["width"] * s, el["height"] * s
+                P.set(el["id"], x=px, y=py, width=ew, height=eh)
+                v = blk.v
+                P.vis[el["id"]] = (px + v[0] * ew, py + v[1] * eh, px + v[2] * ew, py + v[3] * eh)
+            else:
+                gb = GroupBlock(ch)
+                gb.place_at(P, px, py, s)
 
 
 def find_cut(unit, carea):

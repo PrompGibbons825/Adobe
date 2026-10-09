@@ -198,13 +198,40 @@ def place_scatter(ctx, P, unit, s0, content):
              max(0.0, sb[2] - ctx.Ws) / sw, max(0.0, sb[3] - ctx.Hs) / sh)
     fx, fy = (sb[0] + sb[2]) / 2 / ctx.Ws, (sb[1] + sb[3]) / 2 / ctx.Hs
     step = 0.04 * min(W, H)
+    # edges it touched in the source: it stays pinned to them (bleed included)
+    tol = 0.01 * min(ctx.Ws, ctx.Hs)
+    pin = (sb[0] <= tol, sb[1] <= tol, sb[2] >= ctx.Ws - tol, sb[3] >= ctx.Hs - tol)
+    # it lay under content in the source (lower in the stack, overlapping it):
+    # it may lie under content again, so it is not pushed out of the way
+    model = getattr(ctx, "model", None)
+    under = False
+    if model is not None:
+        from .analyze import _inter, _area as _earea
+        mine = set(unit.ids)
+        above = [e for u in model["units"] if u.role not in ("bg", "deco", "border", "rule", "minor", "missing")
+                 and not (set(u.ids) & mine) for e in u.els]
+        for d in unit.els:          # a piece substantially covered by higher content
+            cov = sum(_inter(d, e) for e in above if e.get("z_index", 0) > d.get("z_index", 0))
+            if cov >= 0.3 * max(1.0, _earea(d)):
+                under = True
+                break
 
     def clamp(x, y, bw, bh):
         x = min(max(x, -bleed[0] * bw), W - bw + bleed[2] * bw)
         y = min(max(y, -bleed[1] * bh), H - bh + bleed[3] * bh)
+        if pin[0]:
+            x = -bleed[0] * bw
+        elif pin[2]:
+            x = W - bw + bleed[2] * bw
+        if pin[1]:
+            y = -bleed[1] * bh
+        elif pin[3]:
+            y = H - bh + bleed[3] * bh
         return x, y
 
     def free(x, y, bw, bh):
+        if under:
+            return True
         box = (x, y, x + bw, y + bh)
         return all(_overlap(box, o) <= 0.005 * min(_area(box), _area(o)) for o in content)
 
@@ -263,8 +290,8 @@ def hide(P, el, W, H):
 def clamp_inside(ctx, P, model):
     W, H = ctx.W, ctx.H
     skip = {e["id"] for u in model["units"] if u.role in ("bg", "deco", "border", "anchored", "rule", "minor") for e in u.els}
-    if getattr(P, "panel", None):
-        skip.add(P.panel["id"])   # a photo panel bleeds off the canvas edges it touches
+    for pn in getattr(P, "panels", None) or ([P.panel] if getattr(P, "panel", None) else []):
+        skip.add(pn["id"])        # a full-bleed panel runs off the canvas edges it touches
     if getattr(P, "backdrop", None) is not None:
         skip.update(P.backdrop.ids)
     for eid, p in P.props.items():
@@ -391,8 +418,8 @@ def finalize(ctx, P, model, float_threshold=0.0):
         if u.role == "ribbon" and u.els[0]["id"] not in P.props:   # not already in the row
             place_float(ctx, P, u, min(t, 1.5))
         elif u.role == "minor":
-            # decoration never outgrows the canvas's own shape-preserving scale
-            place_scatter(ctx, P, u, min(t, 1.5, ctx.W / ctx.Ws, ctx.H / ctx.Hs), content)
+            # decoration scales with the canvas's shape-preserving scale (not the text's)
+            place_scatter(ctx, P, u, min(ctx.W / ctx.Ws, ctx.H / ctx.Hs), content)
     for u in model["units"]:
         if u.role in HIDE_ROLES:
             for eid in u.ids:

@@ -46,6 +46,44 @@ def image_size(asset_id: str) -> tuple[int, int] | None:
     return im.size if im else None
 
 
+_CASCADES = None
+
+
+def _faces(im: Image.Image) -> list:
+    """Faces in a picture, as (x0, y0, x1, y1) fractions. OpenCV's bundled Haar
+    cascades (frontal x2 + profile) on a 900px copy; a hit counts only if at
+    least 45% of its box is skin-toned (YCrCb), which drops textures that
+    merely look face-like. Returns [] if OpenCV is unavailable."""
+    global _CASCADES
+    try:
+        import cv2
+    except Exception:
+        return []
+    if _CASCADES is None:
+        _CASCADES = [cv2.CascadeClassifier(cv2.data.haarcascades + n) for n in
+                     ("haarcascade_frontalface_default.xml", "haarcascade_frontalface_alt2.xml",
+                      "haarcascade_profileface.xml")]
+    w, h = im.size
+    if w * h < 120 * 120:
+        return []
+    sc = 900 / max(w, h)
+    rgb = np.asarray(im.convert("RGB").resize((max(1, int(w * sc)), max(1, int(h * sc)))))
+    gray = cv2.equalizeHist(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY))
+    mn = max(30, int(min(gray.shape) * 0.05))
+    ycc = cv2.cvtColor(rgb, cv2.COLOR_RGB2YCrCb)
+    skin = (ycc[..., 1] >= 135) & (ycc[..., 1] <= 180) & (ycc[..., 2] >= 85) & (ycc[..., 2] <= 135)
+    out = []
+    for k, c in enumerate(_CASCADES):
+        for (x, y, fw, fh) in c.detectMultiScale(gray, 1.08, 4 if k < 2 else 5, minSize=(mn, mn)):
+            if skin[y:y + fh, x:x + fw].mean() < 0.45:
+                continue
+            box = (x / rgb.shape[1], y / rgb.shape[0], (x + fw) / rgb.shape[1], (y + fh) / rgb.shape[0])
+            if not any(max(0, min(box[2], o[2]) - max(box[0], o[0])) * max(0, min(box[3], o[3]) - max(box[1], o[1]))
+                       > 0.3 * (box[2] - box[0]) * (box[3] - box[1]) for o in out):
+                out.append(box)
+    return out
+
+
 @lru_cache(maxsize=64)
 def analyze(asset_id: str) -> dict | None:
     """Returns dict with saliency map, busy map (both HxW float 0..1 at work
@@ -110,14 +148,37 @@ def analyze(asset_id: str) -> dict | None:
     else:
         sbox, cx, cy = (0.25, 0.25, 0.75, 0.75), 0.5, 0.5
 
+    # faces are the subject: the crop centres on them (head and shoulders)
+    faces = _faces(im) if alpha.mean() > 0.9 else []
+    if faces:
+        x0 = min(f[0] for f in faces); x1 = max(f[2] for f in faces)
+        y0 = min(f[1] for f in faces); y1 = max(f[3] for f in faces)
+        fw, fh = x1 - x0, y1 - y0
+        sbox = (max(0.0, x0 - 0.3 * fw), max(0.0, y0 - 0.3 * fh), min(1.0, x1 + 0.3 * fw), min(1.0, y1 + 1.2 * fh))
+        wts = [(f[2] - f[0]) * (f[3] - f[1]) for f in faces]
+        cx = sum(((f[0] + f[2]) / 2) * wt for f, wt in zip(faces, wts)) / sum(wts)
+        cy = sum(((f[1] + f[3]) / 2) * wt for f, wt in zip(faces, wts)) / sum(wts)
+
     # relative luminance (WCAG), for text contrast; transparent pixels count as unknown (nan)
     lin = np.where(arr[..., :3] <= 0.04045, arr[..., :3] / 12.92, ((arr[..., :3] + 0.055) / 1.055) ** 2.4)
     lum = lin @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
     lum = np.where(alpha > 0.5, lum, np.nan).astype(np.float32)
     mean_lum = float(np.nanmean(lum)) if np.isfinite(lum).any() else 1.0
 
+    # plain: share of the visible pixels in the single most common colour
+    # (a flat circle or card ~1.0, a picture well under 0.6)
+    vis = arr[..., 3] > 0.4
+    if vis.sum() >= 20:
+        q = (arr[..., :3][vis] * 255 // 24).astype(np.int32)
+        keys = q[:, 0] * 10000 + q[:, 1] * 100 + q[:, 2]
+        plain = float(np.bincount(keys - keys.min()).max() / len(keys))
+    else:
+        plain = 1.0
+
     return {
         "size": (w, h),
+        "plain": plain,
+        "faces": faces,
         "lum": lum,
         "mean_lum": mean_lum,
         "sal": sal,

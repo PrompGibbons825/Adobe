@@ -1,6 +1,7 @@
 """Flag pictures that shrank to thumbnails: for every image covering at least
 8% of the source canvas, compare its visible share of the canvas in the
-source with its share in our output (the part on canvas, after any crop).
+source with its share in our output (the part on canvas, after any crop). Cut-outs are
+compared with the largest share they could have whole on the new canvas.
 
 usage (repo root, CHAMELEON_* env set): python tools/thumbs.py crello_holdout
 """
@@ -39,7 +40,13 @@ for k, pair in enumerate(idx):
         if s0 < 0.08 or s0 > 0.95:                     # skip small pieces and full backgrounds
             continue
         s1 = share(o[e["id"]], b["w"], b["h"])
-        rows.append((s1 / s0, f"p{k}", e["id"], round(s0, 2), round(s1, 3), R.resize.last_choice[0]["template"]))
+        # a picture with a silhouette can't be cropped: compare with the largest
+        # share it can have whole on this canvas
+        ref = s0
+        if info["opaque_frac"] <= 0.97:
+            A = e["width"] / max(1e-6, e["height"])
+            ref = min(s0, A * b["h"] / b["w"] if A <= b["w"] / b["h"] else b["w"] / (A * b["h"]))
+        rows.append((s1 / ref, f"p{k}", e["id"], round(s0, 2), round(s1, 3), R.resize.last_choice[0]["template"]))
 rows.sort()
 for r in rows:
     flag = "THUMB" if r[0] < 0.35 else ""

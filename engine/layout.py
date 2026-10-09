@@ -342,7 +342,7 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False
                 it.update(kind="group", block=b, w=b.w * sc, h=b.h * sc, s=sc, upright=up[1])
                 items.append(it)
                 continue
-        if rotate and has_txt and u.kind in ("frame", "group") and u.role not in ("headline", "cta") \
+        if rotate and has_txt and u.kind in ("frame", "group") and u.role not in ("headline", "subhead", "cta") \
                 and not any(abs(norm_rot(e.get("rotation", 0))) > 1 for e in u.els):
             r = _rot_layout(ctx, u, hA, 0.2 * W)
             if r is not None:
@@ -352,7 +352,7 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False
         if u.kind == "image":
             b = ImageBlock(u)
             fh = {"hero": 1.15, "logo": 0.75}.get(u.role, 0.6)
-            sc = b.scale_for(10.0, 0.22 * W * item_scale, hA * fh * item_scale)
+            sc = b.scale_for(10.0, (0.45 if u.role == "hero" else 0.22) * W * item_scale, hA * fh * item_scale)
             it.update(kind="img", block=b, w=b.vw * sc, h=b.vh * sc, s=sc)
         elif u.kind == "badges":
             b = BadgesBlock(u)
@@ -380,7 +380,10 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False
         else:
             b = make_block(u, ctx.Ws, ctx)
             fh = {"cta": 0.7, "badges": 0.5, "headline": 1.0, "hero": 1.1}.get(u.role, 0.8)
-            sc = b.scale_for(10.0, 0.32 * W * item_scale, hA * fh * item_scale)
+            # a group carrying the main picture may take up to 45% of the banner
+            wcap = 0.45 if (u.role == "hero" or any(e["type"] == "image" and e["width"] * e["height"] >= 0.15 * ctx.Ws * ctx.Hs
+                                                     for e in u.els)) else 0.32
+            sc = b.scale_for(10.0, wcap * W * item_scale, hA * fh * item_scale)
             it.update(kind="group", block=b, w=b.w * sc, h=b.h * sc, s=sc)
         items.append(it)
     cols = []
@@ -779,6 +782,23 @@ def tmpl_card_panel(ctx, flow, side="left", frac=0.5):
         return None
     rest = [u for u in flow if u is not card]
     t = 1.0
+    pics = [u for u in rest if u.role == "hero" and getattr(u, "croppable", False)]
+    others = [u for u in rest if u not in pics and u.role not in ("aligned", "minor")]
+    if pics and not others:
+        # the card on one side, the picture filling the other edge to edge (no white margins)
+        if wide:
+            r2 = (rect[2], 0.0, W - rect[2], H) if side == "left" else (0.0, 0.0, W - rect[2], H)
+            s2 = "right" if side == "left" else "left"
+        else:
+            r2 = (0.0, rect[3], W, H - rect[3]) if side == "top" else (0.0, 0.0, W, H - rect[3])
+            s2 = "bottom" if side == "top" else "top"
+        P2 = Placed()
+        if place_photo_panel(ctx, P2, pics[0], r2, s2):
+            for k, v in P2.props.items():
+                P.set(k, **v)
+            P.vis.update(P2.vis)
+            P.panels = [P.panel, P2.panel]
+            rest = [u for u in rest if u not in pics]
     if rest:
         if wide:
             ox = rect[2] if side == "left" else 0.0
