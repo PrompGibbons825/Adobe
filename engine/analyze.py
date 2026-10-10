@@ -527,9 +527,11 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False
             continue
         if framed[rx] and framed[ry]:
             continue          # a bridge between two framed text blocks
-        # a text-free piece that mostly lies outside a text card is decoration
-        # around the card, not part of it
-        if (framed[ry] and not has_text[rx] and fx < 0.5) or (framed[rx] and not has_text[ry] and fy < 0.5):
+        # a sparse line-art piece that mostly lies outside a text card is
+        # decoration around the card; a solid picture overlapping it is part of
+        # the composition
+        if (framed[ry] and not has_text[rx] and fx < 0.5 and _ink_density(byid[x]) < 0.4) or \
+                (framed[rx] and not has_text[ry] and fy < 0.5 and _ink_density(byid[y]) < 0.4):
             continue
         union(x, y)
     comps: dict[str, list] = {}
@@ -883,8 +885,10 @@ def analyze(source: dict, compose: bool = True) -> dict:
     for u in units:                     # a plain shape is a surface, not the hero visual
         if u.role == "hero" and not pictorial(u):
             u.role = "minor"
-    visual_cands = [u for u in units if u.role in ("hero", "minor", "group") and pictorial(u)
-                    and u.kind in ("image", "group") and unit_weight(u, "text") <= 0.25 * unit_weight(u, "image")]
+    # a composition that is mostly picture (its text, counted double, under 40% of its
+    # ink) is a visual even if it carries a caption
+    visual_cands = [u for u in units if u.role in ("hero", "minor", "group", "subhead", "body") and pictorial(u)
+                    and u.kind in ("image", "group") and unit_weight(u, "text") <= 0.4 * unit_weight(u, "image")]
     if visual_cands:
         hv = max(visual_cands, key=lambda u: unit_weight(u, "image"))
         tot_img = sum(unit_weight(u, "image") for u in visual_cands)

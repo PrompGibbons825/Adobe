@@ -133,8 +133,12 @@ def _stack(ctx: Ctx, P: Placed, units, rect, align, t_hi, boost):
 
 
 def t_cap(ctx, col_w):
-    # type may grow with the canvas: a small banner's 15px headline becomes ~50px on a big one
-    return min(1.25 * ctx.t_star, 3.0)
+    # type may grow with the canvas: a small banner's 15px headline becomes ~50px on a big one.
+    # Blank space the designer left in the source (content filling little of
+    # it) is not a size to preserve: content may grow into the new canvas.
+    fill = ctx.model.get("src_fill", 0.55) if hasattr(ctx, "model") else 0.55
+    room = max(1.0, (0.5 / max(0.05, fill)) ** 0.5)
+    return min(1.25 * ctx.t_star * room, 3.0)
 
 
 def tmpl_stack(ctx, flow, align="center", region="full", tscale=1.0):

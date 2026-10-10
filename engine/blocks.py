@@ -456,7 +456,18 @@ class RestackBlock:
         return (gx, gy, gx + self.w * u, gy + self.h * u)
 
 
+def structured(c):
+    """A frame drawing with its own interior dividers: its contents were laid
+    out between those rules, so the frame and contents scale as one piece."""
+    if c is None or c["type"] != "image":
+        return False
+    info = saliency.analyze(c.get("asset_id") or "")
+    return bool(info and info["opaque_frac"] < 0.5 and info.get("rules", 0.0) > 0.01)
+
+
 def make_block(unit, src_w, ctx=None):
+    if unit.kind == "frame" and structured(unit.container):
+        return GroupBlock(unit)
     if unit.kind == "frame" and ctx is not None:
         return FrameBlock(unit, ctx)
     if unit.kind == "group" and ctx is not None and getattr(ctx, "restack", False):

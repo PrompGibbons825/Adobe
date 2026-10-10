@@ -181,8 +181,14 @@ def analyze(asset_id: str) -> dict | None:
     else:
         plain = 1.0
 
+    # interior structure: rows/columns of ink crossing the middle of an
+    # otherwise transparent drawing (dividers inside an outline frame)
+    a_in = alpha[int(0.12 * sh):int(0.88 * sh), int(0.12 * sw):int(0.88 * sw)] > 0.5
+    rules = float(max((a_in.mean(1) > 0.5).mean(), (a_in.mean(0) > 0.5).mean())) if a_in.size else 0.0
+
     return {
         "size": (w, h),
+        "rules": rules,
         "plain": plain,
         "faces": faces,
         "lum": lum,
