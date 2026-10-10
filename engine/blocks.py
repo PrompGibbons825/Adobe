@@ -66,19 +66,19 @@ class Placed:
 class TextBlock:
     def __init__(self, unit, src_w):
         self.unit = unit
-        self.el = unit.els[0]
+        self.el = tf.flow(unit.els[0])      # free text re-flows: hand-wrapped breaks dropped
+        self.wfrac = max(0.55, min(1.0, self.el["width"] / (src_w * 0.86)))
+        if getattr(unit, "_in_strip", False):
+            self.wfrac = 1.0          # in a rotated strip a line uses the strip's full length
 
     def _fit(self, t, max_w):
-        """Source lines kept: the largest size <= the scale whose lines fit max_w."""
         el = self.el
+        box_w = max_w * self.wfrac
         fs = max(1, round(el["font_size"] * t))
-        box_w, m = tf.keep_lines(el, fs)
-        if box_w > max_w and fs > 1:
-            fs = max(1, int(fs * max_w / box_w))
-            box_w, m = tf.keep_lines(el, fs)
-            while box_w > max_w and fs > 1:
-                fs -= 1
-                box_w, m = tf.keep_lines(el, fs)
+        m = tf.measure(el, fs, box_w)
+        while m["word_w"] > box_w and fs > 1:
+            fs -= 1
+            m = tf.measure(el, fs, box_w)
         return box_w, fs, m
 
     def size(self, t, max_w):
@@ -99,6 +99,8 @@ class TextBlock:
         lh = float(self.el.get("line_height", 1.2))
         P.set(self.el["id"], x=bx, y=y, width=box_w, height=m["lines"] * fs * lh,
               font_size=fs, text_align=align)
+        if "_flow" in self.el:
+            P.set(self.el["id"], content=self.el["content"])
         if getattr(self, "upright", False):
             P.set(self.el["id"], rotation=0)
         el2 = dict(self.el, text_align=align)
@@ -174,12 +176,13 @@ class GroupBlock:
             ey = gy + (e["y"] - self.y0) * u
             ew, eh = e["width"] * u, e["height"] * u
             if e["type"] == "text":
-                # the text scales with the group and keeps its source lines
-                fs = max(1, int(e["font_size"] * u))
-                bw, m = tf.keep_lines(e, fs)
-                al = e.get("text_align", "left")
-                ex += (ew - bw) * (0.5 if al == "center" else 1.0 if al == "right" else 0.0)
-                ew = bw
+                src_lines = tf.measure(e, int(e["font_size"]), e["width"])["lines"]
+                fs0 = max(1, round(e["font_size"] * u))
+                avail_h = eh * 1.6
+                if self.shape is not None and len(self.unit.els) == 2:
+                    avail_h = self.shape["height"] * u * 0.85
+                m = tf.fit(e, ew, avail_h, fs0, 1, max_lines=max(1, src_lines)) or tf.measure(e, fs0, ew)
+                fs = m["fs"]
                 if self.shape is not None and len(self.unit.els) == 2:
                     scy = gy + (self.shape["y"] - self.y0 + self.shape["height"] / 2) * u
                     ey = tf.optical_top(e, fs, m["lines"], scy)

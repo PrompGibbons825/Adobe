@@ -118,6 +118,7 @@ def _build(source, target, P):
     out = []
     for el in source["elements"]:
         e = copy.deepcopy(el)
+        e.pop("_flow", None)
         for k, v in P.props.get(el["id"], {}).items():
             e[k] = round(v, 2) if isinstance(v, float) else v
         if e["type"] == "text":
@@ -157,9 +158,31 @@ RESTACK_COST = 0.5  # per composition re-stacked along the other axis
 ROTATE_COST = 0.5   # per text piece turned into a vertical strip
 
 
+def _unwrap(source):
+    """Marks texts whose hand-wrapped paragraph breaks can be dropped when the
+    text re-flows into a new width (it then wraps cleanly instead of breaking
+    at the old points). Text that moves rigidly keeps its content."""
+    from .textfit import unwrap_breaks
+    src = copy.deepcopy(source)
+    sizes = [e["font_size"] for e in src["elements"] if e["type"] == "text"]
+    top = max(sizes) if sizes else 0
+    for e in src["elements"]:
+        # the design's headline (its largest type) keeps its designed lines
+        if e["type"] == "text" and isinstance(e.get("content"), str) and e["font_size"] < 0.9 * top:
+            flow = unwrap_breaks(e["content"])
+            if flow != e["content"]:
+                e["_flow"] = flow     # applied only where the text re-flows into a new width
+    return src
+
+
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
+    return _resize(_unwrap(source), target_canvas)
+
+
+def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
     resize.last_choice = ({"template": "fallback"}, 0.0, {})
     resize.last_model = None
+    resize.last_P = None
     try:
         tight = analyze(source)
         readings = [(tight, 0)]

@@ -205,12 +205,11 @@ def _fit_column(texts, col_w, h_avail, fs_cap):
     def layout(t):
         ms, tot = [], 0.0
         for i, u in enumerate(texts):
-            el = u.els[0]
+            el = tf.flow(u.els[0])
             fs = max(5, int(el["font_size"] * t))
-            bw, m = tf.keep_lines(el, fs)       # source lines kept
-            if bw > col_w:
+            m = tf.measure(el, fs, col_w)
+            if m["word_w"] > col_w:
                 return None
-            m = dict(m, box_w=bw)
             ms.append(m)
             tot += m["height"] + (fs * 0.3 if i else 0)
         return ms if tot <= h_avail else None
@@ -486,8 +485,9 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False
             for u, m in zip(it["texts"], it["ms"]):
                 el = u.els[0]
                 asc, cap, desc = tf.metrics(el)
-                P.set(el["id"], x=x, y=y, width=m["box_w"], height=m["height"], font_size=m["fs"], text_align="left")
-                P.vis[el["id"]] = tf.visual_box(dict(el, text_align="left"), x, y, m["box_w"], m["fs"], m)
+                P.set(el["id"], x=x, y=y, width=it["colw"], height=m["height"], font_size=m["fs"], text_align="left",
+                      content=tf.flow(el)["content"])
+                P.vis[el["id"]] = tf.visual_box(dict(el, text_align="left"), x, y, it["colw"], m["fs"], m)
                 ids.append(el["id"])
                 if u.role == "headline":
                     head_t = m["fs"] / el["font_size"]
@@ -570,10 +570,14 @@ def _inner_row(ctx, P, units, rect, t):
     y = cy - th / 2
     for u, m in zip(texts, ms):
         el = u.els[0]
-        # each text in its own source-line box, centred on (or starting at) the column
-        bw = m["box_w"]
-        bx = tx + tw / 2 - bw / 2 if align == "center" else tx
-        P.set(el["id"], x=bx, y=y, width=bw, height=m["height"], font_size=m["fs"], text_align=align)
+        # a little slack around the column, but never past the frame's inner edges
+        bx = max(rx, tx - m["fs"] / 2)
+        bw = min(tw + m["fs"], rx + rw - bx)
+        if align == "center":
+            bw = 2 * min(tx + tw / 2 - bx, bx + bw - (tx + tw / 2))
+            bx = tx + tw / 2 - bw / 2
+        P.set(el["id"], x=bx, y=y, width=bw, height=m["height"], font_size=m["fs"], text_align=align,
+              content=tf.flow(el)["content"])
         P.vis[el["id"]] = tf.visual_box(dict(el, text_align=align), bx, y, bw, m["fs"], m)
         y += m["height"] + m["fs"] * 0.3
     return ms[0]["fs"] / texts[0].els[0]["font_size"]

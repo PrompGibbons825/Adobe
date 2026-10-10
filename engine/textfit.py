@@ -112,7 +112,6 @@ def measure(el: dict, fs: int, max_w: float) -> dict:
     word_w = max(word_w, cur)
     lh = float(el.get("line_height", 1.2))
     return {
-        "wrapped": wrapped,
         "lines": len(lines),
         "width": max(line_ws) if line_ws else 0.0,
         "height": len(lines) * fs * lh,
@@ -121,41 +120,35 @@ def measure(el: dict, fs: int, max_w: float) -> dict:
     }
 
 
-def _breaks(wrapped: str) -> tuple:
-    """Word counts per line: the shape of a wrap, independent of spacing."""
-    return tuple(len(ln.split()) for ln in wrapped.split("\n"))
+def unwrap_breaks(content: str) -> str:
+    """Drop line breaks that only wrapped a paragraph by hand, so the text can
+    re-wrap cleanly in its new box. A break is kept when it ends a sentence
+    or clause (. ! ? :), when the next line starts a new piece of information
+    (a capital or a number, unless the whole text is set in caps), or when
+    the text is display type (fewer than 3 words per line on average)."""
+    lines = content.split("\n")
+    if len(lines) < 2:
+        return content
+    words = [len(ln.split()) for ln in lines if ln.strip()]
+    if not words or sum(words) / len(words) < 3:
+        return content
+    caps = content.upper() == content
+    out = lines[0]
+    for ln in lines[1:]:
+        prev, nxt = out.rstrip(), ln.lstrip()
+        continues = bool(prev) and bool(nxt) and prev[-1] not in ".!?:" and (
+            nxt[0].islower()                                   # "...lovers and / have a good time"
+            or (caps and nxt[0].isalpha() and not prev[-1].isdigit()))   # an all-caps sentence
+        if continues:
+            out = prev + " " + nxt
+        else:
+            out += "\n" + ln                                  # a new piece of information: kept
+    return out
 
 
-_KEEP = {}
-
-
-def keep_lines(el: dict, fs: int) -> tuple:
-    """(box width, measure) that reproduces the source's exact lines at font
-    size fs: the design's own line breaks (explicit and wrapped) are kept, and
-    the box scales with the type. A text is never re-wrapped."""
-    key = (el.get("id"), el.get("content"), round(float(el["font_size"]), 3), round(float(el["width"]), 2), fs)
-    if key in _KEEP:
-        return _KEEP[key]
-    src = measure(el, float(el["font_size"]), float(el["width"]))   # exactly as the source renders
-    shape = _breaks(src["wrapped"])
-    k = fs / float(el["font_size"])
-    base = float(el["width"]) * k
-    best = None
-    for d in (0.005, 0.0, 0.01, -0.005, 0.02, -0.01, 0.03, 0.05, 0.08, -0.02):
-        w = base * (1 + d)
-        m = measure(el, fs, w)
-        if _breaks(m["wrapped"]) == shape:
-            best = (w, m)
-            break
-    if best is None:
-        # force the source lines: the box just wider than the widest source line
-        hard = dict(el, content=src["wrapped"])
-        m = measure(hard, fs, 1e9)
-        w = m["width"] * 1.01 + 1
-        m = measure(hard, fs, w)
-        best = (w, m)
-    _KEEP[key] = best
-    return best
+def flow(el: dict) -> dict:
+    """The element as it is set when it re-flows into a new width."""
+    return dict(el, content=el["_flow"]) if "_flow" in el else el
 
 
 def single_line_width(el: dict, fs: int) -> float:
