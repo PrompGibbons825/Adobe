@@ -112,12 +112,50 @@ def measure(el: dict, fs: int, max_w: float) -> dict:
     word_w = max(word_w, cur)
     lh = float(el.get("line_height", 1.2))
     return {
+        "wrapped": wrapped,
         "lines": len(lines),
         "width": max(line_ws) if line_ws else 0.0,
         "height": len(lines) * fs * lh,
         "word_w": word_w,
         "fs": fs,
     }
+
+
+def _breaks(wrapped: str) -> tuple:
+    """Word counts per line: the shape of a wrap, independent of spacing."""
+    return tuple(len(ln.split()) for ln in wrapped.split("\n"))
+
+
+_KEEP = {}
+
+
+def keep_lines(el: dict, fs: int) -> tuple:
+    """(box width, measure) that reproduces the source's exact lines at font
+    size fs: the design's own line breaks (explicit and wrapped) are kept, and
+    the box scales with the type. A text is never re-wrapped."""
+    key = (el.get("id"), el.get("content"), round(float(el["font_size"]), 3), round(float(el["width"]), 2), fs)
+    if key in _KEEP:
+        return _KEEP[key]
+    src = measure(el, float(el["font_size"]), float(el["width"]))   # exactly as the source renders
+    shape = _breaks(src["wrapped"])
+    k = fs / float(el["font_size"])
+    base = float(el["width"]) * k
+    best = None
+    for d in (0.005, 0.0, 0.01, -0.005, 0.02, -0.01, 0.03, 0.05, 0.08, -0.02):
+        w = base * (1 + d)
+        m = measure(el, fs, w)
+        if _breaks(m["wrapped"]) == shape:
+            best = (w, m)
+            break
+    if best is None:
+        # force the source lines: the box just wider than the widest source line
+        hard = dict(el, content=src["wrapped"])
+        m = measure(hard, fs, 1e9)
+        w = m["width"] * 1.01 + 1
+        m = measure(hard, fs, w)
+        best = (w, m)
+    _KEEP[key] = best
+    return best
 
 
 def single_line_width(el: dict, fs: int) -> float:

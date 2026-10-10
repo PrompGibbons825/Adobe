@@ -292,7 +292,7 @@ def score(ctx, P, model):
             A = el["width"] / max(1e-6, el["height"])
             fit = W / (A * H) if A >= W / H else A * H / W
             target = min(target, 0.7 * min(1.0, fit) / s_src)
-        thumb -= 25 * max(0.0, target - s_out / s_src) * min(1.0, s_src / 0.3)   # 60% of its source share
+        thumb -= 50 * max(0.0, target - s_out / s_src) * min(1.0, s_src / 0.3)   # 60% of its source share
     br["thumbnail"] = thumb
 
     # faces stay uncovered: nothing else may sit on a face in a picture
@@ -411,7 +411,7 @@ def score(ctx, P, model):
     if src_pc is None:
         src_pc = model["_src_pic_cov"] = _cov(src_box, (0, 0, Ws, Hs))
     out_pc = _cov(out_box, (0, 0, W, H))
-    br["picture_cover"] = -5 * max(0.0, src_pc - out_pc - 0.1)
+    br["picture_cover"] = -12 * max(0.0, src_pc - out_pc - 0.1)
 
     # faithfulness: reshaping a frame has to pay for itself
     import math

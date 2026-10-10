@@ -184,7 +184,7 @@ def diag_panel(render_img, design, P, model, assets, pw, ph, ghost):
     cols = {"text": (29, 120, 220), "image": (245, 150, 20), "shape": (245, 150, 20), "subject": (230, 40, 40)}
     A = W * H * sc * sc
     for eid, ex, ey, w, kind in getattr(P, "weight_items", None) or []:
-        r = max(3.0, (w * A * 0.35 / 3.1416) ** 0.5)
+        r = max(3.0, (max(0.0, w) * A * 0.35 / 3.1416) ** 0.5)
         px, py = T(ex, ey)
         col = cols.get(kind, (120, 120, 120))
         d.ellipse([px - r, py - r, px + r, py + r], fill=col + (70,), outline=col + (230,), width=2)
