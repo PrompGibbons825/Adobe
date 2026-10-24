@@ -14,8 +14,8 @@ import argparse
 import sys
 import time
 
-from tests.finicky import cases, malformed
-from tests.harness import evaluate, run
+from tests.finicky import bleed_probes, cases, malformed
+from tests.harness import evaluate, probe_errors, run
 from tools.rules import hard_rule_errors, render_image
 
 
@@ -58,6 +58,14 @@ def main() -> int:
         if errs:
             bad += 1
             print(f"FAIL malformed/{name}: " + "; ".join(errs[:5]))
+    for p in bleed_probes():
+        if a.only and not any(w in p.name for w in a.only):
+            continue
+        total += 1
+        errs = probe_errors(p)
+        if errs:
+            bad += 1
+            print(f"FAIL bleed/{p.name}: " + "; ".join(errs[:5]))
     print(f"\n{total - bad}/{total} passed in {time.time() - t0:.0f}s")
     if a.sheet and tiles:
         _save_sheet(tiles, a.sheet, Image)

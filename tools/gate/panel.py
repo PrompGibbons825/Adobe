@@ -19,6 +19,14 @@ good design (the designer's resize where the task has one, else the base output)
 perturbation of it (``tools.judge.perturb.SENTINELS``) or against fit-and-centre. A batch whose
 sentinel accuracy on overall is below ``sentinel_min`` is discarded by run.py.
 
+**Small-defect sentinels** (loop/STEERING.md S6): ``small_sentinels`` times as many asks as the
+decisive sentinels pit the good design against one small defect (``tools.judge.perturb.SMALL_DEFECTS``: one
+element hidden, a clipped letter, copy touching the edge, a broken type scale). VLM judges miss
+such details, so their accuracy is **reported only** (per kind), never used to discard a batch.
+
+**What decides:** the pairwise votes (forced choice per criterion). The 1-10 scores are only
+reported (``tools.gate.stats.score_deltas``); no rule reads them.
+
 The judge is a callable ``judge(prompt, model) -> (reply_text, usage_dict)``; unit tests pass
 a fake one. ``ClaudeJudge`` is the real one; its context is kept small (a one-line system
 prompt, no CLAUDE.md, no MCP, only the Read tool).
@@ -51,6 +59,7 @@ DEFAULT_PANEL = {
     "timeout": 300,
     "retries": 1,
     "min_sentinels": 4,
+    "small_sentinels": 0.5,  # small-defect sentinel asks per decisive sentinel ask (report only)
 }
 
 RUBRIC = """  - No unwanted collisions: overlaps are fine when they're intentional (layered graphics, deliberate stacking); what matters is that elements that shouldn't overlap, don't, and text never sits on a busy image.
@@ -306,14 +315,16 @@ class Panel:
         return (self.view(t["source"], f"{n}.src", kit), self.view(t["base"], f"{n}.base", kit),
                 self.view(t["cand"], f"{n}.cand", kit, reencode=reencode_cand))
 
-    def sentinels(self, pool: List[dict], n: int, batch: int) -> List[str]:
-        """``n`` sentinel asks: a good design against a known-worse one, x = the good side."""
-        from tools.judge.perturb import SENTINELS, perturb
+    def sentinels(self, pool: List[dict], n: int, batch: int, small: bool = False) -> List[str]:
+        """``n`` sentinel asks: a good design against a known-worse one, x = the good side.
+        ``small``: the small-defect kinds instead (ask kind ``sentinel_small``, report only)."""
+        from tools.judge.perturb import SENTINELS, SMALL_DEFECTS, perturb
 
         if not pool or n <= 0:
             return []
-        rng = _seeded(self.seed, self.gate_id, "sentinels", batch)
-        kinds = list(SENTINELS) + ["fit_centre"]
+        ask_kind = "sentinel_small" if small else "sentinel"
+        rng = _seeded(self.seed, self.gate_id, "small_sentinels" if small else "sentinels", batch)
+        kinds = list(SMALL_DEFECTS) if small else list(SENTINELS) + ["fit_centre"]
         ids: List[str] = []
         tries = 0
         while len(ids) < n and tries < 20 * n:
@@ -336,9 +347,21 @@ class Panel:
             kit = t.get("kit")
             ref = self.view(t["source"], f"{n0}.src", kit)
             gv = self.view(good, f"{n0}.good", kit)
-            bv = self.view(bad, f"sent.{key}", kit)
-            ids += self.pair("sentinel", key, ref, gv, bv, 0, batch, orders=1)
+            bv = self.view(bad, f"{'small' if small else 'sent'}.{key}", kit)
+            ids += self.pair(ask_kind, key, ref, gv, bv, 0, batch, orders=1)
         return ids
+
+    def sentinel_accuracy(self, ask_ids: Iterable[str]) -> dict:
+        """Overall-vote accuracy on sentinel asks, in total and per perturbation kind."""
+        ids = list(ask_ids)
+        by: Dict[str, List[float]] = {}
+        for aid in ids:
+            v = self.votes([aid])["overall"]
+            if v:
+                by.setdefault(self.asks[aid]["key"].rsplit(".", 1)[-1], []).append(v[0])
+        allv = [x for v in by.values() for x in v]
+        return {"n": len(allv), "correct": int(sum(allv)), "accuracy": (sum(allv) / len(allv)) if allv else None,
+                "by_kind": {k: round(sum(v) / len(v), 3) for k, v in sorted(by.items())}}
 
     def judge_tiles(self, tiles: List[dict], batch: int, pool: Optional[List[dict]] = None,
                     share: float = 0.10, reencode_cand: bool = False) -> dict:
@@ -356,7 +379,9 @@ class Panel:
             n_sent = max(int(self.cfg["min_sentinels"]),
                          math.ceil(share / (1 - share) * sum(len(v) for v in first.values())))
         sent = self.sentinels(pool if pool is not None else tiles, n_sent, batch)
-        order = [a for v in first.values() for a in v] + sent
+        small = self.sentinels(pool if pool is not None else tiles,
+                               math.ceil(float(self.cfg.get("small_sentinels", 0) or 0) * n_sent), batch, small=True)
+        order = [a for v in first.values() for a in v] + sent + small
         _seeded(self.seed, self.gate_id, "mix", batch).shuffle(order)
         self.run(order)
         second: Dict[str, List[str]] = {}
@@ -374,11 +399,13 @@ class Panel:
             if not v["overall"]:
                 continue  # every ask failed: no evidence either way
             recs.append({"tile": t["tile"], "set": t["set"], "design": t["design"], "tier": t["tier"],
+                         "bleed": t.get("bleed"),
                          "score": {c: sum(x) / len(x) for c, x in v.items() if x},
                          "delta": self.deltas(ids), "asks": len(ids), "second_judge": k in second})
         sv = self.votes(sent)["overall"]
         return {"tiles": recs, "sentinels": {"n": len(sv), "correct": int(sum(sv)),
                                               "accuracy": (sum(sv) / len(sv)) if sv else None},
+                "small_sentinels": self.sentinel_accuracy(small),
                 "asks": len(order) + sum(len(v) for v in second.values()),
                 "failed": sum(1 for a in order if a in self.labels and not self.labels[a]["ok"])}
 

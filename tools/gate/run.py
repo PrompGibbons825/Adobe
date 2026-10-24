@@ -172,6 +172,22 @@ def run_floor(parts: List[str], roots: Dict[str, Path], sets: List[dict], privat
     return rep
 
 
+def _bleed_counts(t: dict) -> Optional[dict]:
+    """Per tile, how many elements of each output bleed past the canvas within the S4 policy
+    (``tools.bleed``). Report only: bleed may cost on the auto grader, only the panel judges it."""
+    from tools import bleed
+
+    assets = Path(t["kit"]) / "assets" if t.get("kit") else None
+    res = {}
+    for side in ("base", "cand"):
+        if t.get(side) is not None:
+            try:
+                res[side] = len(bleed.check(t["source"], t[side], t[side]["canvas"], assets)[1])
+            except Exception:  # noqa: BLE001  a malformed output is the floor's business
+                res[side] = None
+    return res or None
+
+
 # ---- proxy -----------------------------------------------------------------------------------
 
 def run_proxy(tiles: List[dict], rule: dict, seed: int) -> dict:
@@ -315,18 +331,23 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
 
     # changed tiles, design order
     tiles, pool = [], []
+    bled = {"base": 0, "cand": 0}  # elements bleeding within the S4 policy, over every tile (report only)
     for s in sets:
         for t in s["tasks"]:
             o = outs[s["version"]][t["task_id"]]
             rec = {"set": s["set"], "tile": t["task_id"], "design": design_id(t), "tier": tier_of(t["target_canvas"]),
                    "source": t["source"], "base": o["base"], "cand": o["cand"], "kit": s["kit"],
                    "reference": t.get("reference")}
+            rec["bleed"] = _bleed_counts(rec)
+            for side, n in (rec["bleed"] or {}).items():
+                bled[side] += n or 0
             if o["base"] is not None:
                 pool.append(rec)
             if o["base"] is None or o["cand"] is None or canonical(o["base"]) == canonical(o["cand"]):
                 continue
             tiles.append(rec)
     designs = sorted({f"{t['set']}/{t['design']}" for t in tiles})
+    rep["bleed"] = bled
     random.Random(seed).shuffle(designs)
     cap = designs[: rule["looks"][-1]]
     rep["changed"] = {"tiles": len(tiles), "designs": len(designs), "judged_cap": len(cap),
@@ -379,7 +400,11 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
     sent["accuracy"] = sent["correct"] / sent["n"] if sent["n"] else None
     rep["panel"] = {"looks": looks, "final": ev and {k: ev[k] for k in ("decision", "win_cell", "win_pass", "cells",
                                                                           "criteria", "harm", "reasons")},
-                    "deltas": stats.score_deltas(recs), "sentinels": sent, "usage": panel.usage(),
+                    # pairwise votes decide; the 1-10 score deltas and small-defect sentinels are report only
+                    "deltas": stats.score_deltas(recs), "sentinels": sent,
+                    "small_sentinels": panel.sentinel_accuracy(
+                        [a for a, r in panel.asks.items() if r["kind"] == "sentinel_small"]),
+                    "usage": panel.usage(),
                     "second_judge_tiles": sum(1 for r in recs if r.get("second_judge")), "tiles": len(recs)}
 
     # null run: how often would the rule accept a relabelling of these judgements?

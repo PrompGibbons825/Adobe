@@ -364,7 +364,9 @@ class Panel(TempEnv):
         self.assertFalse(any(t["second_judge"] for t in res["tiles"]))
         self.assertEqual(res["sentinels"]["n"], 4)  # min_sentinels
         self.assertEqual(res["sentinels"]["accuracy"], 1.0)
-        self.assertEqual(j.calls, 8 + 4)
+        # 8 pair asks, 4 decisive sentinels, 2 small-defect sentinels (report only, S6)
+        self.assertEqual(res["small_sentinels"]["n"], 2)
+        self.assertEqual(j.calls, 8 + 4 + 2)
         self.assertAlmostEqual(res["tiles"][0]["delta"]["overall"], 3.0)
         # the judge folder holds only blind names
         names = [p.name for p in (self.tmp / "judges" / "g" / "asks").iterdir()]

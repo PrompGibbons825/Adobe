@@ -11,8 +11,9 @@ from typing import List, Tuple
 from engine.resize import resize
 from engine.smart.geom import el_box
 from engine.smart.textfit import drawn_box
-from tests.finicky import ROOMY_SIDE, Case
-from tools.rules import contrast_errors, ghost_text, hard_rule_errors, hierarchy_errors, promise_errors
+from tests.finicky import ROOMY_SIDE, BleedProbe, Case
+from tools.rules import (bleed_report, contrast_errors, ghost_text, hard_rule_errors, hierarchy_errors,
+                         promise_errors)
 
 
 def run(src: dict, tgt: dict) -> Tuple[dict, bool]:
@@ -89,3 +90,18 @@ def evaluate(case: Case, target: str, render_check: bool = True) -> Tuple[dict, 
     if render_check:
         errs += ghost_text(out) + contrast_errors(src, out, tgt)
     return out, errs
+
+
+def probe_errors(p: BleedProbe) -> List[str]:
+    """What is wrong with the bleed rules on one probe: an allowed bleed the hard rules reject
+    (or do not report as bleed), or a forbidden bleed they let through."""
+    src, out, tgt = p.source, p.output, p.target
+    hard = hard_rule_errors(src, out, tgt)
+    if p.allowed:
+        errs = [f"allowed bleed rejected: {e}" for e in hard]
+        bled = {b.split(":", 1)[0] for b in bleed_report(src, out, tgt)}
+        errs += [f"{i}: bleed not reported" for i in p.moves if i not in bled]
+        return errs
+    off = [e for e in hard if "off-canvas" in e]
+    other = [f"unrelated error: {e}" for e in hard if "off-canvas" not in e]
+    return other + ([] if off else ["forbidden bleed accepted"])

@@ -9,7 +9,8 @@ An element counts as **visible** when all of these hold (the steering definition
 * its opacity is unchanged from the source (a drop of more than ``OPACITY_TOL``);
 * no more than half of its box is covered by later opaque elements, unless the source covered
   it at least as much (covered share measured on a grid over the box, rotation ignored);
-* at least half of its box is on the canvas, unless the source had less on its canvas;
+* at least half of its box is on the canvas, unless the source had less on its canvas or the box
+  covers the whole canvas (a cover crop, loop/STEERING.md S4);
 * text is at or above the floor ``text_floor(W, H)`` (or its source size, if that was smaller);
 * an image's shorter side is at least 2% of the canvas's shorter side, or its source share of
   the source canvas's shorter side, whichever is smaller;
@@ -50,6 +51,11 @@ def _on_canvas(e: dict, W: float, H: float) -> float:
     iw = max(0.0, min(x + w, W) - max(x, 0.0))
     ih = max(0.0, min(y + h, H) - max(y, 0.0))
     return iw * ih / (w * h)
+
+
+def _covers(e: dict, W: float, H: float) -> bool:
+    x, y, w, h = _box(e)
+    return w > 0 and h > 0 and x <= 0.6 and y <= 0.6 and x + w >= W - 0.6 and y + h >= H - 0.6
 
 
 def _paint_key(i_e):
@@ -105,7 +111,7 @@ def hidden_elements(src: dict, out: dict, tgt: dict) -> List[str]:
             res.append(f"{i}: {cov_o[i]:.0%} covered (source {cov_s.get(i, 0):.0%})")
             continue
         on_o, on_s = _on_canvas(e, W, H), _on_canvas(s, SW, SH)
-        if on_o < 0.5 and on_o < on_s - 1e-6:
+        if on_o < 0.5 and on_o < on_s - 1e-6 and not _covers(e, W, H):
             res.append(f"{i}: {on_o:.0%} on canvas")
             continue
         _, _, w, h = _box(e)

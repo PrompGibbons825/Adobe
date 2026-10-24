@@ -101,6 +101,24 @@ def full_bleed(*ids: str) -> Check:
     return check
 
 
+def focal_on_canvas(pid: str, fx: float, fy: float) -> Check:
+    """A photo positioned past the canvas (bleed, S4/S5) keeps its subject, at (fx, fy) of the
+    photo's box, on the canvas. A box kept on the canvas is cropped by the renderer, not by the
+    engine, and is not checked here (S5 tightens this once the engine chooses crop windows)."""
+    def check(src, out, tgt):
+        e = next((x for x in out["elements"] if x["id"] == pid), None)
+        if e is None or float(e.get("opacity", 1)) <= 0:
+            return []
+        x0, y0, x1, y1 = _box(e)
+        if x0 >= -0.6 and y0 >= -0.6 and x1 <= tgt["width"] + 0.6 and y1 <= tgt["height"] + 0.6:
+            return []
+        px, py = x0 + fx * (x1 - x0), y0 + fy * (y1 - y0)
+        if not (0 <= px <= tgt["width"] and 0 <= py <= tgt["height"]):
+            return [f"{pid}: bled so far its subject ({px:.0f},{py:.0f}) is off the canvas"]
+        return []
+    return check
+
+
 def same_size(*ids: str, tol: float = 0.12) -> Check:
     """Alike elements (a set of badges, two CTAs) stay alike in size."""
     def check(src, out, tgt):
@@ -367,6 +385,33 @@ def cases() -> List[Case]:
                  *button("cta", 340, 860, 400, 90, "Shop now", 28),
              ], show=("headline", "cta_label"), show_roomy=("logo", "product")),
 
+        Case("source_bleeds_decor",
+             "Adobe's Level 2 move: a decorative circle that bleeds off the top-left corner in the source "
+             "(at -100,-100, 64% on canvas) and one fully inside: either may bleed in the output by about "
+             "the same proportion (S4), neither may push copy, and the badge and CTA never bleed",
+             1080, 1080, [
+                 shape("deco_circle_1", -100, -100, 500, 500, "rgba(255,255,255,0.18)", kind="ellipse"),
+                 shape("deco_circle_2", 700, 700, 300, 300, "rgba(240,178,66,0.25)", kind="ellipse"),
+                 logo(380, 60, 320, 110),
+                 image("product", 290, 260, 500, 500),
+                 text("headline", 90, 780, 900, 140, "Golden Hour Sparkle", 72, "Solstice Serif", True),
+                 *button("badge", 40, 40, 220, 56, "NEW FLAVOUR", 18, fill="rgba(43,27,46,1)"),
+                 *button("cta", 330, 950, 420, 90, "Shop now", 28),
+             ], show=("headline", "cta_label"), show_roomy=("logo",)),
+
+        Case("focal_photo_background",
+             "a full-bleed photo background with its subject off-centre (upper right, at 72%/30% of the "
+             "photo) and copy in the quiet lower left: the photo keeps covering the canvas, and if the "
+             "engine frames it by bleeding the box past the canvas (S4/S5) the subject stays on it",
+             1200, 1500, [
+                 text("headline", 80, 980, 700, 180, "Into the long light", 72, "Solstice Serif", True,
+                      align="left"),
+                 text("subhead", 80, 1170, 640, 70, "Botanical sparkling, made for evenings.", 28, align="left"),
+                 *button("cta", 80, 1300, 360, 90, "Discover", 28),
+             ], targets=("story", "ig-square", "fb-link", "leaderboard", "billboard", "skyscraper"),
+             show=("headline", "cta_label"),
+             check=all_of(full_bleed("bg"), focal_on_canvas("bg", 0.72, 0.30))),
+
         Case("no_background",
              "nothing paints the canvas (the renderer leaves it white) and copy is dark: hidden copy has "
              "no background to hide under, and every visible text needs contrast against white",
@@ -606,6 +651,80 @@ def cases() -> List[Case]:
                  text("legal", 60, 1310, 960, 30, "Please drink responsibly. See solstice.com/terms.", 12,
                       color="rgba(255,255,255,0.6)", z=6),
              ], targets=STRIPS + TALL + SMALL, show=("headline", "cta_label"), show_roomy=("logo",)),
+    ]
+
+
+# ----------------------------------------------------------------------------
+# bleed probes (loop/STEERING.md S4): hand-made outputs, no engine. Each says whether the
+# hard rules must accept it (allowed bleed) or reject it (forbidden or excessive bleed).
+
+
+@dataclass
+class BleedProbe:
+    name: str
+    source: dict
+    target: dict
+    moves: Dict[str, dict]  # id -> fields of that element in the output
+    allowed: bool
+
+    @property
+    def output(self) -> dict:
+        """The source re-set on the target: each element kept where it was (scaled to fit the
+        target), then the probe's moves applied."""
+        W, H = self.target["width"], self.target["height"]
+        sw, sh = self.source["canvas"]["width"], self.source["canvas"]["height"]
+        k = min(W / sw, H / sh)
+        els = []
+        for e in self.source["elements"]:
+            o = dict(e, x=e["x"] * k, y=e["y"] * k, width=e["width"] * k, height=e["height"] * k)
+            if e["type"] == "text":
+                o["font_size"] = max(1, int(e["font_size"] * k))
+            if e["id"] == "bg":
+                o.update(x=0, y=0, width=W, height=H)
+            els.append(dict(o, **self.moves.get(e["id"], {})))
+        for o in els:  # nothing else may leave the canvas by accident
+            if o["id"] not in self.moves and o["id"] != "bg":
+                o["x"] = min(max(0.0, o["x"]), W - o["width"])
+                o["y"] = min(max(0.0, o["y"]), H - o["height"])
+        return {"canvas": dict(self.target), "elements": els}
+
+
+def bleed_probes() -> List[BleedProbe]:
+    sq = {"canvas": {"width": 1080, "height": 1080}, "elements": [
+        {"id": "bg", "type": "image", "x": 0, "y": 0, "width": 1080, "height": 1080, "z_index": 0,
+         "asset_id": "solstice_bg_gradient.png", "fit": "cover"},
+        shape("deco_bled", -100, -100, 500, 500, "rgba(255,255,255,0.18)", kind="ellipse"),
+        shape("deco_inside", 760, 700, 260, 260, "rgba(240,178,66,0.25)", kind="ellipse"),
+        image("panel", 600, 300, 400, 500, asset="solstice_bg_gradient.png"),
+        logo(380, 60, 320, 110),
+        image("product", 120, 300, 400, 400),
+        text("headline", 90, 780, 900, 120, "Golden Hour", 72, "Solstice Serif", True),
+        *button("cta", 330, 950, 420, 90, "Shop now", 28),
+    ]}
+    photo = {"canvas": {"width": 1200, "height": 1500}, "elements": [
+        {"id": "bg", "type": "image", "x": 0, "y": 0, "width": 1200, "height": 1500, "z_index": 0,
+         "asset_id": "solstice_bg_gradient.png", "fit": "cover"},
+        text("headline", 80, 1000, 700, 160, "Into the long light", 64, "Solstice Serif", True, align="left"),
+    ]}
+    cut = dict(sq, elements=[dict(e, x=-80) if e["id"] == "product" else e for e in sq["elements"]])
+    story, lb, wide = {"width": 1080, "height": 1920}, {"width": 728, "height": 90}, {"width": 1600, "height": 400}
+    P = BleedProbe
+    return [
+        P("decor_bled_in_source_keeps_bleeding", sq, wide,
+          {"deco_bled": dict(x=-40, y=-50, width=250, height=250)}, True),
+        P("plain_decor_bleeds_a_little", sq, wide, {"deco_inside": dict(x=1500, y=200, width=160, height=160)}, True),
+        P("photo_cover_crop_framed", photo, story, {"bg": dict(x=-228, y=0, width=1536, height=1920)}, True),
+        P("photo_cover_crop_on_a_strip", photo, lb, {"bg": dict(x=0, y=-400, width=728, height=910)}, True),
+        P("image_panel_against_an_edge", sq, wide, {"panel": dict(x=1400, y=0, width=320, height=400)}, True),
+        P("cutout_that_bled_in_source", cut, wide, {"product": dict(x=-20, y=40, width=110, height=110)}, True),
+        P("text_past_the_edge", sq, wide, {"headline": dict(x=-40)}, False),
+        P("logo_past_the_edge", sq, wide, {"logo": dict(x=1500, y=10, width=200, height=69)}, False),
+        P("button_past_the_edge", sq, wide, {"cta_bg": dict(x=1450, y=300, width=210, height=45),
+                                              "cta_label": dict(x=1450, y=311, width=210, height=22)}, False),
+        P("cutout_past_the_edge", sq, wide, {"product": dict(x=-60, y=40, width=200, height=200)}, False),
+        P("decor_mostly_off", sq, wide, {"deco_inside": dict(x=1530, y=200, width=160, height=160)}, False),
+        P("panel_mostly_off", sq, wide, {"panel": dict(x=1480, y=0, width=320, height=400)}, False),
+        P("decor_bled_much_further", sq, wide, {"deco_bled": dict(x=-180, y=-180, width=250, height=250)}, False),
     ]
 
 

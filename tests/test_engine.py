@@ -18,8 +18,8 @@ from engine.smart.geom import el_box
 from engine.smart.items import Ctx
 from engine.smart.paths import find_asset
 from engine.smart.textfit import drawn_box
-from tests.finicky import cases, malformed
-from tests.harness import evaluate, run
+from tests.finicky import bleed_probes, cases, malformed
+from tests.harness import evaluate, probe_errors, run
 from tools.rules import hard_rule_errors, promise_errors, render_image
 
 REPO = Path(__file__).resolve().parents[1]
@@ -41,6 +41,15 @@ class FinickyCases(unittest.TestCase):
                 with self.subTest(case=case.name, target=target):
                     _, errs = evaluate(case, target)
                     self.assertEqual(errs, [], case.probe)
+
+
+class BleedPolicy(unittest.TestCase):
+    """loop/STEERING.md S4: allowed bleed passes the hard rules and is reported; forbidden fails."""
+
+    def test_probes(self):
+        for p in bleed_probes():
+            with self.subTest(probe=p.name):
+                self.assertEqual(probe_errors(p), [])
 
 
 class MalformedInput(unittest.TestCase):

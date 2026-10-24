@@ -21,7 +21,9 @@ Parts (each reported as PASS / FAIL / SKIP):
   ``rules.ghost_text`` must be 0 on every tile (a missing output is a hard error);
   ``promise_errors``, ``contrast_errors``, ``hierarchy_errors`` and ``hidden`` (elements an
   output hides, ``tools/gate/visible.py``, loop/STEERING.md S1) must not rise against the
-  base's outputs on the same tasks (with no base they are reported only).
+  base's outputs on the same tasks (with no base they are reported only). ``bleed``
+  (``rules.bleed_report``: elements an output lets past the canvas within the S4 bleed policy)
+  is reported per tile and in total, never a failure: only the panel judges bleed.
 
 A task dir holds brief-format ``<name>.json`` tasks (``source`` + ``target_canvas``); an output
 dir holds ``<name>.json`` or ``<name>_output.json``. The floor never decides which directories
@@ -55,6 +57,7 @@ SUITES = [
 ]
 MUST_BE_ZERO = ("hard", "ghost")
 MUST_NOT_RISE = ("promise", "contrast", "hierarchy", "hidden")
+REPORT_ONLY = ("bleed",)
 DOCKER_LIMITS = ["--cpus", "2", "--memory", "3g", "--network", "none"]
 SKIP_COPY = {".git", ".venv", "output", "__pycache__", "tests", "tools", "worktrees"}
 
@@ -146,7 +149,8 @@ def tile_metrics(src_dir: Path, out_dir: Path, kit: Optional[Path] = None) -> Di
     lookup is cached), so the CLI evaluates each pair in its own process."""
     if kit:
         os.environ["CHAMELEON_BRAND_KIT"] = str(Path(kit).resolve())
-    from tools.rules import contrast_errors, ghost_text, hard_rule_errors, hierarchy_errors, promise_errors
+    from tools.rules import (bleed_report, contrast_errors, ghost_text, hard_rule_errors, hierarchy_errors,
+                             promise_errors)
     from tools.gate.visible import hidden_elements
 
     assets = Path(kit).resolve() / "assets" if kit else None
@@ -154,7 +158,7 @@ def tile_metrics(src_dir: Path, out_dir: Path, kit: Optional[Path] = None) -> Di
     for name, t in load_tasks(src_dir).items():
         src, tgt = t["source"], t["target_canvas"]
         p = output_path(out_dir, name)
-        m = {k: [] for k in MUST_BE_ZERO + MUST_NOT_RISE}
+        m = {k: [] for k in MUST_BE_ZERO + MUST_NOT_RISE + REPORT_ONLY}
         if p is None:
             m["hard"] = ["no output"]
             res[name] = m
@@ -171,7 +175,8 @@ def tile_metrics(src_dir: Path, out_dir: Path, kit: Optional[Path] = None) -> Di
                             ("promise", lambda: promise_errors(src, out, tgt)),
                             ("contrast", lambda: contrast_errors(src, out, tgt)),
                             ("hierarchy", lambda: hierarchy_errors(src, out)),
-                            ("hidden", lambda: hidden_elements(src, out, tgt))):
+                            ("hidden", lambda: hidden_elements(src, out, tgt)),
+                            ("bleed", lambda: bleed_report(src, out, tgt))):
                 try:
                     m[key] = fn()
                 except Exception as ex:  # noqa: BLE001
@@ -192,19 +197,21 @@ def _metrics_subprocess(src_dir: Path, out_dir: Path, kit: Optional[Path]) -> Di
 
 def compare_tiles(cand: Dict[str, dict], base: Optional[Dict[str, dict]] = None) -> dict:
     """The tile verdict: zero rows must be 0 everywhere, rise rows must not exceed the base."""
-    totals = {k: sum(len(m[k]) for m in cand.values()) for k in MUST_BE_ZERO + MUST_NOT_RISE}
+    totals = {k: sum(len(m.get(k, [])) for m in cand.values()) for k in MUST_BE_ZERO + MUST_NOT_RISE + REPORT_ONLY}
     fails = [f"{k}: {totals[k]} (must be 0)" for k in MUST_BE_ZERO if totals[k]]
     base_totals, rises = None, {}
     if base is not None:
-        base_totals = {k: sum(len(m[k]) for m in base.values()) for k in MUST_NOT_RISE}
+        base_totals = {k: sum(len(m.get(k, [])) for m in base.values()) for k in MUST_NOT_RISE + REPORT_ONLY}
         for k in MUST_NOT_RISE:
             if totals[k] > base_totals[k]:
                 fails.append(f"{k}: {totals[k]} > base {base_totals[k]}")
             rises[k] = sorted(n for n in cand if n in base and len(cand[n][k]) > len(base[n][k]))
-    examples = {k: [f"{n}: {e}" for n, m in sorted(cand.items()) for e in m[k]][:8]
-                for k in MUST_BE_ZERO + MUST_NOT_RISE if totals[k]}
+    examples = {k: [f"{n}: {e}" for n, m in sorted(cand.items()) for e in m.get(k, [])][:8]
+                for k in MUST_BE_ZERO + MUST_NOT_RISE + REPORT_ONLY if totals[k]}
+    # report only: per tile, how many elements bleed (S4); bleed never fails the floor
+    bleed = {n: len(m.get("bleed", [])) for n, m in sorted(cand.items()) if m.get("bleed")}
     return {"pass": not fails, "tiles": len(cand), "totals": totals, "base_totals": base_totals,
-            "fails": fails, "rose_on": rises, "examples": examples}
+            "fails": fails, "rose_on": rises, "examples": examples, "bleed": bleed}
 
 
 def check_tiles(src_dir: Path, out_dir: Path, base_out: Optional[Path] = None, kit: Optional[Path] = None) -> dict:
