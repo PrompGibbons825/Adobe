@@ -38,11 +38,12 @@ class Ctx:
     H0: float
     emphasis: float = 1.0  # how much larger than the rest the headline is set in this plan
     measure: float = 1.0  # how much longer than in the source copy lines may run in this plan
+    display_room: float = 1.0  # how far past the canvas's display size this design's headline may go
 
     @property
     def display_max(self) -> float:
         """The largest a display headline is set on this canvas, in px."""
-        return display_size(self.W, self.H)
+        return display_size(self.W, self.H) * self.display_room
 
     @property
     def base_fs(self) -> float:
@@ -146,6 +147,8 @@ def realize_text(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float = INF,
             blk = textfit.balanced(content, style, fs, line_max)
         if blk.n_lines == 2:  # break where the copy breaks itself, if that is nearly as even
             blk = textfit.phrase_wrap(content, style, fs, lim, textfit.run_edges(el)) or blk
+        if it.role in ("headline", "subhead") and textfit.has_runt(blk):
+            blk = _without_runt(content, style, blk, lim, ctx.floor(it.role, relax)) or blk
     if blk.ink_width > line_max + 0.5 or (not rot and blk.height > max_h + 0.5):
         return None
     max_lines = el.get("max_lines")
@@ -167,6 +170,22 @@ def realize_text(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float = INF,
 
     return Real(item=it, w=fp.w, h=fp.h, scale=fs / max(1.0, it.fs0), fonts={el["id"]: blk.font_size},
                 blocks={el["id"]: blk}, emit_fn=emit)
+
+
+RUNT_GIVE = 0.85  # a headline may be set this much smaller to keep a lone word off its last line
+
+
+def _without_runt(content: str, style: TextStyle, blk: TextBlock, width: float, floor: float) -> Optional[TextBlock]:
+    """The block a little smaller (down to RUNT_GIVE, never below ``floor``)
+    if that ends it on more than a lone word without adding lines, as a
+    designer nudges a headline's size to fix a runt. The renderer's wrap is
+    greedy, so a runt can only go by a change of size, not of breaks."""
+    fs0 = blk.font_size
+    for fs in range(fs0 - 1, max(int(floor), int(fs0 * RUNT_GIVE)) - 1, -1):
+        cand = textfit.balanced(content, style, fs, width)
+        if cand.n_lines <= blk.n_lines and not textfit.has_runt(cand):
+            return cand
+    return None
 
 
 def text_footprint(box: Box, blk: TextBlock, align: str, rot: float) -> Box:
@@ -762,7 +781,7 @@ def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF
     headline (alone, or carried on art) and the measure only plain text, so
     only they key on it."""
     heads = it.role == "headline" or any(sat.role == "headline" for sat in it.sats)
-    key = (id(it), s, max_w, max_h, relax, k, mode, nowrap, ctx.W, ctx.H, ctx.W0, ctx.H0,
+    key = (id(it), s, max_w, max_h, relax, k, mode, nowrap, ctx.W, ctx.H, ctx.W0, ctx.H0, ctx.display_room,
            ctx.emphasis if heads else 1.0, ctx.measure if it.kind == "text" else 1.0)
     if key not in _REALIZED:
         _REALIZED[key] = _realize(it, s, ctx, max_w, max_h, relax, k, mode, nowrap)

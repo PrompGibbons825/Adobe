@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 from .analyze import Design, Item, analyze, as_number
 from .color import normalize as normalize_colour
-from .compose import Plan, generate
+from .compose import Plan, display_room, generate
 from .geom import Box, el_box, rotated_aabb
 from .items import Ctx, forget_realized
 from .layout import PANEL_PAD, panel_pads
@@ -31,7 +31,8 @@ def plan_design(source: dict, target: dict):
     for lockups in (True, False):
         forget_realized()  # items are keyed by identity: a fresh analysis must not meet stale sizes
         d = analyze(source, lockups=lockups)
-        ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
+        W, H = float(target["width"]), float(target["height"])
+        ctx = Ctx(W=W, H=H, W0=d.W, H0=d.H, display_room=display_room(d, W, H))
         plans = prune_relaxed(generate(d, ctx))
         if plans:
             score_plans(plans, d, ctx)

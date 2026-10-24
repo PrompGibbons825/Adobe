@@ -36,6 +36,7 @@ DISPLAY_WORDS = 8  # a headline this short can be set as display type; a longer 
 BALANCE = 0.5  # how far a reflowed column's top and bottom margins move towards even
 BOND = 0.3  # rows closer than this times the smaller one's height read as one unit and spread as one
 MARGIN_LONG = 0.05  # the least margin along a canvas's length, as a share of it
+COPY_POSTER = 1.4  # a design of copy alone on a tall canvas may set its headline this much past display size
 COLUMN_ROOM = 1.35  # how much further than sqrt(area) a column may grow on a taller canvas
 ROW_GAP = 0.25  # a banner row's gaps widen to fill it, up to this share of the canvas width each
 WIDE_MEASURE = 1.8  # on a much wider canvas, copy is also tried this much wider than its source measure
@@ -79,6 +80,16 @@ def margins(d: Design, ctx: Ctx) -> Tuple[float, float]:
     my = max(floor, fr * short, min(MARGIN_LONG * 0.875 * ctx.H, 0.3 * ctx.W))
     mx = max(floor, fr * short, min(MARGIN_LONG * ctx.W, 0.3 * ctx.H))
     return mx, my
+
+
+def display_room(d: Design, W: float, H: float) -> float:
+    """How far past the canvas's display size this design's headline may go.
+    A design of copy alone (no art beyond its logo) on a canvas taller than
+    wide has only its type to carry the height, so it is set larger, as a
+    typographic poster is (COPY_POSTER)."""
+    art = any(i.kind in ("image", "composite") and i.role not in ("logo", "missing", "void", "watermark")
+              for i in d.items)
+    return COPY_POSTER if H > W and not art else 1.0
 
 
 def scale_bounds(d: Design, ctx: Ctx, kind: str = "stack") -> Tuple[float, float]:
@@ -311,17 +322,19 @@ def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design,
     return out
 
 
-def place_row(laid: Laid, ctx: Ctx, zone: Box) -> List[Placement]:
-    """A row of three or more parts is set the way a banner is: spare width
-    goes into the gaps, so the first part holds the left margin and the last
-    the right (the brand at one end, the call to action at the other), no gap
-    opening past a quarter of the canvas. Two parts read as one group: their
-    gap breathes a little (up to three times its size) and the pair is centred."""
+def place_row(laid: Laid, ctx: Ctx, zone: Box, ends_in_cta: bool = False) -> List[Placement]:
+    """A row with ends is set the way a banner is: spare width goes into the
+    gaps, so the first part holds the left margin and the last the right (the
+    brand at one end, the call to action at the other), no gap opening past a
+    quarter of the canvas. A row has ends when it has three or more parts, or
+    when its last part is the call to action. Otherwise two parts read as one
+    group: their gap breathes a little (up to three times its size) and the
+    pair is centred."""
     parts: List[Laid] = laid.parts  # type: ignore[attr-defined]
     gaps: List[float] = laid.gap_list  # type: ignore[attr-defined]
     extra = max(0.0, zone.w - laid.w)
     n = len(gaps)
-    if n >= 2:
+    if n >= 2 or (n == 1 and ends_in_cta):
         add = min(extra / n, max(0.0, ROW_GAP * ctx.W - max(gaps)))
     else:
         add = min(extra / (n + 1.0), 2.0 * max(gaps)) if n else 0.0
@@ -567,7 +580,7 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
             break
     if laid is None:
         return None
-    placed = place_row(laid, ctx, laid.zone)
+    placed = place_row(laid, ctx, laid.zone, ends_in_cta=bool(ctas))
     fl = []
     corner, failed = place_floaters(floaters, s, ctx, mx, my, relax)
     hid += failed

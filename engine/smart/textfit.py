@@ -535,6 +535,11 @@ def phrase_wrap(content: str, style: TextStyle, font_size: float, max_width: flo
     return blk if blk.n_lines == 2 else None
 
 
+def has_runt(blk: "TextBlock") -> bool:
+    """Three or more lines ending on a lone word after a fuller line."""
+    return blk.n_lines >= 3 and len(blk.lines[-1].split()) == 1 and len(blk.lines[-2].split()) >= 2
+
+
 def run_edges(el: dict) -> frozenset:
     """Indices where a style run (a colour change, say) starts or ends."""
     out = set()

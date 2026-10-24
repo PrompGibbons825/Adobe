@@ -77,12 +77,13 @@ For images, the alpha channel gives where the visible pixels sit.
 | adapt | nearly the same aspect | the source arrangement, edges kept as edges |
 | stack | portrait, square, mild landscape | one column in reading order, rows near their source-relative height |
 | split | square to wide | hero on one side, copy stacked on the other |
-| row | banners and strips | logo, hero, copy, CTA on one line; three or more parts are set like a banner (the brand holds one end, the CTA the other), two stay a centred group; the hero may fill the strip's height |
+| row | banners and strips | logo, hero, copy, CTA on one line; a row of three or more parts, or one that ends in its CTA, is set like a banner (the brand holds one end, the CTA the other); any other pair stays a centred group; the hero may fill the strip's height |
 
 Each is solved by a small flexbox-like engine for the largest scale that fits
 (within a range: type grows by about √area, a column moved to a taller canvas a
 little further, and no design grows past the point where its headline reaches the
-canvas's display size, so nothing outgrows the headline),
+canvas's display size, so nothing outgrows the headline; a design of copy alone on
+a canvas taller than wide may go 1.4× past it, as a typographic poster does),
 then retried with low-importance items dropped: legal, watermark, ribbon, a set
 of badges, the subhead; a row of product cards gives way one card at a time.
 
@@ -91,7 +92,9 @@ way Adobe's reference output sets it: 1.35× and 1.7× larger than the rest of t
 design, up to the canvas's display size (15% of the short side on posts and
 stories, up to 42% of a strip's height), at about two words a line and at most
 three lines. A longer headline is offered the first step only, and only into
-the lines it already takes. Two-line headlines break after punctuation or where
+the lines it already takes. A headline or subhead never ends on a lone word after a
+fuller line if setting it up to 15% smaller avoids that (the renderer's wrap is
+greedy, so only a change of size moves the break). Two-line headlines break after punctuation or where
 a style run changes colour ("Chase / the Light") when that is nearly as even as
 the most balanced break. On a canvas much wider than the source, copy is also
 offered a **longer line** (1.8× its source measure, never past a 70-character

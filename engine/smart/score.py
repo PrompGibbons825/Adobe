@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 from typing import Dict, List
 
+from . import textfit
 from .analyze import Design
 from .compose import Plan
 from .geom import Box
@@ -27,6 +28,7 @@ LINE_CAP = {"headline": 4, "subhead": 5, "body": 6, "legal": 3}
 INVERSION = 25.0  # for each text now smaller than one it was 25% larger than in the source
 DENSITY = 120.0  # per unit of crowding past a comfortable copy density (see _crowding)
 SMALL_UNIT = 400  # px: canvases with a shorter short side are ad units, read at a glance
+RUNT = 0.12  # times its importance, for a headline or subhead ending on a lone word after a fuller line
 COLLAPSE = 1.5  # times its importance, for copy set level with copy it was 1.5x smaller than
 HIERARCHY = 12.0  # for a headline that stands out 1.6x more than in the source (or less, negative)
 INFLATION = 2.0  # per unit of importance and of log-excess share (see _inflation)
@@ -106,6 +108,8 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
                 lines_pen += it.importance * 0.05 * (blk.n_lines - cap)
             words = len(" ".join(blk.lines).split())
             display = it.role == "headline" and blk.n_lines <= max(it.src_lines, display_lines(words))
+            if it.role in ("headline", "subhead") and textfit.has_runt(blk):
+                lines_pen += it.importance * RUNT  # a lone word left on the last line of a block
             if blk.n_lines > 1 and not display:
                 chars = sum(len(l) for l in blk.lines) / blk.n_lines
                 if chars < 14:
