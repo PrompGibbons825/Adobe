@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Optional
 
-from .analyze import Design, Item, analyze
+from .analyze import Design, Item, analyze, as_number
+from .color import normalize as normalize_colour
 from .compose import Plan, generate
 from .geom import Box, el_box, rotated_aabb
 from .items import Ctx
@@ -294,35 +295,31 @@ def _decor(e: dict, d: Design, ctx: Ctx) -> dict:
 
 
 def finalize(source: dict, out: dict, target: dict) -> dict:
-    """Make the output satisfy every structural rule no matter what produced it."""
-    W, H = float(target["width"]), float(target["height"])
-    src_by_id = {e["id"]: e for e in source.get("elements", [])}
+    """Make the output satisfy every structural rule no matter what produced it
+    (and never raise, whatever the source holds)."""
+    W, H = max(1.0, as_number(target.get("width"), 1.0)), max(1.0, as_number(target.get("height"), 1.0))
     got = {e.get("id"): e for e in out.get("elements", []) if isinstance(e, dict)}
     elements = []
-    for se in source.get("elements", []):
-        e = dict(got.get(se["id"]) or se)
+    for se in source.get("elements") or []:
+        if not isinstance(se, dict):
+            continue
+        e = dict(got.get(se.get("id")) or se)
         # immutable fields come from the source, always
         for k in ("id", "type", "content", "font_family", "asset_id", "font_weight", "font_style",
                   "color", "fill_color", "shape_type", "group_id", "style_runs", "rotation"):
             if k in se:
                 e[k] = se[k]
         for k in ("x", "y", "width", "height"):
-            try:
-                v = float(e.get(k, se.get(k, 0)))
-            except (TypeError, ValueError):
-                v = float(se.get(k, 0) or 0)
-            e[k] = v if math.isfinite(v) else 0.0
+            e[k] = as_number(e.get(k), as_number(se.get(k), 0.0))
         e["width"] = max(0.0, e["width"])
         e["height"] = max(0.0, e["height"])
+        e["rotation"] = as_number(e.get("rotation"), 0.0)
         _keep_ratio(e, se)
         _inside(e, W, H)
         if e.get("type") == "text":
-            try:
-                fs = float(e.get("font_size", se.get("font_size", 12)))
-            except (TypeError, ValueError):
-                fs = float(se.get("font_size", 12) or 12)
-            e["font_size"] = max(1, int(round(fs)) if math.isfinite(fs) else 12)
-            if se.get("letter_spacing"):  # tracking scales with the type, whatever produced the size
+            fs = as_number(e.get("font_size"), as_number(se.get("font_size"), 12.0))
+            e["font_size"] = max(1, int(round(fs)))
+            if as_number(se.get("letter_spacing"), 0.0):  # tracking scales with the type, whatever produced the size
                 e["letter_spacing"] = letter_spacing(TextStyle.of(se), e["font_size"])
         _renderer_safe(e)
         if e.get("type") != "image":  # images keep full precision: thin rules must keep their ratio
@@ -336,87 +333,78 @@ def finalize(source: dict, out: dict, target: dict) -> dict:
 def _renderer_safe(e: dict) -> None:
     """Never emit a value the reference renderer raises on (one exception there
     aborts every remaining task of the run). Values are only *normalised*: the
-    same colour as rgba(), a valid enum for an invalid one."""
-    from .color import normalize
-
+    same colour as rgba(), the same number as a float, a valid enum for an
+    invalid one; a field the renderer cannot read at all is left out."""
     t = e.get("type")
-    for k in ("rotation", "opacity"):
+    for k, default in (("rotation", 0.0), ("opacity", 1.0)):
         if k in e:
-            try:
-                v = float(e[k])
-                e[k] = v if math.isfinite(v) else (0.0 if k == "rotation" else 1.0)
-            except (TypeError, ValueError):
-                e[k] = 0.0 if k == "rotation" else 1.0
+            e[k] = as_number(e[k], default)
     if "opacity" in e:
         e["opacity"] = min(1.0, max(0.0, e["opacity"]))
     if "z_index" in e and not isinstance(e["z_index"], int):
-        try:
-            e["z_index"] = int(e["z_index"])
-        except (TypeError, ValueError):
-            e["z_index"] = 0
+        e["z_index"] = int(as_number(e["z_index"], 0.0))
     if t == "text":
         e["width"] = max(1.0, e["width"])
         e["height"] = max(1.0, e["height"])
+        if not isinstance(e.get("font_family", ""), str):
+            e.pop("font_family")  # the renderer falls back to its default family
         if e.get("text_align", "left") not in ("left", "center", "right"):
             e["text_align"] = "left"
         fw = e.get("font_weight")
         if fw is not None and not isinstance(fw, str):
-            try:
-                e["font_weight"] = "bold" if float(fw) >= 600 else "regular"
-            except (TypeError, ValueError):
-                e["font_weight"] = "regular"
+            e["font_weight"] = "bold" if as_number(fw, 400.0) >= 600 else "regular"
         fst = e.get("font_style")
         if fst is not None and fst not in ("normal", "italic"):
             e["font_style"] = "italic" if str(fst).lower() == "italic" else "normal"
         if "line_height" in e:
-            try:
-                lh = float(e["line_height"])
-                if not (math.isfinite(lh) and lh > 0):
-                    raise ValueError
-            except (TypeError, ValueError):
-                e["line_height"] = 1.2
+            lh = as_number(e["line_height"], 1.2)
+            e["line_height"] = lh if lh > 0 else 1.2
         if "letter_spacing" in e:
-            try:
-                ls = float(e["letter_spacing"])
-                e["letter_spacing"] = ls if math.isfinite(ls) else 0.0
-            except (TypeError, ValueError):
-                e["letter_spacing"] = 0.0
-        col = normalize(e.get("color"))
-        e["color"] = col or "rgba(0,0,0,1)"
+            e["letter_spacing"] = as_number(e["letter_spacing"], 0.0)
+        e["color"] = normalize_colour(e.get("color")) or "rgba(0,0,0,1)"
         runs = e.get("style_runs")
         if isinstance(runs, list):
-            clean = []
-            for r in runs:
-                if not isinstance(r, dict):
-                    continue
-                r = dict(r)
-                if "color" in r:
-                    c = normalize(r["color"])
-                    if c is None:
-                        r.pop("color")
-                    else:
-                        r["color"] = c
-                for k in ("font_weight",):
-                    if k in r and not isinstance(r[k], str):
-                        r.pop(k)
-                clean.append(r)
-            e["style_runs"] = clean
+            e["style_runs"] = [r for r in map(_safe_run, runs) if r is not None]
         elif runs is not None:
             e.pop("style_runs")
     elif t == "shape":
-        col = normalize(e.get("fill_color"))
+        col = normalize_colour(e.get("fill_color"))
         if col:
             e["fill_color"] = col
         if e.get("stroke_color") is not None:
-            sc = normalize(e.get("stroke_color"))
+            sc = normalize_colour(e.get("stroke_color"))
             if sc:
                 e["stroke_color"] = sc
+        for k in ("corner_radius", "stroke_width"):
+            if k in e:
+                e[k] = max(0.0, as_number(e[k], 0.0))
+    elif t == "image":
+        if e.get("fit", "contain") not in ("contain", "cover", "fill"):
+            e["fit"] = "contain"  # anything else would be stretched to the box
+        if e.get("asset_id") is not None and not isinstance(e["asset_id"], str):
+            e["asset_id"] = str(e["asset_id"])
+
+
+def _safe_run(r) -> Optional[dict]:
+    """A style run the converter can read, or None."""
+    if not isinstance(r, dict) or not all(isinstance(r.get(k, 0), int) for k in ("start", "end")):
+        return None
+    r = dict(r)
+    if "color" in r:
+        c = normalize_colour(r["color"])
+        if c is None:
+            r.pop("color")
+        else:
+            r["color"] = c
+    if "font_weight" in r and not isinstance(r["font_weight"], str):
+        r.pop("font_weight")
+    return r
 
 
 def _keep_ratio(e: dict, se: dict) -> None:
     if e.get("type") != "image":
         return
-    sw, sh = float(se.get("width", 0) or 0), float(se.get("height", 0) or 0)
+    sw, sh = as_number(se.get("width"), 0.0), as_number(se.get("height"), 0.0)
     if sw <= 0 or sh <= 0:
         return
     if e["width"] < 1e-3 or e["height"] < 1e-3:  # collapsed: a 1px speck at the source ratio

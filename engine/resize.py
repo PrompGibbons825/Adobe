@@ -24,6 +24,7 @@ import traceback
 from typing import Any
 
 from engine.smart import finalize, layout_design
+from engine.smart.analyze import as_number
 
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
@@ -37,15 +38,17 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
 
 def _fallback(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
     """Uniform fit-and-centre (no distortion), backgrounds stretched to cover."""
-    W0, H0 = float(source["canvas"]["width"]), float(source["canvas"]["height"])
-    W, H = float(target_canvas["width"]), float(target_canvas["height"])
+    canvas = source.get("canvas") or {}
+    W, H = max(1.0, as_number(target_canvas.get("width"), 1.0)), max(1.0, as_number(target_canvas.get("height"), 1.0))
+    W0, H0 = max(1.0, as_number(canvas.get("width"), W)), max(1.0, as_number(canvas.get("height"), H))
     s = min(W / W0, H / H0)
     ox, oy = (W - W0 * s) / 2.0, (H - H0 * s) / 2.0
     out = []
-    for el in source["elements"]:
+    for el in source.get("elements") or []:
+        if not isinstance(el, dict):
+            continue
         e = dict(el)
-        x, y = float(e.get("x", 0) or 0), float(e.get("y", 0) or 0)
-        w, h = float(e.get("width", 0) or 0), float(e.get("height", 0) or 0)
+        x, y, w, h = (as_number(e.get(k), 0.0) for k in ("x", "y", "width", "height"))
         full = x <= 0 and y <= 0 and x + w >= W0 and y + h >= H0 and e.get("type") in ("image", "shape")
         if full:
             e.update(x=0.0, y=0.0, width=W, height=H)
@@ -54,8 +57,8 @@ def _fallback(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str
         else:
             e.update(x=ox + x * s, y=oy + y * s, width=w * s, height=h * s)
             if e.get("type") == "text":
-                e["font_size"] = max(1, round(float(e.get("font_size", 12) or 12) * s))
+                e["font_size"] = max(1, round(as_number(e.get("font_size"), 12.0) * s))
             if e.get("corner_radius"):
-                e["corner_radius"] = float(e["corner_radius"]) * s
+                e["corner_radius"] = as_number(e["corner_radius"], 0.0) * s
         out.append(e)
     return {"canvas": {"width": int(W), "height": int(H)}, "elements": out}

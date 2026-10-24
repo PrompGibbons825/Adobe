@@ -233,6 +233,7 @@ class TextStyle:
     style: str  # regular/bold/italic/bolditalic
     line_height: float
     tracking: float  # letter spacing in ems, so it scales with the type
+    runs: Tuple[Tuple[int, int, Optional[bool], Optional[bool]], ...] = ()  # (start, end incl., bold, italic)
 
     @staticmethod
     def of(el: dict) -> "TextStyle":
@@ -257,7 +258,27 @@ class TextStyle:
             style=font_style_key(weight, italic),
             line_height=lh,
             tracking=tracking,
+            runs=_font_runs(el),
         )
+
+
+def _font_runs(el: dict) -> tuple:
+    """The style runs that change the font (bold or italic), read the way the
+    converter reads them: ``end`` inclusive, clipped to the text."""
+    n = len(str(el.get("content", "")))
+    out = []
+    for r in el.get("style_runs") or []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            a, b = max(0, int(r.get("start", 0))), min(n - 1, int(r.get("end", n - 1)))
+        except (TypeError, ValueError):
+            continue
+        bold = norm_weight(r["font_weight"]) in _BOLD if isinstance(r.get("font_weight"), str) else None
+        italic = is_italic(r.get("font_style") or r.get("italic")) if ("font_style" in r or "italic" in r) else None
+        if a <= b and (bold is not None or italic is not None):
+            out.append((a, b, bold, italic))
+    return tuple(out)
 
 
 @dataclass
@@ -304,6 +325,27 @@ def measure(content: str, style: TextStyle, font_size: float, wrap_width: float,
     return _measure(content, style, font_size, wrap_width, False)
 
 
+def _drawn_widths(content: str, style: TextStyle, fs: int) -> List[float]:
+    """Each character's advance in the font the renderer draws it with."""
+    n = len(content)
+    bold = [style.weight in _BOLD] * n
+    italic = [style.style in ("italic", "bolditalic")] * n
+    for a, b, bo, it in style.runs:
+        for i in range(a, b + 1):
+            if bo is not None:
+                bold[i] = bo
+            if it is not None:
+                italic[i] = it
+    out = [0.0] * n
+    for key in set(zip(bold, italic)):
+        weight = "bold" if key[0] else "regular"
+        widths = char_widths(style.family, weight, font_style_key(weight, key[1]), float(fs), content)
+        for i in range(n):
+            if (bold[i], italic[i]) == key and i < len(widths):
+                out[i] = widths[i]
+    return out
+
+
 @lru_cache(maxsize=65536)
 def _measure_exact(content: str, style: TextStyle, fs: int, wrap_width: float) -> TextBlock:
     return _measure(content, style, fs, wrap_width, True)
@@ -323,6 +365,12 @@ def _measure(content: str, style: TextStyle, font_size: float, wrap_width: float
         P = prep.P
         cuts = sorted(set(prep.breaks(wrap_width) if wrap_width > 0 and content else []) |
                       {i for i, c in enumerate(content) if c == "\n"}) if content else []
+    if style.runs:  # bold/italic runs are drawn in their own font, though the wrap measured the base one
+        D = [0.0]
+        for wv in _drawn_widths(content, style, fs):
+            D.append(D[-1] + wv)
+    else:
+        D = P
     lines: List[str] = []
     line_ws: List[float] = []
     start = 0
@@ -331,7 +379,7 @@ def _measure(content: str, style: TextStyle, font_size: float, wrap_width: float
         seg = content[start:cut]
         lines.append(seg)
         n = len(seg)
-        line_ws.append(P[cut] - P[start] + spacing * max(0, n - 1))
+        line_ws.append(D[cut] - D[start] + spacing * max(0, n - 1))
         start = cut + 1
 
     asc, desc, cap = book().metrics(style.family, style.weight, style.style)

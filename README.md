@@ -26,16 +26,17 @@ docker run --rm --network none \
   -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output my-chameleon-engine
 ```
 
-No model, no network, no extra dependencies. The engine uses only what the starter
-already installs: skia (via cr-renderer) and Pillow. A task takes a few
-hundredths of a second to about a second. The first task in a run also pays about
-3 s of one-time font and library loading.
+No model, no network, no extra dependencies: the engine uses only what the starter
+already installs (skia and numpy through cr-renderer, and Pillow). A task takes
+about 0.3 s at the median and under 1.5 s at the 95th percentile; the first task
+in a run also pays a few seconds of one-time font and library loading.
 
 ## Approach
 
 The engine works the way a designer resizing by hand would. It works out what each
-piece is, considers several ways the design could be rebuilt for the new shape,
-sizes each one as large as it will legibly go, and keeps the one that reads best.
+piece is and what belongs together, considers several ways the design could be
+rebuilt for the new shape, sizes each one as large as it will legibly go, and keeps
+the one that reads best. When the shape does not change, it changes nothing.
 
 **1. Understand the design** (`engine/smart/analyze.py`, `structure.py`)
 
@@ -43,102 +44,111 @@ The input carries only ids, types and geometry, so roles are inferred:
 
 | Inferred role | Signal |
 |---|---|
-| background | full-canvas image or shape at the bottom of the stack |
-| decoration | free shapes with no text: translucent, elliptical, or bleeding off the canvas |
-| headline / subhead / body / legal | text prominence (size × weight), position, opacity, length |
-| CTA / badge / ribbon | a filled shape carrying a short label, explicit `group_id` or detected; the largest is the CTA, a rotated one is a ribbon |
-| logo / hero / watermark | image geometry, stacking, and (as a weak hint) the asset name |
-| panel (backdrop) | a shape that frames several items, such as a dark band behind the copy |
-| composite | stickers sitting on the product, or a row of product shots, travel as one piece |
-| corner items | small badges, ribbons and watermarks pinned to a canvas corner |
-| missing asset | an image whose file is not in the brand kit |
+| background | a full-canvas image or shape under all copy; or, for a canvas split into flat panels, the panel under the headline |
+| decoration | free shapes with no copy: translucent, elliptical, or bleeding off the canvas |
+| headline / subhead / body / legal | prominence (size × weight), position, opacity, length |
+| CTA / badge / ribbon | a filled shape carrying a short label (explicit `group_id` or detected); the largest is the CTA, an alike button beside it is a CTA too, a rotated one is a ribbon |
+| logo / hero / watermark | image geometry and stacking (the asset name is only a weak hint) |
+| panel | a shape or flat image that frames copy (a dark band, a card); it is redrawn around wherever its content lands |
+| composite | a photo with captions or stickers on it, or a row of product shots: one piece |
+| lockup | texts set as one piece of type: a drop shadow, stacked display type ("UP TO / 50% / OFF"), a price and its cents. They overlap on purpose or sit closer than a word space, and keep their arrangement |
+| corner items | small badges, ribbons and watermarks pinned to a canvas corner, and copy turned on its side |
+| missing asset | a small image whose file is not in the brand kit (never drawn as a grey box) |
 
-A recursive XY-cut gives the reading structure: which things sit beside which, and
-what order a single column should present them in. Two-column sources are read
-column by column, and a set of alike items (badges, product shots) stays a row.
+A recursive XY-cut gives the reading structure: what sits beside what, and the
+order a single column should present it in.
 
 **2. Measure exactly like the renderer** (`textfit.py`, `assets.py`)
 
-Text is wrapped with the renderer's own greedy rule at real skia glyph advances,
-with integer font sizes because the renderer truncates them. Lines are top-aligned,
-as the renderer draws them, and wraps are balanced so there are no orphans. Every
-emitted text box is re-checked with the renderer's exact character-level algorithm.
-Button labels are optically centred on the cap height. For images, the alpha channel
-gives where the visible pixels sit, so spacing follows what the viewer sees. The
-transparent margins are still kept on the canvas.
+Text is wrapped with the renderer's own greedy rule at real skia glyph advances
+(a test checks the fast path against the renderer's wrap), at integer sizes,
+top-aligned. Footprints are where the glyphs are painted: letter spacing makes a
+drawn line wider than its wrap, and a rotated text turns about its box centre, as
+the renderer turns it. Letter spacing is kept in ems, so it scales with the type.
+For images, the alpha channel gives where the visible pixels sit.
 
 **3. Generate candidate layouts** (`compose.py`, `layout.py`)
 
-A small flexbox-like engine (column, row and wrapping flow) is solved for the
-largest global scale that fits. Copy shares width with a narrowest-fit search, and
-the hero image takes whatever space is left.
-
 | Archetype | When | Shape |
 |---|---|---|
-| adapt | nearly the same aspect ratio | the designer's own arrangement, scaled |
-| stack | portrait, square, mild landscape | one column in reading order; rows stay near their source-relative height (weighted isotonic regression) |
-| split | landscape (16:9 … 3:1) | hero on one side, copy stacked on the other; several sides and widths |
-| row | banners and leaderboards | logo, hero, copy, CTA on one line (a variant stacks the logo over the copy) |
+| scaled | the target has the source's aspect ratio (within 3%) | the design itself, uniformly scaled, with its own line breaks |
+| adapt | nearly the same aspect | the source arrangement, edges kept as edges |
+| stack | portrait, square, mild landscape | one column in reading order, rows near their source-relative height |
+| split | square to wide | hero on one side, copy stacked on the other |
+| row | banners and strips | logo, hero, copy, CTA on one line; the hero may fill the strip's height |
 
-Each archetype is also tried with low-importance items dropped, one unit at a time:
-legal line, watermark, ribbon, the set of badges, then the subhead. On a 728×90 a
-designer drops those rather than shrinking everything into illegibility. Headline
-and CTA are never dropped (the CTA only when nothing else fits at all). Type
-has per-role legibility floors scaled to the canvas, and goes below them only when
-no layout fits at full legibility.
+Each is solved by a small flexbox-like engine for the largest scale that fits,
+then retried with low-importance items dropped: legal, watermark, ribbon, a set
+of badges, the subhead; a row of product cards gives way one card at a time.
+Headline and CTA are never dropped. Copy never goes below a legibility floor
+(cap height of about 7 px when the canvas is viewed at 1024 px). When a label
+is held up at the floor, its button gets a tighter pill rather than a bigger one.
 
-**4. Score like the rubric** (`score.py`)
+**4. Score like the rubric** (`score.py`, `pixels.py`)
 
-Each plan is scored on:
+Visible importance, copy size against the best any candidate achieved, small or
+crowded type, collisions, coverage, balance, a prior for the archetype that suits
+the format, and a charge for secondary items that take far more of the canvas than
+they had in the source. The best eight are then re-ranked by the pixels under
+their copy (contrast and texture, rendered through the real renderer), relative to
+the source.
 
-- visible importance, minus anything hidden
-- copy size against the best any candidate achieved
-- a penalty for type below a comfortable size
-- line-count and narrow-column penalties
-- any collision (layouts are built not to have one)
-- coverage against the source
-- visual balance
-- a small prior for the archetype that suits the format
+**5. Check, emit and enforce the rules** (`__init__.py`)
 
-**5. Emit and enforce the rules** (`__init__.py`)
+The winning plan must pass two hard checks on its finished output: no copy drawn
+over copy that the source did not draw that way, and no glyph past the canvas
+edge. Then:
 
-- Backgrounds are redrawn full-bleed (`fit: cover`).
-- Panels are redrawn around wherever their members landed.
-- Decoration keeps its corner, scaled to the short side.
-- `finalize()` then enforces every hard rule on whatever was produced:
-  - same ids, same order
-  - immutable fields (content, fonts, colours, assets) restored from the source
-  - image ratios restored
-  - every painted box, rotation included, moved fully onto the canvas
-  - integer font sizes
-- If the layout engine ever raises, `resize()` falls back to a distortion-free
-  fit-and-centre layout, so a run never crashes.
+- backgrounds are redrawn full-bleed, panels around their members, decoration in
+  its corner;
+- `finalize()` enforces every hard rule on whatever was produced: same ids, same
+  order, immutable fields (copy, fonts, colours, assets) from the source, image
+  ratios, every painted box (rotation included) on the canvas, integer font sizes,
+  and only values the renderer can draw.
+
+If lockups make every layout fail, the design is planned again with their parts
+as separate copy. If the layout engine still finds nothing (impossible content,
+such as 500 characters in 320×50), `resize()` falls back to a distortion-free
+fit-and-centre layout, so a run never crashes.
 
 ### Notes on specific decisions
 
-- **Dropped elements stay in the JSON** with their own ids, `opacity: 0`, and a
-  `z_index` just under the opaque background. The reference renderer ignores
-  `opacity` on text, so stacking order is what keeps a dropped line from showing.
-- **Missing assets** (the Level 3 `holiday_watermark`) are dropped the same way
-  instead of rendering as a grey "missing asset" box. This only happens when the
-  brand kit is present and other assets in the design resolve.
-- **Decoration that bled off the source canvas** is shrunk to the part that was
-  visible and kept inside the canvas, because "nothing off-canvas" is a structural
-  check.
-- **Transparent image margins** may overlap a neighbour's box. The visible pixels
-  never overlap.
-- Nothing is tuned to the three samples. The engine was developed against them,
-  eight additional source designs (`tools/make_cases.py`) and about 20 real
-  platform formats, from 320×50 to A4.
+- **Dropped elements stay in the JSON** with their ids and `opacity: 0`, stacked
+  under everything. The reference renderer ignores `opacity` on text, so dropped
+  copy is also set at 1 px and tucked under the largest opaque element; a rendered
+  check confirms it paints nothing.
+- **Missing assets:** a small image whose file is not in the brand kit is dropped
+  instead of rendering as a grey placeholder. A large one is laid out normally,
+  in case the scorer's renderer has the file.
+- **Bleed:** decoration that bled off the source canvas is shrunk to its visible
+  part and kept inside, because "nothing off-canvas" is a structural check. A
+  rotated element counts both its box and its turned box.
+- Nothing is tuned to the three samples. Development used them, eight more source
+  designs (`tools/make_cases.py`), 22 synthetic finicky designs (`tests/`), 64 real
+  Crello templates that designers re-made at other sizes, and about 20 real
+  platform formats from 320×50 to A4.
 
-## Developer tools (not part of the image)
+## Testing (dev only, not part of the image)
 
 ```bash
-python -m tools.sheet input/x.json --catalogue -o sheet.png       # one design across ~20 formats
-python -m tools.sheet input/x.json --targets 1200x628 --top 4      # compare the best candidates
-python -m tools.make_cases                                          # write extra source designs to tools/cases/
-python -m tools.stress --n 300 --seed 1                             # random + degenerate designs, every hard rule checked
+python -m unittest discover -s tests -t .        # everything (a few minutes)
+python -m tests.run [names] --sheet out.png      # the finicky suite as one report + contact sheet
+python -m tools.stress --n 300 --seed 1          # random and degenerate designs, every hard rule
+python -m tools.sheet input/*.json --catalogue -o sheet.png   # designs across ~20 formats
 ```
+
+- `tests/finicky.py`: designs that each probe one finicky part: unbreakable words,
+  newlines, letter spacing, non-ASCII copy, empty texts, drop shadows, stacked
+  type, price lockups, rotation, bleed, no background, a scrim, a split background,
+  two CTAs, a badge grid, product cards, a wall of copy, tiny and wide sources,
+  missing assets, hairlines and the Level 3 load. Each run is checked for the hard
+  rules, the engine's promises, what must stay visible, what must stay together,
+  ghost text and lost contrast. Six malformed inputs check robustness.
+- `tests/test_engine.py`: the same under unittest, plus renderer parity of text
+  wrapping, same-shape and uniform-scale resizes (the design must be unchanged),
+  determinism and the samples.
+- `tools/rules.py` is the one definition of a valid output, shared by the tests
+  and the stress tool.
 
 ## Repo layout
 
@@ -149,6 +159,7 @@ engine/
   smart/             the layout engine described above
 renderer/            vendored converter + cr-renderer wiring (unchanged)
 brand_kit/           assets and fonts referenced by the designs
-tools/               dev-only: contact sheets, extra cases, stress test
+tests/               finicky cases, harness, unit tests (dev only)
+tools/               dev only: contact sheets, stress test, rule checks, Crello evaluation
 RULES.md, FAQ.md, chameleon_design_schema_v0.9.json   from the starter kit
 ```

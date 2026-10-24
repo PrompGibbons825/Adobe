@@ -500,6 +500,27 @@ def malformed() -> List[Tuple[str, dict, dict]]:
     return out
 
 
+def hostile() -> List[Tuple[str, dict, dict]]:
+    """Documents broken past the schema (no ids, no canvas, junk entries, words
+    where numbers go). Nothing can be promised about them except that the
+    engine returns a renderable design for the target and does not take the
+    run down: one exception would abort every remaining task."""
+    text = {"type": "text", "x": 0, "y": 0, "width": 10, "height": 10, "content": "no id",
+            "font_family": "Solstice Sans", "font_size": 12, "color": "rgba(0,0,0,1)"}
+    shape = {"id": "a", "type": "shape", "x": 0, "y": 0, "width": 10, "height": 10, "shape_type": "rectangle",
+             "fill_color": "rgba(0,0,0,1)"}
+    return [
+        ("element_without_id", {"canvas": {"width": 100, "height": 100}, "elements": [text]}),
+        ("no_elements", {"canvas": {"width": 100, "height": 100}, "elements": []}),
+        ("zero_canvas", {"canvas": {"width": 0, "height": 100}, "elements": [shape]}),
+        ("no_canvas", {"elements": [shape]}),
+        ("words_for_numbers", {"canvas": {"width": 100, "height": 100}, "elements": [
+            dict(text, id="t", content=None, font_family=None, font_size="big", color=5, rotation="x"),
+            {"id": 7, "type": "image", "x": 0, "y": 0, "width": "w", "height": 10}]}),
+        ("junk_entries", {"canvas": {"width": 100, "height": 100}, "elements": ["junk", None, {"id": "q", "type": "text"}]}),
+    ]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", help="directory to write each case as a task JSON (for tools.sheet)")

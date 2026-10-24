@@ -356,7 +356,7 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
     zone, mx, my = _zone(d, ctx, insets)
     if zone.w < 20 or zone.h < 20:
         return None
-    root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.45, force_align=force_align)
+    root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.7, force_align=force_align)
     weights = [3.0 if any(i.role == "headline" for i in r) else (1.5 if any(i.role == "hero" for i in r) else 1.0)
                for r in rows]
     for _ in range(4):

@@ -52,6 +52,17 @@ class MalformedInput(unittest.TestCase):
                 render_image(out)  # the reference renderer must not raise on anything we emit
 
 
+    def test_hostile_documents_do_not_take_the_run_down(self):
+        from tests.finicky import hostile
+
+        tgt = {"width": 300, "height": 250}
+        for name, src in hostile():
+            with self.subTest(document=name):
+                out, _ = run(src, tgt)
+                self.assertEqual(out["canvas"], tgt)
+                render_image(out)
+
+
 class SameShape(unittest.TestCase):
     """When the shape does not change, the designer's own layout is the answer."""
 
@@ -118,6 +129,28 @@ class TextParity(unittest.TestCase):
             ref = wrap_text(content, char_widths(book.manager, family, weight, style, float(size), content), width)
             with self.subTest(i=i, content=content, size=size, width=round(width)):
                 self.assertEqual(ours.lines, ref.split("\n"))
+
+
+    def test_drawn_width_matches_the_render(self):
+        """Measured ink width (letter spacing, bold and italic runs included)
+        is what the renderer paints."""
+        import numpy as np
+
+        from engine.smart.textfit import TextStyle, measure
+
+        base = {"id": "t", "type": "text", "x": 20, "y": 10, "width": 1500, "height": 120, "z_index": 1,
+                "content": "Made for the golden hour", "font_family": "Solstice Serif", "font_size": 64,
+                "color": "rgba(0,0,0,1)", "text_align": "left"}
+        variants = [{}, {"letter_spacing": 6}, {"style_runs": [{"start": 13, "end": 23, "font_weight": "bold"}]},
+                    {"style_runs": [{"start": 0, "end": 3, "font_style": "italic"}], "font_family": "Solstice Sans"}]
+        for v in variants:
+            el = dict(base, **v)
+            with self.subTest(variant=v):
+                im = np.asarray(render_image({"canvas": {"width": 1600, "height": 140}, "elements": [el]}).convert("L"))
+                cols = np.where((im < 128).any(axis=0))[0]
+                drawn = cols.max() - cols.min() + 1
+                measured = measure(el["content"], TextStyle.of(el), el["font_size"], el["width"], exact=True).ink_width
+                self.assertLess(abs(drawn - measured), 0.04 * el["font_size"] + 2)  # side bearings
 
 
 class Determinism(unittest.TestCase):

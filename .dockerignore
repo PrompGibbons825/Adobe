@@ -1,0 +1,11 @@
+# Only engine/, renderer/, brand_kit/, the schema and requirements.txt go into the
+# image (see Dockerfile); keep the build context small.
+.git
+.venv
+.venv-dev
+output
+tests
+tools
+**/__pycache__
+*.pyc
+.DS_Store

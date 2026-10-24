@@ -112,7 +112,7 @@ class Design:
 
 # ----------------------------------------------------------------------------
 
-def _num(v, default=0.0) -> float:
+def as_number(v, default=0.0) -> float:
     try:
         f = float(v)
         return f if math.isfinite(f) else default
@@ -123,11 +123,11 @@ def _num(v, default=0.0) -> float:
 def normalize(el: dict, idx: int) -> dict:
     e = dict(el)
     for k in ("x", "y", "width", "height"):
-        e[k] = _num(e.get(k), 0.0)
+        e[k] = as_number(e.get(k), 0.0)
     e["width"] = max(0.0, e["width"])
     e["height"] = max(0.0, e["height"])
-    e["rotation"] = _num(e.get("rotation"), 0.0)
-    e["opacity"] = min(1.0, max(0.0, _num(e.get("opacity"), 1.0)))
+    e["rotation"] = as_number(e.get("rotation"), 0.0)
+    e["opacity"] = min(1.0, max(0.0, as_number(e.get("opacity"), 1.0)))
     if not isinstance(e.get("z_index"), (int, float)):
         e["z_index"] = idx
     if e.get("type") == "text":

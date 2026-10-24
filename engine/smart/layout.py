@@ -65,7 +65,7 @@ class Leaf(Node):
         self.max_w_frac = max_w_frac
         self.cap_rel = cap_rel  # fill images never exceed max(cap_rel * s, cap_floor) x source size
         self.cap_floor = cap_floor
-        self.min_rel = min_rel  # ... and must reach at least min_rel * s
+        self.min_rel = min_rel  # ... and must reach at least min_rel * s (or as wide as max_w allows)
         # text can trade width for lines; a button can trade padding for width
         self.flex = item.kind == "text" or (item.kind == "group" and item.container is not None
                                             and item.centered_label)
@@ -78,8 +78,12 @@ class Leaf(Node):
         if self.fill:
             cap = max(self.cap_rel * s, self.cap_floor)
             r = realize(it, cap, ctx, max_w * self.max_w_frac, max_h)
-            if r is None or r.scale < self.min_rel * s * 0.999:
+            if r is None:
                 return None
+            if r.scale < self.min_rel * s * 0.999:  # too small, unless the width cannot hold more
+                widest = realize(it, cap, ctx, max_w * self.max_w_frac, INF)
+                if widest is None or r.scale < min(self.min_rel * s, widest.scale) * 0.999:
+                    return None
         else:
             r = realize(it, s, ctx, max_w, max_h, relax=relax, k=self.k, mode=self.mode, nowrap=self.nowrap)
         if r is None:
