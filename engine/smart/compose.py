@@ -23,13 +23,14 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .analyze import Design, Item
 from .geom import Box, el_visual_box, union_all
-from .items import Ctx, Real, realize
+from .items import Ctx, Real, realize, realize_scaled
 from .layout import Flow, HStack, Laid, Leaf, Node, VStack, chain_positions, search_scale
 from .structure import dominant_align, row_align, rows_for, text_edges
 
 Placement = Tuple[Real, float, float]
 
 CORE_ROLES = ("headline", "cta", "logo", "hero")
+SAME_SHAPE = 1.03  # aspect ratios this close are the same format at another size
 
 
 @dataclass
@@ -427,6 +428,43 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
                 capped=s >= hi * 0.999)
 
 
+def same_shape(d: Design, ctx: Ctx) -> bool:
+    import math
+
+    return abs(math.log((ctx.W / ctx.H) / (d.W / d.H))) <= math.log(SAME_SHAPE)
+
+
+def plan_scaled(d: Design, ctx: Ctx, hidden: List[Item], name: str = "scaled") -> Optional[Plan]:
+    """A target of the source's own shape gets the design itself, uniformly
+    scaled: nothing to rearrange, so nothing is. Copy that has to be set
+    larger to stay legible may not run into anything it did not touch."""
+    from .textfit import deliberate_overlaps, drawn_box, text_overlaps
+
+    k = min(ctx.W / d.W, ctx.H / d.H)
+    ox, oy = (ctx.W - d.W * k) / 2.0, (ctx.H - d.H * k) / 2.0
+    placed: List[Placement] = []
+    for it in _visible(d, hidden):
+        placed.append((realize_scaled(it, k, ctx), ox + it.src_box.x * k, oy + it.src_box.y * k))
+    els = [e for r, x, y in placed for e in r.emit(x, y)]
+    if text_overlaps(els, exempt=deliberate_overlaps(d.elements)):
+        return None
+    canvas = Box(0, 0, ctx.W, ctx.H)
+    for r, x, y in placed:
+        if not r.fonts:
+            continue
+        for e in r.emit(x, y):
+            if e["id"] not in r.fonts:
+                continue
+            db = drawn_box(e)
+            if db.inter(canvas) < db.area - 1.0:
+                return None
+            for o, ox_, oy_ in placed:
+                ob = Box(ox_, oy_, o.w, o.h)
+                if o is not r and db.inter(ob) > 0 and r.item.src_box.inter(o.item.src_box) <= 0:
+                    return None
+    return Plan(name=name, placed=placed, hidden=list(hidden), s=k, zone=canvas, capped=True)
+
+
 def plan_adapt(d: Design, ctx: Ctx, hidden: List[Item], name: str = "adapt", insets=(0, 0, 0, 0)) -> Optional[Plan]:
     """Keep the source arrangement (for targets of nearly the same shape):
     everything scales uniformly, positions follow the canvas, edges stay edges."""
@@ -572,6 +610,10 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
 
     if not _visible(d, missing):  # nothing to lay out: every element is void or missing
         return [Plan(name="empty", placed=[], hidden=list(missing), s=1.0, zone=Box(0, 0, ctx.W, ctx.H))]
+    if same_shape(d, ctx):
+        p = plan_scaled(d, ctx, missing)
+        if p is not None:
+            return [p]
 
     done = set()  # archetypes that already reached their cap without relaxing type
     for force_all in (False, True):

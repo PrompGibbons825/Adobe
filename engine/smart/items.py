@@ -66,7 +66,13 @@ class Real:
     emit_fn: Optional[Callable[[float, float], List[dict]]] = None
 
     def emit(self, x: float, y: float) -> List[dict]:
-        return self.emit_fn(x, y) if self.emit_fn else []
+        els = self.emit_fn(x, y) if self.emit_fn else []
+        src = {e["id"]: e for e in self.item.els}
+        for e in els:  # tracking scales with the type
+            s = src.get(e["id"])
+            if e.get("type") == "text" and s is not None and s.get("letter_spacing"):
+                e["letter_spacing"] = textfit.letter_spacing(TextStyle.of(s), e["font_size"])
+        return els
 
     @property
     def oh(self) -> Tuple[float, float, float, float]:
@@ -450,6 +456,49 @@ def realize_composite(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: f
         return out
 
     return Real(item=it, w=w, h=h, scale=rh.scale, fonts=fonts, blocks=blocks, emit_fn=emit)
+
+
+def _align_shift(e: dict, w_scaled: float, w: float) -> float:
+    """Where a box of width ``w`` starts so its text keeps the alignment edge
+    of the scaled box."""
+    a = e.get("text_align", "left")
+    return 0.0 if a == "left" else (w_scaled - w if a == "right" else (w_scaled - w) / 2.0)
+
+
+def realize_scaled(it: Item, k: float, ctx: Ctx) -> Real:
+    """The item exactly as designed, every element scaled by ``k``: same
+    arrangement, same line breaks. Only copy that would fall below the
+    legibility floor is set larger (and re-measured at its scaled width)."""
+    src = it.src_box
+    fonts, blocks, boxes = {}, {}, {}
+    for e in it.els:
+        b = el_box(e)
+        box = Box((b.x - src.x) * k, (b.y - src.y) * k, b.w * k, b.h * k)
+        if e.get("type") == "text":
+            content, style, fs0 = str(e.get("content", "")), TextStyle.of(e), float(e.get("font_size", 16) or 16)
+            fs = max(int(round(fs0 * k)), ctx.judge_floor)
+            box.w = textfit.width_keeping_breaks(content, style, fs0, max(1.0, b.w), fs)
+            box.x = (b.x - src.x) * k + _align_shift(e, b.w * k, box.w)
+            blk = textfit.measure(content, style, fs, box.w, exact=True)
+            box.h = blk.height
+            fonts[e["id"]], blocks[e["id"]] = fs, blk
+        boxes[e["id"]] = box
+
+    def emit(x: float, y: float) -> List[dict]:
+        out = []
+        for e in it.els:
+            b = boxes[e["id"]]
+            o = _copy(e)
+            o.update(x=x + b.x, y=y + b.y, width=b.w, height=b.h)
+            if e["id"] in fonts:
+                o["font_size"] = fonts[e["id"]]
+            for key in ("corner_radius", "stroke_width"):
+                if o.get(key):
+                    o[key] = float(o[key]) * k
+            out.append(o)
+        return out
+
+    return Real(item=it, w=src.w * k, h=src.h * k, scale=k, fonts=fonts, blocks=blocks, emit_fn=emit)
 
 
 def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF,

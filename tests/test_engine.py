@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 from engine.smart.geom import el_box
+from engine.smart.items import Ctx
 from engine.smart.paths import find_asset
 from engine.smart.textfit import drawn_box
 from tests.finicky import cases, malformed
@@ -57,6 +58,10 @@ class SameShape(unittest.TestCase):
     def _check_scaled(self, name, src, k, tol):
         W, H = src["canvas"]["width"], src["canvas"]["height"]
         tgt = {"width": round(W * k), "height": round(H * k)}
+        floor = Ctx(W=tgt["width"], H=tgt["height"], W0=W, H0=H).judge_floor
+        small = [e["id"] for e in src["elements"] if e["type"] == "text" and e["font_size"] * k < floor]
+        if small:
+            self.skipTest(f"{small} must be set larger than designed, so the design may reflow")
         out, fell_back = run(src, tgt)
         self.assertFalse(fell_back)
         so = {e["id"]: e for e in src["elements"]}

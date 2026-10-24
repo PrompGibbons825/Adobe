@@ -232,7 +232,7 @@ class TextStyle:
     weight: str  # normalized
     style: str  # regular/bold/italic/bolditalic
     line_height: float
-    letter_spacing: float
+    tracking: float  # letter spacing in ems, so it scales with the type
 
     @staticmethod
     def of(el: dict) -> "TextStyle":
@@ -247,14 +247,16 @@ class TextStyle:
             lh = _DEFAULT_LH
         try:
             ls = float(el.get("letter_spacing") or 0.0)
+            fs = float(el.get("font_size") or 16.0)
+            tracking = ls / fs if math.isfinite(ls) and fs > 0 else 0.0
         except (TypeError, ValueError):
-            ls = 0.0
+            tracking = 0.0
         return TextStyle(
             family=str(el.get("font_family") or "Montserrat"),
             weight=weight,
             style=font_style_key(weight, italic),
             line_height=lh,
-            letter_spacing=ls,
+            tracking=tracking,
         )
 
 
@@ -288,6 +290,11 @@ class TextBlock:
         return (self.n_lines - 1) * self.line_step + self.ascent
 
 
+def letter_spacing(style: TextStyle, font_size: float) -> float:
+    """The letter spacing (px) to emit and draw at ``font_size``."""
+    return round(style.tracking * max(1, int(font_size)), 3)
+
+
 def measure(content: str, style: TextStyle, font_size: float, wrap_width: float, exact: bool = False) -> TextBlock:
     fs = max(1, int(font_size))
     if exact:
@@ -305,11 +312,12 @@ def measure(content: str, style: TextStyle, font_size: float, wrap_width: float,
     lines: List[str] = []
     line_ws: List[float] = []
     start = 0
+    spacing = letter_spacing(style, fs)  # drawn between glyphs, ignored by the wrap
     for cut in cuts + [len(content)]:
         seg = content[start:cut]
         lines.append(seg)
         n = len(seg)
-        line_ws.append(P[cut] - P[start] + style.letter_spacing * max(0, n - 1))
+        line_ws.append(P[cut] - P[start] + spacing * max(0, n - 1))
         start = cut + 1
 
     asc, desc, cap = book().metrics(style.family, style.weight, style.style)
@@ -327,6 +335,20 @@ def measure(content: str, style: TextStyle, font_size: float, wrap_width: float,
         cap=cap * fs,
         line_step=step,
     )
+
+
+def width_keeping_breaks(content: str, style: TextStyle, fs0: float, w0: float, fs: float) -> float:
+    """A wrap width at ``fs`` that gives the line breaks ``w0`` gives at ``fs0``.
+
+    Glyph advances are not exactly proportional to the size (and sizes are
+    whole pixels), so the proportional width can move a word across a line
+    break. A few nearby widths are tried before settling for it."""
+    w = w0 * max(1, int(fs)) / max(1, int(fs0))
+    want = measure(content, style, fs0, w0, exact=True).lines
+    for f in (1.0, 0.99, 1.01, 0.98, 1.02, 0.97, 1.03, 0.95, 1.05):
+        if measure(content, style, fs, w * f, exact=True).lines == want:
+            return w * f
+    return w
 
 
 @lru_cache(maxsize=8192)

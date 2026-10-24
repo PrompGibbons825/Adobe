@@ -10,6 +10,7 @@ from .compose import Plan, generate
 from .geom import Box, el_box, rotated_aabb
 from .items import Ctx
 from .score import prune_relaxed, score_plans
+from .textfit import TextStyle, letter_spacing
 
 __all__ = ["layout_design", "finalize", "plan_design"]
 
@@ -108,7 +109,9 @@ def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
     for e in d.elements:  # anything not placed (should not happen) is mapped proportionally
         if e["id"] not in out:
             out[e["id"]] = _proportional(e, d, ctx)
-    return [out[e["id"]] for e in d.elements]
+    els = [out[e["id"]] for e in d.elements]
+    _tuck_hidden_text(els)
+    return els
 
 
 def _backdrop(bd, plan: Plan, d: Design, ctx: Ctx) -> dict:
@@ -200,32 +203,48 @@ def _proportional(e: dict, d: Design, ctx: Ctx) -> dict:
 def _hidden(e: dict, d: Design, ctx: Ctx) -> dict:
     """Dropped for this format: kept in the document (same id), not painted.
 
-    opacity 0 says so. The reference renderer ignores opacity on text, so a
-    dropped element is also stacked just under an opaque full-canvas
-    background, where it cannot show through either way."""
+    opacity 0 says so, and it is stacked under everything. The reference
+    renderer ignores opacity on text, though, so hidden copy is also set at
+    1 px, where the whole string paints a few faint pixels at most (and
+    `_tuck_hidden_text` puts it under something opaque when it can)."""
+    from .textfit import TextStyle, measure
+
     o = _proportional(e, d, ctx)
     o["opacity"] = 0.0
-    floor = _opaque_bg_z(d)
-    if floor is not None:
-        o["z_index"] = int(floor) - 1
+    o["z_index"] = min(int(x["z_index"]) for x in d.elements) - 1
+    if o.get("type") == "text":
+        blk = measure(str(o.get("content", "")), TextStyle.of(o), 1, max(1.0, o["width"]), exact=True)
+        o.update(font_size=1, width=max(1.0, blk.ink_width), height=max(1.0, blk.height))
     return o
 
 
-def _opaque_bg_z(d: Design):
+def _tuck_hidden_text(els: List[dict]) -> None:
+    """Move each hidden text under the largest opaque shape or image on the
+    canvas, so not even its 1 px glyphs show."""
     from . import assets
     from .color import parse_rgba
 
-    zs = []
-    for b in d.backgrounds:
-        if b.get("opacity", 1.0) < 0.999:
-            continue
-        if b.get("type") == "image":
-            a = assets.info(b.get("asset_id"))
-            if a.found and a.opaque:
-                zs.append(b["z_index"])
-        elif b.get("type") == "shape" and parse_rgba(b.get("fill_color"))[3] >= 0.999:
-            zs.append(b["z_index"])
-    return min(zs) if zs else None
+    def cover(e: dict) -> Optional[Box]:
+        if float(e.get("opacity", 1.0)) < 0.999 or e.get("rotation"):
+            return None
+        b = el_box(e)
+        if e.get("type") == "shape" and parse_rgba(e.get("fill_color"))[3] >= 0.999:
+            if e.get("shape_type") == "ellipse":  # the square inscribed in it
+                return Box(b.cx - b.w * 0.35, b.cy - b.h * 0.35, b.w * 0.7, b.h * 0.7)
+            return b if e.get("shape_type", "rectangle") == "rectangle" else None
+        a = assets.info(e.get("asset_id")) if e.get("type") == "image" else None
+        if a is not None and a.found and a.opaque:
+            return b
+        return None
+
+    hidden = [e for e in els if e.get("type") == "text" and float(e.get("opacity", 1.0)) <= 0]
+    covers = sorted((c for c in map(cover, els) if c is not None and c.w >= 4 and c.h >= 4), key=lambda b: -b.area)
+    if not hidden or not covers:
+        return
+    c = covers[0]
+    for e in hidden:
+        w = min(e["width"], c.w - 2.0)
+        e.update(x=c.x + 1.0, y=c.y + 1.0, width=max(1.0, w))
 
 
 def _decor(e: dict, d: Design, ctx: Ctx) -> dict:
@@ -285,6 +304,8 @@ def finalize(source: dict, out: dict, target: dict) -> dict:
             except (TypeError, ValueError):
                 fs = float(se.get("font_size", 12) or 12)
             e["font_size"] = max(1, int(round(fs)) if math.isfinite(fs) else 12)
+            if se.get("letter_spacing"):  # tracking scales with the type, whatever produced the size
+                e["letter_spacing"] = letter_spacing(TextStyle.of(se), e["font_size"])
         _renderer_safe(e)
         if e.get("type") != "image":  # images keep full precision: thin rules must keep their ratio
             for k in ("x", "y", "width", "height"):
