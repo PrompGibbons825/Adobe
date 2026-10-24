@@ -231,6 +231,15 @@ class Stats(unittest.TestCase):
             wins += stats.sequential(t, order, rule, seed=s)["decision"] == "ACCEPT"
         self.assertLessEqual(wins / sims, 0.05)
 
+    def test_thin_family_coverage_cannot_accept(self):
+        t = _tiles([1.0] * 30)
+        for i, x in enumerate(t):
+            x["family"] = {"claude": {"overall": 1.0}} if i % 2 else {"claude": {"overall": 1.0}, "cursor": {"overall": 1.0}}
+        ev = stats.evaluate(t, {"boot": 500}, 0.05, final=True)
+        self.assertEqual(ev["decision"], "REPORT")
+        self.assertAlmostEqual(ev["coverage"]["cursor"], 0.5)
+        self.assertIn("cursor voted on 50%", "; ".join(ev["reasons"]))
+
     def test_family_harm_and_single_family(self):
         r = {"boot": 2000}
         t = _tiles([1.0] * 30)
@@ -363,7 +372,9 @@ class Prereg(TempEnv):
                                 ("p4", {"families": {"a": {"cli": "claude", "model": "m"},
                                                      "b": {"cli": "agent", "model": "m"}}}, "different models"),
                                 ("p5", {"tiebreak": {"cli": "agent", "model": "gpt-5.6-sol-high"}}, "third model"),
-                                ("p6", {"batch": 20}, "batch must be")):
+                                ("p6", {"batch": 20}, "batch must be"),
+                                ("p7", {"families": {"a": {"cli": "claude", "model": "m1"},
+                                                     "b": {"cli": "claude", "model": "m2"}}}, "different CLIs")):
             with self.assertRaisesRegex(P.Refused, msg):
                 P.check(self.prereg(_p(gid=gid, cand=gid[-1] * 40, panel=panel)))
 
@@ -425,7 +436,7 @@ class Panel(TempEnv):
 
     def test_judge_tiles_two_families(self):
         j = FakeJudge(p_x=1.0)
-        pn = PN.Panel("g", self.tmp / "private", {"view": 192}, judge=j)
+        pn = PN.Panel("g", self.tmp / "private", {"view": 192, "min_sentinels": 4}, judge=j)
         res = pn.judge_tiles(self._tiles(), 0)
         recs = PN.score_tiles(res["tiles"], pn.families)
         self.assertEqual(len(recs), 4)
@@ -454,7 +465,7 @@ class Panel(TempEnv):
         self.assertEqual({v["claude"] for v in by_tile.values()}, {"A", "B"})
         # a resumed panel re-asks nothing
         j2 = FakeJudge()
-        pn2 = PN.Panel("g", self.tmp / "private", {"view": 192}, judge=j2)
+        pn2 = PN.Panel("g", self.tmp / "private", {"view": 192, "min_sentinels": 4}, judge=j2)
         pn2.judge_tiles(self._tiles(), 0)
         self.assertEqual(j2.calls, 0)
         self.assertEqual(pn2.usage()["context_tokens_mean"], 10000)
@@ -554,6 +565,36 @@ class Panel(TempEnv):
             pn.judge_tiles(self._tiles(2), 0, share=0)
         self.assertFalse(any(pn.asks[a]["family"] == "cursor" for a in pn.labels))
 
+    def test_claude_limit_pauses_instead_of_dropping_to_one_family(self):
+        cj = PN.ClaudeJudge(self.tmp, 10)
+        hit = subprocess.CompletedProcess([], 1, stdout=json.dumps(
+            {"type": "result", "is_error": True, "result": "Claude AI usage limit reached|1761350400"}), stderr="")
+        with mock.patch.object(PN.subprocess, "run", return_value=hit):
+            with self.assertRaises(PN.CapReached) as cm:
+                cj("p", "claude-x")
+        self.assertLess(cm.exception.reset_at, PN.time.time() + 2 * PN.CLAUDE_RETRY_SECS)
+        hit2 = subprocess.CompletedProcess([], 1, stdout="", stderr="You've hit your limit - resets 3am")
+        with mock.patch.object(PN.subprocess, "run", return_value=hit2):
+            with self.assertRaises(PN.CapReached):
+                cj("p", "claude-x")
+        other = subprocess.CompletedProcess([], 1, stdout="", stderr="some crash")
+        with mock.patch.object(PN.subprocess, "run", return_value=other):
+            text, u = cj("p", "claude-x")
+        self.assertEqual(u["exit"], 1)
+        # in a panel: the claude limit pauses the run; no claude ask is marked failed
+        fj = FakeJudge()
+
+        def limited(prompt, model):
+            if model == CLAUDE_M:
+                raise PN.CapReached("claude: usage limit", PN.time.time() + 60)
+            return fj(prompt, model)
+
+        limited.bind = fj.bind
+        pn = PN.Panel("g5c", self.tmp / "private5c", {"view": 192}, judge=limited)
+        with self.assertRaises(PN.CapReached):
+            pn.judge_tiles(self._tiles(2), 0, share=0)
+        self.assertFalse(any(pn.asks[a]["family"] == "claude" for a in pn.labels))
+
     def test_cursor_judge_spots_limits(self):
         cj = PN.CursorJudge(self.tmp, 10)
         done = subprocess.CompletedProcess([], 1, stdout="", stderr="Error: You've hit your usage limit")
@@ -637,6 +678,18 @@ class Run(TempEnv):
         self.assertIn("dropped cursor (sentinels 0.00", rep["line"])
         self.assertEqual(gate["panel"]["active"], ["claude"])
         self.assertEqual(list(gate["panel"]["final"]["family"]), ["claude"])
+
+    def test_one_early_sentinel_miss_does_not_drop_a_family(self):
+        rule = stats.rule_with_defaults({})
+        sent = {"claude": {"n": 8, "correct": 7}, "cursor": {"n": 8, "correct": 8}}
+        self.assertEqual(R.sentinel_drops(sent, ["claude", "cursor"], rule, 1, stop=False), {})
+        # at the stop, or with enough sentinels, the bar applies to the cumulative count
+        self.assertEqual(R.sentinel_drops(sent, ["claude", "cursor"], rule, 1, stop=True), {})  # 0.875
+        sent["claude"] = {"n": 10, "correct": 8}
+        self.assertEqual(list(R.sentinel_drops(sent, ["claude", "cursor"], rule, 1, stop=False)), [])
+        self.assertEqual(list(R.sentinel_drops(sent, ["claude", "cursor"], rule, 1, stop=True)), ["claude"])
+        sent["claude"] = {"n": 30, "correct": 24}
+        self.assertIn("n=30", R.sentinel_drops(sent, ["claude", "cursor"], rule, 2, stop=False)["claude"])
 
     def test_single_family_can_still_reject(self):
         p = _p(sets=[self.version], proxy=False, rule={"boot": 500, "looks": [6]})

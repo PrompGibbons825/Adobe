@@ -19,8 +19,10 @@ Steps (each one can end the run with REJECT):
    may only reject, when its candidate win rate's upper bound is below ``proxy_reject_upper``.
 6. **panel** (tools.gate.panel, two families: S10) in pre-registered random design order with
    sequential looks; the decision is tools.gate.stats.evaluate on the pooled tile scores plus
-   the per-family harm test. Sentinels are checked per family at every look: a family below
-   ``sentinel_min`` is dropped from the run (its votes leave every tile) and the verdict says so;
+   the per-family harm test. Sentinels are checked per family on its cumulative count: at an
+   early look once it holds ``sentinel_min_n`` sentinels, and always at the look where the run
+   stops, so one miss in a small look cannot drop a family. A family below ``sentinel_min`` is
+   dropped from the run (its votes leave every tile) and the verdict says so;
    a single-family run can only REJECT or REPORT; when every family fails the run is INVALID.
    At the Cursor cap (or a rate/usage limit) the run is PAUSED (exit 4) and continues with
    ``--resume``; ``--wait`` sleeps to the next UTC day instead. It never accepts on one family.
@@ -419,6 +421,20 @@ def _capped(fn: Callable, wait: bool):
             __import__("time").sleep(secs)
 
 
+def sentinel_drops(sent: Dict[str, dict], active: List[str], rule: dict, look: int, stop: bool) -> Dict[str, str]:
+    """Families to drop on their cumulative sentinel accuracy: at an early look only once a
+    family holds ``sentinel_min_n`` sentinels; at the look where the run stops, whatever it holds."""
+    out = {}
+    for f in active:
+        n = (sent.get(f) or {}).get("n", 0)
+        if not n or (not stop and n < int(rule["sentinel_min_n"])):
+            continue
+        acc = sent[f]["correct"] / n
+        if acc < float(rule["sentinel_min"]):
+            out[f] = f"sentinels {acc:.2f} < {rule['sentinel_min']} n={n} at look {look}"
+    return out
+
+
 def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, transform, finish,
                  keep_images, wait) -> dict:
     from tools.gate.panel import score_tiles
@@ -443,9 +459,10 @@ def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, tra
             sent.setdefault(f, {"n": 0, "correct": 0})
             sent[f]["n"] += s["n"]
             sent[f]["correct"] += s["correct"]
-            if s["accuracy"] is not None and s["accuracy"] < rule["sentinel_min"] and f in active:
-                active.remove(f)
-                dropped[f] = f"sentinels {s['accuracy']:.2f} < {rule['sentinel_min']} at look {i + 1}"
+        last = i == len(sizes) - 1
+        for f, why_f in sentinel_drops(sent, active, rule, i + 1, stop=last).items():
+            active.remove(f)
+            dropped[f] = why_f
         for f, s in res["small_sentinels"].items():
             m = small.setdefault(f, {"n": 0, "correct": 0})
             m["n"] += s["n"]
@@ -461,7 +478,22 @@ def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, tra
             _say(f"look {i + 1}: {why}")
             break
         recs = score_tiles(raw, active)
-        ev = stats.evaluate(recs, rule, a, final=i == len(sizes) - 1, seed=seed + i)
+        ev = stats.evaluate(recs, rule, a, final=last, seed=seed + i)
+        if ev["decision"] != "CONTINUE" and not last and not p.get("null"):
+            # the run would stop here: every family's sentinels count now, whatever their n
+            late = sentinel_drops(sent, active, rule, i + 1, stop=True)
+            for f, why_f in late.items():
+                active.remove(f)
+                dropped[f] = why_f
+            if late and not active:
+                verdict, why = "INVALID", "every family failed its sentinels: " + "; ".join(
+                    f"{f} {r}" for f, r in dropped.items())
+                look["decision"] = "INVALID"
+                _say(f"look {i + 1}: {why}")
+                break
+            if late:
+                recs = score_tiles(raw, active)
+                ev = stats.evaluate(recs, rule, a, final=last, seed=seed + i)
         look["decision"] = ev["decision"]
         look["families"] = list(active)
         _say(f"look {i + 1}: {k} designs, {ev['win_cell']} {_fmt(ev['cells'][ev['win_cell']])} -> {ev['decision']}"
@@ -481,7 +513,7 @@ def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, tra
             v["accuracy"] = v["correct"] / v["n"] if v["n"] else None
     rep["panel"] = {"looks": looks, "final": ev and {k: ev[k] for k in ("decision", "win_cell", "win_pass", "cells",
                                                                           "criteria", "harm", "reasons", "family",
-                                                                          "families", "agreement")},
+                                                                          "families", "coverage", "agreement")},
                     # pairwise votes decide; the 1-10 score deltas and small-defect sentinels are report only
                     "deltas": stats.score_deltas(recs), "sentinels": sent, "small_sentinels": small,
                     "families": list(panel.families), "active": list(active), "dropped": dropped,

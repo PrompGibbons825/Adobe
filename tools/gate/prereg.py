@@ -130,8 +130,9 @@ def validate(p: dict) -> List[str]:
 
 
 def validate_panel(cfg: dict) -> List[str]:
-    """The two-family protocol (loop/STEERING.md S10): at least two judge families of different
-    CLIs, a tie-break judge, 1-12 comparisons per call."""
+    """The two-family protocol (loop/STEERING.md S10): exactly two judge families, each with a
+    known CLI and a model, on different CLIs and different models (one Claude, one Cursor); a
+    tie-break judge on a third model; 1-12 comparisons per call."""
     from tools.gate.panel import CLIS, DEFAULT_PANEL, PANEL_KEYS, TIEBREAK
 
     errs = []
@@ -150,6 +151,8 @@ def validate_panel(cfg: dict) -> List[str]:
                 errs.append(f"panel family {name!r} needs a cli ({'/'.join(CLIS)}) and a model")
         if len({(f or {}).get("model") for f in fams.values()}) < 2:
             errs.append("the two panel families must use different models")
+        if len({(f or {}).get("cli") for f in fams.values()}) < 2:
+            errs.append("the two panel families must use different CLIs (different model vendors)")
     tb = c.get("tiebreak")
     if not isinstance(tb, dict) or tb.get("cli") not in CLIS or not tb.get("model"):
         errs.append("panel tiebreak needs a cli and a model")

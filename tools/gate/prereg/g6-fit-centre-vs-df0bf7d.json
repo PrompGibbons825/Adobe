@@ -1,0 +1,51 @@
+{
+ "id": "g6-fit-centre-vs-df0bf7d",
+ "hypothesis": "G6 specificity check: fit-and-centre everywhere must REJECT against df0bf7d. Floor and proxy off so the panel itself must reject (a floor or proxy rejection would not test it). Sets: all three sealed-novel versions. crello-v1 is left out of the G6 runs before any of them, because r1 found 2 crello-v1 tiles where df0bf7d stretches a fit:fill background (a hard-rule floor failure independent of the panel; loop/weaknesses.md), so any df0bf7d-candidate run on crello-v1 rejects at the floor.",
+ "base": {
+  "commit": "df0bf7d1951d163b573c1133ac1454f9c953c973",
+  "label": "df0bf7d"
+ },
+ "candidate": {
+  "builtin": "fit_centre",
+  "label": "fit_centre"
+ },
+ "sets": [
+  "novel-v1",
+  "novel-v2",
+  "novel-v3"
+ ],
+ "null": false,
+ "floor": [],
+ "rule": {},
+ "panel": {
+  "protocol": "two-family",
+  "families": {
+   "claude": {
+    "cli": "claude",
+    "model": "claude-sonnet-5-5"
+   },
+   "cursor": {
+    "cli": "agent",
+    "model": "gpt-5.6-sol-high"
+   }
+  },
+  "tiebreak": {
+   "cli": "agent",
+   "model": "gemini-3.7-flash-high"
+  },
+  "batch": 8,
+  "concurrency": 4,
+  "agent_concurrency": 2,
+  "agent_daily_cap": 200,
+  "view": 1024,
+  "timeout": 900,
+  "retries": 1,
+  "min_sentinels": 8,
+  "small_sentinels": 0.5
+ },
+ "anchors": {
+  "parity_designs": 30
+ },
+ "created": "2026-10-24T21:35:07Z",
+ "proxy": false
+}
