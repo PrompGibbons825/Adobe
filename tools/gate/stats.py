@@ -28,6 +28,8 @@ family's own score, from tools.gate.panel.score_tile); ``score`` is then the poo
   below 0.5 is significant harm and blocks an ACCEPT (no change only one family likes).
 * **families_required**: a run whose tiles carry fewer families (one was dropped on its
   sentinels) can only REJECT or REPORT; where it would accept, the decision is REPORT.
+* **family_coverage_min**: when a family voted on fewer than this share of the judged tiles (its
+  asks failed), the pooled score is mostly the other family's, so an ACCEPT becomes REPORT.
 * ``family_agreement``: the share of tiles where the families' overall votes agree (report).
 
 Sequential looks: the panel judges designs in a pre-registered random order and looks after
@@ -58,10 +60,12 @@ DEFAULT_RULE = {
     "looks": [40, 80, 120],   # designs judged before each look; the last is the cap
     "spending": "obf",        # "obf" or "pocock-bonferroni" (alpha / number of looks)
     "boot": 10000,
-    "sentinel_min": 0.85,     # a look whose sentinel accuracy is below this is discarded
+    "sentinel_min": 0.85,     # a family whose cumulative sentinel accuracy is below this is dropped
+    "sentinel_min_n": 20,     # ... at an early look only once it has this many sentinels (always at the stop)
     "sentinel_share": 0.10,
     "alpha_family_harm": 0.10,  # one-sided, per family on the win cell (S10)
     "families_required": 2,   # fewer families judging: REJECT or REPORT, never ACCEPT
+    "family_coverage_min": 0.8,  # a family that voted on fewer of the judged tiles: REPORT, never ACCEPT
     "proxy_reject_upper": 0.35,  # proxy may reject when its win-rate upper bound is below this
     "seed": 0,
 }
@@ -179,6 +183,8 @@ def evaluate(tiles: List[dict], rule: dict, alpha_win: float, final: bool, seed:
         if b["n"] and b["n"] >= r["min_designs"] and b["upper"] < 0.5:
             harm.append(f"family {f}")
     single = bool(fams) and len(fams) < int(r["families_required"])
+    coverage = {f: sum(1 for t in tiles if f in (t.get("family") or {})) / len(tiles) for f in fams} if tiles else {}
+    thin = [f for f, c in coverage.items() if c < float(r["family_coverage_min"])]
     reasons = []
     if harm:
         reasons.append("significant harm on " + ", ".join(harm))
@@ -202,9 +208,13 @@ def evaluate(tiles: List[dict], rule: dict, alpha_win: float, final: bool, seed:
     if single and decision == "ACCEPT":
         decision = "REPORT"
         reasons.append(f"single-family run ({', '.join(fams)}): would accept, but can only reject or report")
+    if thin and decision == "ACCEPT":
+        decision = "REPORT"
+        reasons.append("would accept, but " + ", ".join(f"{f} voted on {coverage[f]:.0%}" for f in thin)
+                       + f" of tiles (< {float(r['family_coverage_min']):.0%})")
     return {"decision": decision, "reasons": reasons, "win_cell": win_key, "win_pass": win_pass,
             "alpha_win": alpha_win, "cells": cells, "criteria": crits, "harm": harm, "family": family,
-            "families": fams, "agreement": family_agreement(tiles)}
+            "families": fams, "coverage": coverage, "agreement": family_agreement(tiles)}
 
 
 def family_agreement(tiles: Iterable[dict]) -> Optional[dict]:

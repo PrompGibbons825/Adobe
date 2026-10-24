@@ -121,7 +121,7 @@ class TempEnv(unittest.TestCase):
         for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
             subprocess.run(["git", "-C", str(self.repo), *args], check=True)
 
-    def seal(self, n_designs: int = 6, set_name: str = "novel", targets=((1080, 1080),)) -> str:
+    def seal(self, n_designs: int = 6, set_name: str = "novel", targets=((1080, 1080),), ref: bool = False) -> str:
         st = self.tmp / f"stage-{set_name}"
         (st / "items").mkdir(parents=True)
         (st / "assets").mkdir()
@@ -130,6 +130,8 @@ class TempEnv(unittest.TestCase):
             for (w, h) in targets:
                 t = {"task_id": f"i{k:03d}", "source": _design(i), "target_canvas": {"width": w, "height": h},
                      "meta": {"design": f"d{i}"}}
+                if ref:
+                    t["reference"] = baselines.nudge(baselines.fit_centre(t["source"], t["target_canvas"]))
                 (st / "items" / f"i{k:03d}.json").write_text(json.dumps(t))
                 k += 1
         return sealed.add(st, set_name)["version"]
@@ -230,6 +232,15 @@ class Stats(unittest.TestCase):
             order = [f"novel/d{i}" for i in range(120)]
             wins += stats.sequential(t, order, rule, seed=s)["decision"] == "ACCEPT"
         self.assertLessEqual(wins / sims, 0.05)
+
+    def test_thin_family_coverage_cannot_accept(self):
+        t = _tiles([1.0] * 30)
+        for i, x in enumerate(t):
+            x["family"] = {"claude": {"overall": 1.0}} if i % 2 else {"claude": {"overall": 1.0}, "cursor": {"overall": 1.0}}
+        ev = stats.evaluate(t, {"boot": 500}, 0.05, final=True)
+        self.assertEqual(ev["decision"], "REPORT")
+        self.assertAlmostEqual(ev["coverage"]["cursor"], 0.5)
+        self.assertIn("cursor voted on 50%", "; ".join(ev["reasons"]))
 
     def test_family_harm_and_single_family(self):
         r = {"boot": 2000}
@@ -363,7 +374,11 @@ class Prereg(TempEnv):
                                 ("p4", {"families": {"a": {"cli": "claude", "model": "m"},
                                                      "b": {"cli": "agent", "model": "m"}}}, "different models"),
                                 ("p5", {"tiebreak": {"cli": "agent", "model": "gpt-5.6-sol-high"}}, "third model"),
-                                ("p6", {"batch": 20}, "batch must be")):
+                                ("p6", {"batch": 20}, "batch must be"),
+                                ("p8", {"sentinel_kinds": ["p_nope"]}, "known perturbations"),
+                                ("p9", {"sentinel_kinds": []}, "must not be empty"),
+                                ("p7", {"families": {"a": {"cli": "claude", "model": "m1"},
+                                                     "b": {"cli": "claude", "model": "m2"}}}, "different CLIs")):
             with self.assertRaisesRegex(P.Refused, msg):
                 P.check(self.prereg(_p(gid=gid, cand=gid[-1] * 40, panel=panel)))
 
@@ -425,7 +440,7 @@ class Panel(TempEnv):
 
     def test_judge_tiles_two_families(self):
         j = FakeJudge(p_x=1.0)
-        pn = PN.Panel("g", self.tmp / "private", {"view": 192}, judge=j)
+        pn = PN.Panel("g", self.tmp / "private", {"view": 192, "min_sentinels": 4}, judge=j)
         res = pn.judge_tiles(self._tiles(), 0)
         recs = PN.score_tiles(res["tiles"], pn.families)
         self.assertEqual(len(recs), 4)
@@ -454,7 +469,7 @@ class Panel(TempEnv):
         self.assertEqual({v["claude"] for v in by_tile.values()}, {"A", "B"})
         # a resumed panel re-asks nothing
         j2 = FakeJudge()
-        pn2 = PN.Panel("g", self.tmp / "private", {"view": 192}, judge=j2)
+        pn2 = PN.Panel("g", self.tmp / "private", {"view": 192, "min_sentinels": 4}, judge=j2)
         pn2.judge_tiles(self._tiles(), 0)
         self.assertEqual(j2.calls, 0)
         self.assertEqual(pn2.usage()["context_tokens_mean"], 10000)
@@ -554,6 +569,64 @@ class Panel(TempEnv):
             pn.judge_tiles(self._tiles(2), 0, share=0)
         self.assertFalse(any(pn.asks[a]["family"] == "cursor" for a in pn.labels))
 
+    def test_claude_limit_pauses_instead_of_dropping_to_one_family(self):
+        cj = PN.ClaudeJudge(self.tmp, 10)
+        hit = subprocess.CompletedProcess([], 1, stdout=json.dumps(
+            {"type": "result", "is_error": True, "result": "Claude AI usage limit reached|1761350400"}), stderr="")
+        with mock.patch.object(PN.subprocess, "run", return_value=hit):
+            with self.assertRaises(PN.CapReached) as cm:
+                cj("p", "claude-x")
+        self.assertLess(cm.exception.reset_at, PN.time.time() + 2 * PN.CLAUDE_RETRY_SECS)
+        hit2 = subprocess.CompletedProcess([], 1, stdout="", stderr="You've hit your limit - resets 3am")
+        with mock.patch.object(PN.subprocess, "run", return_value=hit2):
+            with self.assertRaises(PN.CapReached):
+                cj("p", "claude-x")
+        other = subprocess.CompletedProcess([], 1, stdout="", stderr="some crash")
+        with mock.patch.object(PN.subprocess, "run", return_value=other):
+            text, u = cj("p", "claude-x")
+        self.assertEqual(u["exit"], 1)
+        # in a panel: the claude limit pauses the run; no claude ask is marked failed
+        fj = FakeJudge()
+
+        def limited(prompt, model):
+            if model == CLAUDE_M:
+                raise PN.CapReached("claude: usage limit", PN.time.time() + 60)
+            return fj(prompt, model)
+
+        limited.bind = fj.bind
+        pn = PN.Panel("g5c", self.tmp / "private5c", {"view": 192}, judge=limited)
+        with self.assertRaises(PN.CapReached):
+            pn.judge_tiles(self._tiles(2), 0, share=0)
+        self.assertFalse(any(pn.asks[a]["family"] == "claude" for a in pn.labels))
+
+    def test_fit_centre_sentinels_only_against_a_designer_resize(self):
+        pn = PN.Panel("g6s", self.tmp / "private6s", {"view": 192, "sentinel_kinds": ["fit_centre"]}, judge=FakeJudge())
+        tiles = self._tiles(2)
+        self.assertEqual(pn.sentinels(tiles, 3, 0, pn.families), {"claude": [], "cursor": []})
+        for t in tiles:
+            t["reference"] = t["base"]
+            t["source"] = dict(t["source"], canvas={"width": 400, "height": 900})
+        got = pn.sentinels(tiles, 3, 0, pn.families)
+        self.assertEqual([len(v) for v in got.values()], [3, 3])
+
+    def test_sentinel_check_on_dev_data(self):
+        from tools.gate import sentinel_check as SC
+
+        pool = []
+        for t in self._tiles(3):
+            pool.append({"task_id": t["tile"], "source": t["source"], "target_canvas": t["base"]["canvas"],
+                         "reference": t["base"]})
+        with mock.patch.object(SC.devsets, "tasks", return_value=(pool, self.tmp / "assets")), \
+                mock.patch.object(SC, "GATE_ROOT", self.tmp):
+            r = SC.check("dev-sent", "devx", 6, {"view": 192}, 0.85, 4, judge=FakeJudge())
+            self.assertTrue(r["pass"], r["families"])
+            self.assertEqual(r["families"]["cursor"]["decisive"]["n"], 6)
+            r = SC.check("dev-sent2", "devx", 6, {"view": 192}, 0.85, 4, judge=FakeJudge(p_sent=0.0))
+            self.assertFalse(r["pass"])
+        with mock.patch.object(SC.sealed, "sealed_versions", return_value=["novel-v1"]):
+            with self.assertRaisesRegex(SystemExit, "dev data only"):
+                SC.check("dev-sent3", "novel-v1", 6, {"view": 192}, 0.85, 4, judge=FakeJudge())
+
     def test_cursor_judge_spots_limits(self):
         cj = PN.CursorJudge(self.tmp, 10)
         done = subprocess.CompletedProcess([], 1, stdout="", stderr="Error: You've hit your usage limit")
@@ -605,6 +678,9 @@ class Run(TempEnv):
         self.assertEqual(gate["cursor_asks"], gate["panel"]["usage"]["cursor_asks"])
         self.assertEqual(gate["panel"]["active"], ["claude", "cursor"])
         self.assertEqual(gate["panel"]["looks"][0]["designs"], 3)
+        sk = gate["panel"]["sentinel_kinds"]["sentinel"]
+        self.assertEqual(sorted(sk), ["claude", "cursor"])
+        self.assertTrue(all(m["correct"] == m["n"] > 0 for m in sk["claude"].values()))
         self.assertIn("hidden", gate["floor"]["parts"]["tiles"]["sets"][self.version]["totals"])
         # aggregates only: no tile id leaves the private folder
         self.assertNotRegex(json.dumps({k: v for k, v in gate.items() if k != "prereg"}), r'"i0\d\d')
@@ -623,6 +699,20 @@ class Run(TempEnv):
         self.assertTrue(rep["verdict"].startswith("REJECT"), rep["line"])
         self.assertIn("harm", rep["line"])
 
+    def test_sentinel_sets_feed_only_the_sentinel_pool(self):
+        cv = self.seal(4, set_name="crello", targets=((1080, 1920),), ref=True)
+        p = _p(sets=[self.version], proxy=False, sentinel_sets=[cv],
+               rule={"boot": 500, "looks": [6], "min_win_designs": 3})
+        rep, gate = self.go(p, FakeJudge(p_x=1.0))
+        self.assertTrue(rep["verdict"].startswith("ACCEPT"), rep["line"])
+        asks = PN.Panel("g1", self.tmp / "out" / "g1" / "private" / "panel", judge=FakeJudge()).asks.values()
+        self.assertTrue(any(a["kind"] == "sentinel" for a in asks))
+        self.assertNotIn(cv, gate["changed"]["by_set"])
+        # a sentinel-only set is no run on that version: the same candidate may still be judged on it
+        P.check(self.prereg(_p(gid="g1-crello", sets=[cv])))
+        with self.assertRaisesRegex(P.Refused, "not sealed"):
+            P.check(self.prereg(_p(gid="g1-bad", cand="9" * 40, sets=[self.version], sentinel_sets=["crello-v9"])))
+
     def test_bad_sentinels_invalidate(self):
         p = _p(sets=[self.version], proxy=False, rule={"boot": 500, "looks": [6]})
         rep, _ = self.go(p, FakeJudge(p_x=1.0, p_sent=0.0))
@@ -637,6 +727,18 @@ class Run(TempEnv):
         self.assertIn("dropped cursor (sentinels 0.00", rep["line"])
         self.assertEqual(gate["panel"]["active"], ["claude"])
         self.assertEqual(list(gate["panel"]["final"]["family"]), ["claude"])
+
+    def test_one_early_sentinel_miss_does_not_drop_a_family(self):
+        rule = stats.rule_with_defaults({})
+        sent = {"claude": {"n": 8, "correct": 7}, "cursor": {"n": 8, "correct": 8}}
+        self.assertEqual(R.sentinel_drops(sent, ["claude", "cursor"], rule, 1, stop=False), {})
+        # at the stop, or with enough sentinels, the bar applies to the cumulative count
+        self.assertEqual(R.sentinel_drops(sent, ["claude", "cursor"], rule, 1, stop=True), {})  # 0.875
+        sent["claude"] = {"n": 10, "correct": 8}
+        self.assertEqual(list(R.sentinel_drops(sent, ["claude", "cursor"], rule, 1, stop=False)), [])
+        self.assertEqual(list(R.sentinel_drops(sent, ["claude", "cursor"], rule, 1, stop=True)), ["claude"])
+        sent["claude"] = {"n": 30, "correct": 24}
+        self.assertIn("n=30", R.sentinel_drops(sent, ["claude", "cursor"], rule, 2, stop=False)["claude"])
 
     def test_single_family_can_still_reject(self):
         p = _p(sets=[self.version], proxy=False, rule={"boot": 500, "looks": [6]})

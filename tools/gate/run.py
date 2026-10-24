@@ -19,8 +19,10 @@ Steps (each one can end the run with REJECT):
    may only reject, when its candidate win rate's upper bound is below ``proxy_reject_upper``.
 6. **panel** (tools.gate.panel, two families: S10) in pre-registered random design order with
    sequential looks; the decision is tools.gate.stats.evaluate on the pooled tile scores plus
-   the per-family harm test. Sentinels are checked per family at every look: a family below
-   ``sentinel_min`` is dropped from the run (its votes leave every tile) and the verdict says so;
+   the per-family harm test. Sentinels are checked per family on its cumulative count: at an
+   early look once it holds ``sentinel_min_n`` sentinels, and always at the look where the run
+   stops, so one miss in a small look cannot drop a family. A family below ``sentinel_min`` is
+   dropped from the run (its votes leave every tile) and the verdict says so;
    a single-family run can only REJECT or REPORT; when every family fails the run is INVALID.
    At the Cursor cap (or a rate/usage limit) the run is PAUSED (exit 4) and continues with
    ``--resume``; ``--wait`` sleeps to the next UTC day instead. It never accepts on one family.
@@ -277,9 +279,11 @@ def verdict_line(rep: dict) -> str:
         parts.append(f"proxy {_fmt(pr)}{' REJECT' if pr.get('reject') else ''}")
     ev = (rep.get("panel") or {}).get("final")
     if ev:
-        for v in p["sets"]:
-            s = sealed._parse(v)[0]
-            parts.append(f"{v} t1 {_fmt(ev['cells'].get(f'{s} t1'))} t2 {_fmt(ev['cells'].get(f'{s} t2'))}")
+        by_set: Dict[str, List[str]] = {}
+        for v in p["sets"]:  # versions of one set pool into the same cells: print them once
+            by_set.setdefault(sealed._parse(v)[0], []).append(v)
+        for s, vs in by_set.items():
+            parts.append(f"{'+'.join(vs)} t1 {_fmt(ev['cells'].get(f'{s} t1'))} t2 {_fmt(ev['cells'].get(f'{s} t2'))}")
         parts.append("harm " + (", ".join(ev["harm"]) if ev["harm"] else "none"))
         fam = ev.get("family") or {}
         if fam:
@@ -337,6 +341,7 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
     roots = {"base": materializer(p["base"], out / "engines" / "base")}
     roots["cand"] = roots["base"] if transform else materializer(p["candidate"], out / "engines" / "cand")
     sets = [load_set(v) for v in p["sets"]]
+    sent_pool = sentinel_pool([load_set(v) for v in p.get("sentinel_sets", [])])
     outs = {}
     for s in sets:
         _say(f"render {s['version']}: {len(s['tasks'])} tasks x 2")
@@ -356,7 +361,8 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
     for s in sets:
         for t in s["tasks"]:
             o = outs[s["version"]][t["task_id"]]
-            rec = {"set": s["set"], "tile": t["task_id"], "design": design_id(t), "tier": tier_of(t["target_canvas"]),
+            rec = {"set": s["set"], "version": s["version"], "tile": t["task_id"], "design": design_id(t),
+                   "tier": tier_of(t["target_canvas"]),
                    "source": t["source"], "base": o["base"], "cand": o["cand"], "kit": s["kit"],
                    "reference": t.get("reference")}
             rec["bleed"] = _bleed_counts(rec)
@@ -372,7 +378,7 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
     random.Random(seed).shuffle(designs)
     cap = designs[: rule["looks"][-1]]
     rep["changed"] = {"tiles": len(tiles), "designs": len(designs), "judged_cap": len(cap),
-                      "by_set": {s["version"]: sum(1 for t in tiles if t["set"] == s["set"]) for s in sets}}
+                      "by_set": {s["version"]: sum(1 for t in tiles if t["version"] == s["version"]) for s in sets}}
     _say(f"changed {len(tiles)} tiles in {len(designs)} designs")
     if not designs:
         return finish("REJECT", "no changed tiles")
@@ -392,8 +398,8 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
 
     panel = PN.Panel(p["id"], private / "panel", p.get("panel"), judge=judge, seed=seed)
     try:
-        return _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, transform, finish,
-                            keep_images, wait)
+        return _panel_phase(p, rule, seed, panel, rep, designs, by_design, sent_pool or pool, roots, transform,
+                            finish, keep_images, wait)
     except PN.CapReached as e:
         rep["panel"] = dict(rep.get("panel") or {}, usage=panel.usage())
         rep["verdict"] = f"PAUSED ({e}; resume with --resume, or run with --wait)"
@@ -417,6 +423,28 @@ def _capped(fn: Callable, wait: bool):
             secs = max(60.0, e.reset_at - __import__("time").time() + 120)
             _say(f"paused: {e}; waiting {secs / 3600:.1f} h")
             __import__("time").sleep(secs)
+
+
+def sentinel_pool(sets: List[dict]) -> List[dict]:
+    """The sentinel-only sets' tasks that carry a designer resize, as panel pool records (the
+    reference is the good side; nothing is rendered or judged against an engine)."""
+    return [{"set": s["set"], "version": s["version"], "tile": t["task_id"], "design": design_id(t),
+             "source": t["source"], "base": None, "reference": t["reference"], "kit": s["kit"]}
+            for s in sets for t in s["tasks"] if t.get("reference")]
+
+
+def sentinel_drops(sent: Dict[str, dict], active: List[str], rule: dict, look: int, stop: bool) -> Dict[str, str]:
+    """Families to drop on their cumulative sentinel accuracy: at an early look only once a
+    family holds ``sentinel_min_n`` sentinels; at the look where the run stops, whatever it holds."""
+    out = {}
+    for f in active:
+        n = (sent.get(f) or {}).get("n", 0)
+        if not n or (not stop and n < int(rule["sentinel_min_n"])):
+            continue
+        acc = sent[f]["correct"] / n
+        if acc < float(rule["sentinel_min"]):
+            out[f] = f"sentinels {acc:.2f} < {rule['sentinel_min']} n={n} at look {look}"
+    return out
 
 
 def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, transform, finish,
@@ -443,9 +471,10 @@ def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, tra
             sent.setdefault(f, {"n": 0, "correct": 0})
             sent[f]["n"] += s["n"]
             sent[f]["correct"] += s["correct"]
-            if s["accuracy"] is not None and s["accuracy"] < rule["sentinel_min"] and f in active:
-                active.remove(f)
-                dropped[f] = f"sentinels {s['accuracy']:.2f} < {rule['sentinel_min']} at look {i + 1}"
+        last = i == len(sizes) - 1
+        for f, why_f in sentinel_drops(sent, active, rule, i + 1, stop=last).items():
+            active.remove(f)
+            dropped[f] = why_f
         for f, s in res["small_sentinels"].items():
             m = small.setdefault(f, {"n": 0, "correct": 0})
             m["n"] += s["n"]
@@ -461,7 +490,22 @@ def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, tra
             _say(f"look {i + 1}: {why}")
             break
         recs = score_tiles(raw, active)
-        ev = stats.evaluate(recs, rule, a, final=i == len(sizes) - 1, seed=seed + i)
+        ev = stats.evaluate(recs, rule, a, final=last, seed=seed + i)
+        if ev["decision"] != "CONTINUE" and not last and not p.get("null"):
+            # the run would stop here: every family's sentinels count now, whatever their n
+            late = sentinel_drops(sent, active, rule, i + 1, stop=True)
+            for f, why_f in late.items():
+                active.remove(f)
+                dropped[f] = why_f
+            if late and not active:
+                verdict, why = "INVALID", "every family failed its sentinels: " + "; ".join(
+                    f"{f} {r}" for f, r in dropped.items())
+                look["decision"] = "INVALID"
+                _say(f"look {i + 1}: {why}")
+                break
+            if late:
+                recs = score_tiles(raw, active)
+                ev = stats.evaluate(recs, rule, a, final=last, seed=seed + i)
         look["decision"] = ev["decision"]
         look["families"] = list(active)
         _say(f"look {i + 1}: {k} designs, {ev['win_cell']} {_fmt(ev['cells'][ev['win_cell']])} -> {ev['decision']}"
@@ -481,9 +525,11 @@ def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, tra
             v["accuracy"] = v["correct"] / v["n"] if v["n"] else None
     rep["panel"] = {"looks": looks, "final": ev and {k: ev[k] for k in ("decision", "win_cell", "win_pass", "cells",
                                                                           "criteria", "harm", "reasons", "family",
-                                                                          "families", "agreement")},
+                                                                          "families", "coverage", "agreement")},
                     # pairwise votes decide; the 1-10 score deltas and small-defect sentinels are report only
                     "deltas": stats.score_deltas(recs), "sentinels": sent, "small_sentinels": small,
+                    # per family and perturbation kind, correct/asked (aggregates: kinds are ours, not sealed)
+                    "sentinel_kinds": panel.sentinel_kinds(),
                     "families": list(panel.families), "active": list(active), "dropped": dropped,
                     "usage": panel.usage(),
                     "tiebreak_tiles": sum(1 for r in recs if r.get("tiebreak_used")), "tiles": len(recs)}

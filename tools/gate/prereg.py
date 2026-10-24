@@ -24,6 +24,9 @@ A prereg holds everything the verdict depends on, fixed before anything renders:
                                                   by ``make`` (protocol two-family: families, tiebreak,
                                                   batch, agent_daily_cap...), so the models are fixed
      "anchors": {"parity_designs": 30},
+     "sentinel_sets": ["crello-v1"],              optional: sealed versions used only as the sentinel
+                                                  pool (designer resize vs a defect); never judged,
+                                                  so they do not count as a run on that version
      "created": "<UTC>"}
 
 The gate refuses a prereg that is not committed (tracked, clean, in a git repo), and refuses a
@@ -125,13 +128,17 @@ def validate(p: dict) -> List[str]:
     bad = set(p.get("rule", {})) - set(DEFAULT_RULE)
     if bad:
         errs.append(f"unknown rule keys {sorted(bad)}")
+    ss = p.get("sentinel_sets", [])
+    if not isinstance(ss, list) or not all(isinstance(v, str) and sealed.VERSION_RE.match(v) for v in ss):
+        errs.append("sentinel_sets must be a list of sealed version ids")
     errs += validate_panel(p.get("panel") or {})
     return errs
 
 
 def validate_panel(cfg: dict) -> List[str]:
-    """The two-family protocol (loop/STEERING.md S10): at least two judge families of different
-    CLIs, a tie-break judge, 1-12 comparisons per call."""
+    """The two-family protocol (loop/STEERING.md S10): exactly two judge families, each with a
+    known CLI and a model, on different CLIs and different models (one Claude, one Cursor); a
+    tie-break judge on a third model; 1-12 comparisons per call."""
     from tools.gate.panel import CLIS, DEFAULT_PANEL, PANEL_KEYS, TIEBREAK
 
     errs = []
@@ -150,11 +157,21 @@ def validate_panel(cfg: dict) -> List[str]:
                 errs.append(f"panel family {name!r} needs a cli ({'/'.join(CLIS)}) and a model")
         if len({(f or {}).get("model") for f in fams.values()}) < 2:
             errs.append("the two panel families must use different models")
+        if len({(f or {}).get("cli") for f in fams.values()}) < 2:
+            errs.append("the two panel families must use different CLIs (different model vendors)")
     tb = c.get("tiebreak")
     if not isinstance(tb, dict) or tb.get("cli") not in CLIS or not tb.get("model"):
         errs.append("panel tiebreak needs a cli and a model")
     elif isinstance(fams, dict) and tb.get("model") in {(f or {}).get("model") for f in fams.values()}:
         errs.append("the tie-break judge must be a third model")
+    from tools.judge.perturb import PERTURBATIONS, SMALL_DEFECTS
+
+    known = set(PERTURBATIONS) | set(SMALL_DEFECTS) | {"fit_centre"}
+    for k in ("sentinel_kinds", "report_kinds"):
+        if not isinstance(c.get(k), list) or not set(c[k]) <= known:
+            errs.append(f"panel {k} must list known perturbations ({', '.join(sorted(known))})")
+    if not c.get("sentinel_kinds"):
+        errs.append("panel sentinel_kinds must not be empty")
     if not (isinstance(c.get("batch"), int) and 1 <= c["batch"] <= 12):
         errs.append("panel batch must be 1-12 comparisons per call")
     return errs
@@ -197,7 +214,7 @@ def check(path: Path, resume: bool = False, need_sealed: bool = True) -> dict:
         raise Refused("; ".join(errs))
     if need_sealed:
         have = set(sealed.sealed_versions())
-        missing = [v for v in p["sets"] if v not in have]
+        missing = [v for v in p["sets"] + p.get("sentinel_sets", []) if v not in have]
         if missing:
             raise Refused(f"not sealed (or retired): {missing}")
     key, h = cand_key(p["candidate"]), content_hash(p)

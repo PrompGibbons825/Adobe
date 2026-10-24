@@ -30,15 +30,20 @@ no tie-break (criteria other than overall) -> 0.5; one family only -> its vote. 
 vote is kept too (``family``), for the per-family harm test and agreement rate in
 tools.gate.stats.
 
-**Sentinels** with a known answer go to every active family (the good design: the designer's
-resize where the task has one, else the base output, against a perturbation of it or
-fit-and-centre). run.py checks each family's accuracy on its own; a family below
-``sentinel_min`` is dropped from the gate run. **Small-defect sentinels** (S6) are report only.
+**Sentinels** with a known answer go to every active family: the good design (the designer's
+resize where the task has one, else the base output) against a copy with one unambiguous defect
+(``sentinel_kinds``: the headline cut past the edge, the headline moved onto the photo) or, only
+where a designer's resize is the good side, fit-and-centre. run.py checks each family's accuracy
+on its own; a family below ``sentinel_min`` is dropped from the gate run. **Report-only
+sentinels** (``report_kinds``: the S6 small defects plus the 20 px misalignment and low-contrast
+moves, which both families missed about half the time in G6's first run) are measured, never
+decisive. ``python -m tools.gate.sentinel_check`` measures the sentinels on dev data.
 
 **Cursor cap:** every ``agent`` call is logged in ``<judge root>/agent_calls.jsonl`` before it
-starts. When a UTC day already holds ``agent_daily_cap`` calls, or the CLI reports a rate or usage
-limit, the panel raises ``CapReached``; nothing is labelled, so a ``--resume`` (or run.py's
-``--wait``) continues exactly where it stopped. The gate never falls back to Claude alone.
+starts. When a UTC day already holds ``agent_daily_cap`` calls, or either CLI reports a rate or
+usage limit (Claude's weekly or five-hour limit included), the panel raises ``CapReached``; the
+limited call labels nothing, so a ``--resume`` (or run.py's ``--wait``) continues exactly where it
+stopped. The gate never falls back to one family because the other ran out of quota.
 
 **What decides:** the pairwise votes. The 1-10 scores are only reported.
 
@@ -82,8 +87,10 @@ DEFAULT_PANEL = {
     "view": 1024,            # long side of every image the judge sees
     "timeout": 900,          # seconds per call (a batch)
     "retries": 1,            # extra calls for the comparisons a reply left out
-    "min_sentinels": 4,
-    "small_sentinels": 0.5,  # small-defect sentinel asks per decisive sentinel ask (report only)
+    "min_sentinels": 8,      # decisive sentinel asks per family per look, at least
+    "small_sentinels": 0.5,  # report-only sentinel asks per decisive sentinel ask
+    "sentinel_kinds": ["p_crop", "p_onart", "fit_centre"],  # decisive; fit_centre only vs a designer resize
+    "report_kinds": ["p_mis20", "p_lowcon", "p_hide_one", "p_clip_letter", "p_edge_touch", "p_typescale"],
 }
 PANEL_KEYS = set(DEFAULT_PANEL)
 
@@ -124,7 +131,8 @@ OPEN_LINE = {
 SYSTEM = "You are a careful, blind design judge. You only read the image files you are told to read and answer in JSON."
 
 LIMIT_RE = re.compile(r"rate.?limit|usage limit|quota|too many requests|\b429\b|limit (?:reached|exceeded)|"
-                      r"out of (?:credits|usage)", re.I)
+                      r"out of (?:credits|usage)|hit your (?:\w+ )?limit", re.I)
+CLAUDE_RETRY_SECS = 3600  # Claude's limits reset on rolling windows, not at UTC midnight
 
 
 class CapReached(Exception):
@@ -239,7 +247,9 @@ def _bin(name: str) -> str:
 
 
 class ClaudeJudge:
-    """One fresh ``claude -p`` per call, from the gate's judge folder."""
+    """One fresh ``claude -p`` per call, from the gate's judge folder. Raises CapReached on a
+    usage or rate limit, so a spent weekly limit pauses the gate instead of failing every Claude
+    ask (which would leave the cursor family judging alone)."""
 
     def __init__(self, cwd: Path, timeout: float = 900):
         self.cwd, self.timeout = Path(cwd), timeout
@@ -255,7 +265,14 @@ class ClaudeJudge:
         try:
             j = json.loads(p.stdout)
         except ValueError:
-            return p.stdout[-2000:], {"error": (p.stderr or "")[-300:], "exit": p.returncode}
+            j = None
+        if not isinstance(j, dict) or j.get("is_error") or p.returncode != 0:
+            res = str(j.get("result", "")) if isinstance(j, dict) else ""
+            blob = res[-1000:] + (p.stdout or "")[-1000:] + (p.stderr or "")[-1000:]
+            if LIMIT_RE.search(blob):
+                raise CapReached(f"claude {model}: {blob.strip()[-200:]}", time.time() + CLAUDE_RETRY_SECS)
+            if not isinstance(j, dict):
+                return p.stdout[-2000:], {"error": (p.stderr or "")[-300:], "exit": p.returncode}
         u = j.get("usage") or {}
         usage = {"input": u.get("input_tokens", 0), "cache_read": u.get("cache_read_input_tokens", 0),
                  "cache_write": u.get("cache_creation_input_tokens", 0), "output": u.get("output_tokens", 0),
@@ -571,14 +588,14 @@ class Panel:
         """``n`` sentinel comparisons, each asked of every family in ``fams``: a good design
         against a known-worse one, x = the good side. ``small``: the small-defect kinds instead
         (ask kind ``sentinel_small``, report only). Returns ask ids per family."""
-        from tools.judge.perturb import SENTINELS, SMALL_DEFECTS, perturb
+        from tools.judge.perturb import perturb
 
         out: Dict[str, List[str]] = {f: [] for f in fams}
         if not pool or n <= 0:
             return out
         ask_kind = "sentinel_small" if small else "sentinel"
         rng = _seeded(self.seed, self.gate_id, "small_sentinels" if small else "sentinels", batch)
-        kinds = list(SMALL_DEFECTS) if small else list(SENTINELS) + ["fit_centre"]
+        kinds = list(self.cfg["report_kinds"] if small else self.cfg["sentinel_kinds"])
         made, tries = 0, 0
         while made < n and tries < 20 * n:
             tries += 1
@@ -587,6 +604,8 @@ class Panel:
             good = t.get("reference") or t["base"]
             tgt = {"width": good["canvas"]["width"], "height": good["canvas"]["height"]}
             if kind == "fit_centre":
+                if not t.get("reference"):
+                    continue  # the engine's own output is no ground truth against fit-and-centre
                 bad = fit_centre(t["source"], tgt)
                 if abs(t["source"]["canvas"]["width"] / t["source"]["canvas"]["height"]
                        - tgt["width"] / tgt["height"]) < 0.05:
@@ -616,6 +635,22 @@ class Panel:
         allv = [x for v in by.values() for x in v]
         return {"n": len(allv), "correct": int(sum(allv)), "accuracy": (sum(allv) / len(allv)) if allv else None,
                 "by_kind": {k: round(sum(v) / len(v), 3) for k, v in sorted(by.items())}}
+
+    def sentinel_kinds(self) -> Dict[str, Dict[str, dict]]:
+        """Per ask kind (``sentinel``, ``sentinel_small``), family and perturbation kind: how many
+        sentinel asks were answered and how many chose the good side (overall)."""
+        out: Dict[str, Dict[str, dict]] = {}
+        for aid, a in self.asks.items():
+            if a["kind"] not in ("sentinel", "sentinel_small"):
+                continue
+            v = self.vote(aid)
+            if not v:
+                continue
+            m = out.setdefault(a["kind"], {}).setdefault(a["family"], {}).setdefault(
+                a["key"].rsplit(".", 1)[-1], {"n": 0, "correct": 0})
+            m["n"] += 1
+            m["correct"] += int(v["overall"])
+        return out
 
     def judge_tiles(self, tiles: List[dict], batch: int, pool: Optional[List[dict]] = None,
                     share: float = 0.10, reencode_cand: bool = False, families: Optional[List[str]] = None) -> dict:
