@@ -39,6 +39,7 @@ class Ctx:
     emphasis: float = 1.0  # how much larger than the rest the headline is set in this plan
     measure: float = 1.0  # how much longer than in the source copy lines may run in this plan
     display_room: float = 1.0  # how far past the canvas's display size this design's headline may go
+    cta_min: float = 0.0  # px: the least label size of a call to action in this plan (strips)
 
     @property
     def display_max(self) -> float:
@@ -342,11 +343,27 @@ def _realize_lockup_line(it: Item, s: float, ctx: Ctx, max_w: float, max_h: floa
 
 def _realize_button(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float,
                     nowrap: bool = False) -> Optional[Real]:
+    """A button sized from its label. A call to action asked to be set at
+    least ``ctx.cta_min`` (on a strip) is tried that large first, then at the
+    layout's size: the larger label is a preference and never costs the
+    button its place."""
+    fs = font_for(float(it.labels[0].get("font_size", 16) or 16), s, it.role, ctx, relax)
+    if it.role == "cta" and ctx.cta_min > fs:
+        r = _button_at(it, s, ctx, max_w, max_h, relax, nowrap, int(ctx.cta_min))
+        if r is not None:
+            # the larger label is styling, not size the layout earned: score it at the layout's
+            # size, so plans without the bonus are not judged to have shrunk their button
+            r.scale = fs / max(1.0, float(it.labels[0].get("font_size", 16) or 16))
+            return r
+    return _button_at(it, s, ctx, max_w, max_h, relax, nowrap, fs)
+
+
+def _button_at(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float, nowrap: bool,
+               fs: int) -> Optional[Real]:
     shape = it.container
     lab = it.labels[0]
     cb = el_box(shape)
     fs0 = float(lab.get("font_size", 16) or 16)
-    fs = font_for(fs0, s, it.role, ctx, relax)
     g = fs / fs0
     style = TextStyle.of(lab)
     content = str(lab.get("content", ""))
@@ -782,7 +799,8 @@ def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF
     only they key on it."""
     heads = it.role == "headline" or any(sat.role == "headline" for sat in it.sats)
     key = (id(it), s, max_w, max_h, relax, k, mode, nowrap, ctx.W, ctx.H, ctx.W0, ctx.H0, ctx.display_room,
-           ctx.emphasis if heads else 1.0, ctx.measure if it.kind == "text" else 1.0)
+           ctx.emphasis if heads else 1.0, ctx.measure if it.kind == "text" else 1.0,
+           ctx.cta_min if it.role == "cta" else 0.0)
     if key not in _REALIZED:
         _REALIZED[key] = _realize(it, s, ctx, max_w, max_h, relax, k, mode, nowrap)
     return _REALIZED[key]

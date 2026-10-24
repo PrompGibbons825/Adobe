@@ -36,6 +36,9 @@ DISPLAY_WORDS = 8  # a headline this short can be set as display type; a longer 
 BALANCE = 0.5  # how far a reflowed column's top and bottom margins move towards even
 BOND = 0.3  # rows closer than this times the smaller one's height read as one unit and spread as one
 MARGIN_LONG = 0.05  # the least margin along a canvas's length, as a share of it
+STRIP = 3.0  # a canvas this many times wider than tall is a strip
+STRIP_CTA = 0.45  # on a strip a CTA label is at least this share of the strip's display size ...
+STRIP_CTA_KEEP = 0.95  # ... when that costs the rest of the banner no more than 5% of its scale
 COPY_POSTER = 1.4  # a design of copy alone on a tall canvas may set its headline this much past display size
 COLUMN_ROOM = 1.35  # how much further than sqrt(area) a column may grow on a taller canvas
 ROW_GAP = 0.25  # a banner row's gaps widen to fill it, up to this share of the canvas width each
@@ -570,6 +573,9 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
 
     s = laid = None
     relax = 1.0
+    # on a strip the call to action is the banner's second focal point, in a column of its own:
+    # its label keeps pace with the strip's display type instead of sitting at the legibility floor
+    root = None
     for nowrap in (True, False):  # a one-line CTA reads as a button; wrap only if forced
         parts = _padded_runs(d, kids + [Leaf(c, nowrap=nowrap) for c in ctas], hstack)
         if parts is None:
@@ -580,6 +586,15 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
             break
     if laid is None:
         return None
+    if ctas and ctx.W >= STRIP * ctx.H:
+        # on a strip the call to action is the banner's second focal point, in a column of its own:
+        # its label is set to keep pace with the strip's display type, when that is free - when it
+        # neither outgrows copy that outranked it nor shrinks the rest of the banner
+        bctx = replace(ctx, cta_min=STRIP_CTA * ctx.display_max)
+        bs, blaid, brelax = solve(root, bctx, zone, lo, hi)
+        if blaid is not None and bs >= STRIP_CTA_KEEP * s and _cta_in_rank(blaid.place(0.0, 0.0), d):
+            s, laid, relax = bs, blaid, brelax
+    
     placed = place_row(laid, ctx, laid.zone, ends_in_cta=bool(ctas))
     fl = []
     corner, failed = place_floaters(floaters, s, ctx, mx, my, relax)
@@ -592,6 +607,20 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
             fl.append(p)
     return Plan(name=name, placed=placed, hidden=hid, s=s, zone=zone, floaters=fl, relax=relax,
                 capped=s >= hi * 0.999)
+
+
+def _cta_in_rank(placed: List[Placement], d: Design) -> bool:
+    """No call-to-action label is set larger than copy that was at least 25%
+    larger than it in the source (the hierarchy the scorer and the checks
+    hold every layout to)."""
+    out, cta = {}, set()
+    for r, _, _ in placed:
+        for tid, fs in r.fonts.items():
+            out[tid] = fs
+            if r.item.role == "cta":
+                cta.add(tid)
+    src = {tid: float(d.by_id[tid].get("font_size") or 0) for tid in out if tid in d.by_id}
+    return not any(src[a] >= 1.25 * src[c] and out[a] < out[c] - 1 for c in cta for a in out if a not in cta)
 
 
 def same_shape(d: Design, ctx: Ctx) -> bool:

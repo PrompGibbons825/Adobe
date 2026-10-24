@@ -115,7 +115,13 @@ Margins follow the source's breathing room but are never thinner than a
 banner's (about 5% of the canvas's length, at most 0.3 of its short side).
 Headline and CTA are never dropped. Copy never goes below a legibility floor
 (cap height of about 7 px when the canvas is viewed at 1024 px). When a label
-is held up at the floor, its button gets a tighter pill rather than a bigger one;
+is held up at the floor, its button gets a tighter pill rather than a bigger one.
+On a strip (3:1 or wider) the call to action is the banner's second focal point,
+in a column of its own, so its label is set at no less than 45% of the strip's
+display size (about 17 px on a 728×90, as Adobe's reference leaderboard sets its
+button) when that is free: it may not outgrow copy that outranked it, nor cost the
+rest of the banner more than 5% of its scale, and it is scored at the size it
+would have had, so it never decides what else stays on the banner;
 a round button or sticker stays round, and a sticker (a button-like group on a
 picture, not a text lockup) whose label would have to be blown up past twice its
 art's scale to stay legible is left off the art. An ellipse that bleeds off the
