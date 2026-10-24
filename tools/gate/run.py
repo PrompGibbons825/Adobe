@@ -341,6 +341,7 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
     roots = {"base": materializer(p["base"], out / "engines" / "base")}
     roots["cand"] = roots["base"] if transform else materializer(p["candidate"], out / "engines" / "cand")
     sets = [load_set(v) for v in p["sets"]]
+    sent_pool = sentinel_pool([load_set(v) for v in p.get("sentinel_sets", [])])
     outs = {}
     for s in sets:
         _say(f"render {s['version']}: {len(s['tasks'])} tasks x 2")
@@ -397,8 +398,8 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
 
     panel = PN.Panel(p["id"], private / "panel", p.get("panel"), judge=judge, seed=seed)
     try:
-        return _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, transform, finish,
-                            keep_images, wait)
+        return _panel_phase(p, rule, seed, panel, rep, designs, by_design, sent_pool or pool, roots, transform,
+                            finish, keep_images, wait)
     except PN.CapReached as e:
         rep["panel"] = dict(rep.get("panel") or {}, usage=panel.usage())
         rep["verdict"] = f"PAUSED ({e}; resume with --resume, or run with --wait)"
@@ -422,6 +423,14 @@ def _capped(fn: Callable, wait: bool):
             secs = max(60.0, e.reset_at - __import__("time").time() + 120)
             _say(f"paused: {e}; waiting {secs / 3600:.1f} h")
             __import__("time").sleep(secs)
+
+
+def sentinel_pool(sets: List[dict]) -> List[dict]:
+    """The sentinel-only sets' tasks that carry a designer resize, as panel pool records (the
+    reference is the good side; nothing is rendered or judged against an engine)."""
+    return [{"set": s["set"], "version": s["version"], "tile": t["task_id"], "design": design_id(t),
+             "source": t["source"], "base": None, "reference": t["reference"], "kit": s["kit"]}
+            for s in sets for t in s["tasks"] if t.get("reference")]
 
 
 def sentinel_drops(sent: Dict[str, dict], active: List[str], rule: dict, look: int, stop: bool) -> Dict[str, str]:

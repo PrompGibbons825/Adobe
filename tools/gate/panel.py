@@ -30,10 +30,14 @@ no tie-break (criteria other than overall) -> 0.5; one family only -> its vote. 
 vote is kept too (``family``), for the per-family harm test and agreement rate in
 tools.gate.stats.
 
-**Sentinels** with a known answer go to every active family (the good design: the designer's
-resize where the task has one, else the base output, against a perturbation of it or
-fit-and-centre). run.py checks each family's accuracy on its own; a family below
-``sentinel_min`` is dropped from the gate run. **Small-defect sentinels** (S6) are report only.
+**Sentinels** with a known answer go to every active family: the good design (the designer's
+resize where the task has one, else the base output) against a copy with one unambiguous defect
+(``sentinel_kinds``: the headline cut past the edge, the headline moved onto the photo) or, only
+where a designer's resize is the good side, fit-and-centre. run.py checks each family's accuracy
+on its own; a family below ``sentinel_min`` is dropped from the gate run. **Report-only
+sentinels** (``report_kinds``: the S6 small defects plus the 20 px misalignment and low-contrast
+moves, which both families missed about half the time in G6's first run) are measured, never
+decisive. ``python -m tools.gate.sentinel_check`` measures the sentinels on dev data.
 
 **Cursor cap:** every ``agent`` call is logged in ``<judge root>/agent_calls.jsonl`` before it
 starts. When a UTC day already holds ``agent_daily_cap`` calls, or either CLI reports a rate or
@@ -84,7 +88,9 @@ DEFAULT_PANEL = {
     "timeout": 900,          # seconds per call (a batch)
     "retries": 1,            # extra calls for the comparisons a reply left out
     "min_sentinels": 8,      # decisive sentinel asks per family per look, at least
-    "small_sentinels": 0.5,  # small-defect sentinel asks per decisive sentinel ask (report only)
+    "small_sentinels": 0.5,  # report-only sentinel asks per decisive sentinel ask
+    "sentinel_kinds": ["p_crop", "p_onart", "fit_centre"],  # decisive; fit_centre only vs a designer resize
+    "report_kinds": ["p_mis20", "p_lowcon", "p_hide_one", "p_clip_letter", "p_edge_touch", "p_typescale"],
 }
 PANEL_KEYS = set(DEFAULT_PANEL)
 
@@ -582,14 +588,14 @@ class Panel:
         """``n`` sentinel comparisons, each asked of every family in ``fams``: a good design
         against a known-worse one, x = the good side. ``small``: the small-defect kinds instead
         (ask kind ``sentinel_small``, report only). Returns ask ids per family."""
-        from tools.judge.perturb import SENTINELS, SMALL_DEFECTS, perturb
+        from tools.judge.perturb import perturb
 
         out: Dict[str, List[str]] = {f: [] for f in fams}
         if not pool or n <= 0:
             return out
         ask_kind = "sentinel_small" if small else "sentinel"
         rng = _seeded(self.seed, self.gate_id, "small_sentinels" if small else "sentinels", batch)
-        kinds = list(SMALL_DEFECTS) if small else list(SENTINELS) + ["fit_centre"]
+        kinds = list(self.cfg["report_kinds"] if small else self.cfg["sentinel_kinds"])
         made, tries = 0, 0
         while made < n and tries < 20 * n:
             tries += 1
@@ -598,6 +604,8 @@ class Panel:
             good = t.get("reference") or t["base"]
             tgt = {"width": good["canvas"]["width"], "height": good["canvas"]["height"]}
             if kind == "fit_centre":
+                if not t.get("reference"):
+                    continue  # the engine's own output is no ground truth against fit-and-centre
                 bad = fit_centre(t["source"], tgt)
                 if abs(t["source"]["canvas"]["width"] / t["source"]["canvas"]["height"]
                        - tgt["width"] / tgt["height"]) < 0.05:
