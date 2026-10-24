@@ -39,7 +39,10 @@ BOND = 0.3  # rows closer than this times the smaller one's height read as one u
 MARGIN_LONG = 0.05  # the least margin along a canvas's length, as a share of it
 STRIP = 3.0  # a canvas this many times wider than tall is a strip
 STRIP_CTA = 0.45  # on a strip a CTA label is at least this share of the strip's display size ...
-STRIP_CTA_KEEP = 0.95  # ... when that costs the rest of the banner no more than 5% of its scale
+TALL_AD = 1.6  # a canvas this many times taller than wide ...
+SMALL_AD = 400  # ... with a short side under this (px) is a tall ad unit (half-page, skyscraper)
+TALL_CTA = 0.3  # ... whose CTA label is at least this share of its display size ...
+BOLD_CTA_KEEP = 0.95  # ... when that costs the rest of the layout no more than 5% of its scale
 HERO_SHARE = 0.2  # in a column, a hero may grow into leftover room until it covers this share of the zone
 COPY_POSTER = 1.4  # a design of copy alone on a tall canvas may set its headline this much past display size
 COLUMN_ROOM = 1.35  # how much further than sqrt(area) a column may grow on a taller canvas
@@ -489,10 +492,13 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
         return None
     root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.7, force_align=force_align,
                          hero_share=HERO_SHARE * zone.w * zone.h)
+    tall_ad = ctx.H >= TALL_AD * ctx.W and min(ctx.W, ctx.H) < SMALL_AD and any(i.role == "cta" for i in body)
     for _ in range(4):
         s, laid, relax = solve(root, ctx, zone, lo, hi)
         if laid is None:
             return None
+        if tall_ad:  # a tall ad unit read at a glance: the button is the column's second focal point
+            s, laid, relax = _with_bold_cta(root, d, ctx, zone, lo, hi, (s, laid, relax), TALL_CTA)
         placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, side=force_align)
         fl, bad, clash, new_zone = _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax)
         if not clash:
@@ -594,14 +600,8 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
             break
     if laid is None:
         return None
-    if ctas and ctx.W >= STRIP * ctx.H:
-        # on a strip the call to action is the banner's second focal point, in a column of its own:
-        # its label is set to keep pace with the strip's display type, when that is free - when it
-        # neither outgrows copy that outranked it nor shrinks the rest of the banner
-        bctx = replace(ctx, cta_min=STRIP_CTA * ctx.display_max)
-        bs, blaid, brelax = solve(root, bctx, zone, lo, hi)
-        if blaid is not None and bs >= STRIP_CTA_KEEP * s and _cta_in_rank(blaid.place(0.0, 0.0), d):
-            s, laid, relax = bs, blaid, brelax
+    if ctas and ctx.W >= STRIP * ctx.H:  # on a strip the CTA sits in a column of its own
+        s, laid, relax = _with_bold_cta(root, d, ctx, zone, lo, hi, (s, laid, relax), STRIP_CTA)
     
     placed = place_row(laid, ctx, laid.zone, ends_in_cta=bool(ctas))
     fl = []
@@ -617,10 +617,22 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
                 capped=s >= hi * 0.999)
 
 
+def _with_bold_cta(root: Node, d: Design, ctx: Ctx, zone: Box, lo: float, hi: float, plain, share: float):
+    """The layout solved again with its call-to-action label set at no less
+    than ``share`` of the canvas's display size, kept only when that is free:
+    when the label outgrows no copy that outranked it and the rest of the
+    layout keeps at least BOLD_CTA_KEEP of its scale. Otherwise ``plain``."""
+    s, laid, relax = plain
+    bs, blaid, brelax = solve(root, replace(ctx, cta_min=share * ctx.display_max), zone, lo, hi)
+    if blaid is not None and bs >= BOLD_CTA_KEEP * s and _cta_in_rank(blaid.place(0.0, 0.0), d):
+        return bs, blaid, brelax
+    return plain
+
+
 def _cta_in_rank(placed: List[Placement], d: Design) -> bool:
     """No call-to-action label is set larger than copy that was at least 25%
     larger than it in the source (the hierarchy the scorer and the checks
-    hold every layout to)."""
+    hold every layout to), and no button is wider than the headline."""
     out, cta = {}, set()
     for r, _, _ in placed:
         for tid, fs in r.fonts.items():
@@ -628,7 +640,10 @@ def _cta_in_rank(placed: List[Placement], d: Design) -> bool:
             if r.item.role == "cta":
                 cta.add(tid)
     src = {tid: float(d.by_id[tid].get("font_size") or 0) for tid in out if tid in d.by_id}
-    return not any(src[a] >= 1.25 * src[c] and out[a] < out[c] - 1 for c in cta for a in out if a not in cta)
+    if any(src[a] >= 1.25 * src[c] and out[a] < out[c] - 1 for c in cta for a in out if a not in cta):
+        return False
+    head = max((r.w for r, _, _ in placed if r.item.role == "headline"), default=0.0)
+    return not head or all(r.w <= head + 0.5 for r, _, _ in placed if r.item.role == "cta")
 
 
 def same_shape(d: Design, ctx: Ctx) -> bool:

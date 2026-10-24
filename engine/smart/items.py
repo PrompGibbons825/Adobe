@@ -344,12 +344,12 @@ def _realize_lockup_line(it: Item, s: float, ctx: Ctx, max_w: float, max_h: floa
 def _realize_button(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float,
                     nowrap: bool = False) -> Optional[Real]:
     """A button sized from its label. A call to action asked to be set at
-    least ``ctx.cta_min`` (on a strip) is tried that large first, then at the
-    layout's size: the larger label is a preference and never costs the
-    button its place."""
+    least ``ctx.cta_min`` is tried that large first, on one line (a wrapped
+    pill reads as a blob, not a button), then at the layout's size: the
+    larger label is a preference and never costs the button its place."""
     fs = font_for(float(it.labels[0].get("font_size", 16) or 16), s, it.role, ctx, relax)
     if it.role == "cta" and ctx.cta_min > fs:
-        r = _button_at(it, s, ctx, max_w, max_h, relax, nowrap, int(ctx.cta_min))
+        r = _button_at(it, s, ctx, max_w, max_h, relax, True, int(ctx.cta_min))
         if r is not None:
             # the larger label is styling, not size the layout earned: score it at the layout's
             # size, so plans without the bonus are not judged to have shrunk their button

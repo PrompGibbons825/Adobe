@@ -119,9 +119,11 @@ is held up at the floor, its button gets a tighter pill rather than a bigger one
 On a strip (3:1 or wider) the call to action is the banner's second focal point,
 in a column of its own, so its label is set at no less than 45% of the strip's
 display size (about 17 px on a 728×90, as Adobe's reference leaderboard sets its
-button) when that is free: it may not outgrow copy that outranked it, nor cost the
-rest of the banner more than 5% of its scale, and it is scored at the size it
-would have had, so it never decides what else stays on the banner;
+button); on a tall ad unit (half-page, skyscraper) at no less than 30% of it. That
+is done only when it is free: on one line (a wrapped pill reads as a blob), no
+larger than copy that outranked it, no wider than the headline, and at no more
+than 5% of the rest of the layout's scale. The bolder button is scored at the size
+it would have had, so it never decides what else stays;
 a round button or sticker stays round, and a sticker (a button-like group on a
 picture, not a text lockup) whose label would have to be blown up past twice its
 art's scale to stay legible is left off the art. An ellipse that bleeds off the
