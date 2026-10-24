@@ -18,6 +18,7 @@ illegibility. Scoring (score.py) picks the winner.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -39,6 +40,7 @@ MARGIN_LONG = 0.05  # the least margin along a canvas's length, as a share of it
 STRIP = 3.0  # a canvas this many times wider than tall is a strip
 STRIP_CTA = 0.45  # on a strip a CTA label is at least this share of the strip's display size ...
 STRIP_CTA_KEEP = 0.95  # ... when that costs the rest of the banner no more than 5% of its scale
+HERO_SHARE = 0.2  # in a column, a hero may grow into leftover room until it covers this share of the zone
 COPY_POSTER = 1.4  # a design of copy alone on a tall canvas may set its headline this much past display size
 COLUMN_ROOM = 1.35  # how much further than sqrt(area) a column may grow on a taller canvas
 ROW_GAP = 0.25  # a banner row's gaps widen to fill it, up to this share of the canvas width each
@@ -145,9 +147,14 @@ def _row_box(row: Sequence[Item]) -> Box:
     return union_all(i.src_box for i in row)
 
 
-def _leaf(it: Item, hero_fill: bool, cap_rel: float = 1.5, min_rel: float = 0.5) -> Leaf:
+def _leaf(it: Item, hero_fill: bool, cap_rel: float = 1.5, min_rel: float = 0.5, hero_share: float = 0.0) -> Leaf:
+    """A row's item; a hero that fills takes leftover room, up to ``cap_rel``
+    times the layout's scale, or (``hero_share``) until it covers that share
+    of the zone, whichever is larger: a small product in the source still
+    reaches a size that carries a roomy canvas, from space no copy needed."""
     if it.role == "hero" and hero_fill:
-        return Leaf(it, fill=True, cap_rel=cap_rel, min_rel=min_rel)
+        floor = math.sqrt(hero_share / max(1e-9, it.src_box.area)) if hero_share else 0.0
+        return Leaf(it, fill=True, cap_rel=cap_rel, min_rel=min_rel, cap_floor=floor)
     return Leaf(it)
 
 
@@ -480,7 +487,8 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
     zone, mx, my = _zone(d, ctx, insets)
     if zone.w < 20 or zone.h < 20:
         return None
-    root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.7, force_align=force_align)
+    root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.7, force_align=force_align,
+                         hero_share=HERO_SHARE * zone.w * zone.h)
     for _ in range(4):
         s, laid, relax = solve(root, ctx, zone, lo, hi)
         if laid is None:

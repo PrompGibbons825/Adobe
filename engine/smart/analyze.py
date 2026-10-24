@@ -761,8 +761,10 @@ def _assign_roles(d: Design) -> None:
             best_logo.role = "logo"
         rest = [it for it in imgs if it.role == "image" and _solid(it)]
         if rest:
+            # the largest solid picture is the hero; so is a design's only picture, however small
+            # (it is the product the design features), unless it is a speck
             hero = max(rest, key=lambda it: it.src_box.area)
-            if hero.src_box.area >= 0.03 * canvas_area:
+            if hero.src_box.area >= 0.03 * canvas_area or (len(rest) == 1 and hero.src_box.area >= 0.01 * canvas_area):
                 hero.role = "hero"
         for it in imgs:
             if it.role != "image":
