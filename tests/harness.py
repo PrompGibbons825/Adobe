@@ -12,7 +12,7 @@ from engine.resize import resize
 from engine.smart.geom import el_box
 from engine.smart.textfit import drawn_box
 from tests.finicky import ROOMY_SIDE, Case
-from tools.rules import contrast_errors, ghost_text, hard_rule_errors, promise_errors
+from tools.rules import contrast_errors, ghost_text, hard_rule_errors, hierarchy_errors, promise_errors
 
 
 def run(src: dict, tgt: dict) -> Tuple[dict, bool]:
@@ -83,6 +83,7 @@ def evaluate(case: Case, target: str, render_check: bool = True) -> Tuple[dict, 
     oo = {e["id"]: e for e in out["elements"]}
     errs += [f"{i}: hidden" for i in case.must_show(target) if not _visible(oo[i])]
     errs += together_errors(case, src, out, roomy=min(tgt.values()) >= ROOMY_SIDE)
+    errs += hierarchy_errors(src, out)
     if case.check:
         errs += case.check(src, out, tgt)
     if render_check:

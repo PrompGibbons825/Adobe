@@ -179,24 +179,25 @@ def _backdrop(bd, plan: Plan, d: Design, ctx: Ctx) -> dict:
 
 
 def _slab(e: dict, d: Design, ctx: Ctx) -> dict:
-    """A flat background slab keeps spanning the side it spanned, at the edge it
-    touched, with its proportions (it is an image)."""
+    """A slab or edge rule keeps spanning the share of the side it spanned, its
+    distance from the nearer edge in proportion, and its proportions (it may be
+    an image)."""
     b = el_box(e)
     o = _strip(e)
     o.pop("_slab", None)
     r = b.w / max(1e-6, b.h)
-    if b.y <= 0.03 * d.H and b.b >= 0.97 * d.H:  # full height
-        h = ctx.H
+    if b.h / d.H >= b.w / d.W:  # runs down the canvas
+        h = ctx.H * min(1.0, b.h / d.H)
         w = min(ctx.W, h * r)
         h = w / r
-        x = 0.0 if b.cx < d.W / 2 else ctx.W - w
-        y = (ctx.H - h) / 2.0
-    else:  # full width
-        w = ctx.W
+        x = b.x / d.W * ctx.W if b.cx < d.W / 2 else ctx.W - (d.W - b.r) / d.W * ctx.W - w
+        y = b.cy / d.H * ctx.H - h / 2.0
+    else:  # runs across it
+        w = ctx.W * min(1.0, b.w / d.W)
         h = min(ctx.H, w / r)
         w = h * r
-        x = (ctx.W - w) / 2.0
-        y = 0.0 if b.cy < d.H / 2 else ctx.H - h
+        x = b.cx / d.W * ctx.W - w / 2.0
+        y = b.y / d.H * ctx.H if b.cy < d.H / 2 else ctx.H - (d.H - b.b) / d.H * ctx.H - h
     o.update(x=x, y=y, width=w, height=h)
     return o
 

@@ -244,6 +244,10 @@ def analyze(source: dict, lockups: bool = True) -> Design:
         if e["id"] in bg_ids or e["id"] in grouped_ids:
             continue
         t = e.get("type")
+        if t in ("image", "shape") and _edge_rule(e, canvas):  # a frame line, not a row of the layout
+            e["_slab"] = True
+            decor.append(e)
+            continue
         if t == "text":
             style = TextStyle.of(e)
             tight, blk = text_tight_box(e, style)
@@ -588,6 +592,15 @@ def _make_composites(d: Design) -> None:
         else:
             new_items.append(it)
     d.items = new_items
+
+
+def _edge_rule(e: dict, canvas: Box) -> bool:
+    """A hairline running most of the way across or down the canvas (a frame
+    line, a side rule): at least 15:1 and spanning 85% of that side."""
+    b = el_box(e)
+    if b.w <= 0 or b.h <= 0 or abs(e["rotation"]) >= 1:
+        return False
+    return (b.h >= 15 * b.w and b.h >= 0.85 * canvas.h) or (b.w >= 15 * b.h and b.w >= 0.85 * canvas.w)
 
 
 def _is_decor(e: dict, canvas: Box) -> bool:

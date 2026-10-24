@@ -124,6 +124,20 @@ def promise_errors(src: dict, out: dict, tgt: dict) -> List[str]:
     return errs
 
 
+def hierarchy_errors(src: dict, out: dict) -> List[str]:
+    """Type hierarchy inversions: a text set at least 25% larger than another
+    in the source must not end up (more than a pixel) smaller than it."""
+    so = {e["id"]: e for e in src["elements"] if e.get("type") == "text"}
+    shown = [e for e in out["elements"] if _visible_text(e) and e["id"] in so]
+    errs = []
+    for a in shown:
+        for b in shown:
+            fa, fb = float(so[a["id"]].get("font_size") or 0), float(so[b["id"]].get("font_size") or 0)
+            if fa >= 1.25 * fb and a["font_size"] < b["font_size"] - 1:  # a pixel is rounding
+                errs.append(f"hierarchy: {a['id']} ({a['font_size']}px) now smaller than {b['id']} ({b['font_size']}px)")
+    return errs
+
+
 def _labels_in_buttons(src: dict, out: dict) -> List[str]:
     """A text that sat inside a shape of its own group stays inside it."""
     errs = []

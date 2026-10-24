@@ -80,6 +80,18 @@ For images, the alpha channel gives where the visible pixels sit.
 Each is solved by a small flexbox-like engine for the largest scale that fits,
 then retried with low-importance items dropped: legal, watermark, ribbon, a set
 of badges, the subhead; a row of product cards gives way one card at a time.
+
+When a design reflows, a short headline is also offered as **display type**, the
+way Adobe's reference output sets it: 1.35× and 1.7× larger than the rest of the
+design, up to the canvas's display size (15% of the short side on posts and
+stories, up to 42% of a strip's height), at about two words a line and at most
+three lines. Two-line headlines break after punctuation or where a style run
+changes colour ("Chase / the Light") when that is nearly as even as the most
+balanced break. Columns follow a typographic **rhythm**:
+- a gap is at most the smaller of the two rows it separates;
+- gaps give way before a hero shrinks;
+- leftover height is shared between the margins and gaps in proportion to the
+  room the source left there.
 Headline and CTA are never dropped. Copy never goes below a legibility floor
 (cap height of about 7 px when the canvas is viewed at 1024 px). When a label
 is held up at the floor, its button gets a tighter pill rather than a bigger one.
@@ -87,9 +99,10 @@ is held up at the floor, its button gets a tighter pill rather than a bigger one
 **4. Score like the rubric** (`score.py`, `pixels.py`)
 
 Visible importance, copy size against the best any candidate achieved, small or
-crowded type, collisions, coverage, balance, a prior for the archetype that suits
-the format, and a charge for secondary items that take far more of the canvas than
-they had in the source. The best eight are then re-ranked by the pixels under
+crowded type, collisions, coverage, balance, hierarchy (a headline that stands out
+up to 1.6× more than in the source earns credit; flattening or overshooting costs
+it), a prior for the archetype that suits the format, and a charge for secondary
+items that take far more of the canvas than they had in the source. The best eight are then re-ranked by the pixels under
 their copy (contrast and texture, rendered through the real renderer), relative to
 the source.
 

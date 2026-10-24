@@ -24,6 +24,7 @@ from .items import Ctx
 
 ALPHA = 1.1
 LINE_CAP = {"headline": 4, "subhead": 5, "body": 6, "legal": 3}
+INVERSION = 25.0  # for each text now smaller than one it was 25% larger than in the source
 HIERARCHY = 12.0  # for a headline that stands out 1.6x more than in the source (or less, negative)
 INFLATION = 2.0  # per unit of importance and of log-excess share (see _inflation)
 SHARE_SLACK = math.log(2.5)  # a secondary item may grow to 2.5x its share of the canvas freely
@@ -129,9 +130,17 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         mx = sum(bx.cx * bx.area for _, bx in boxes) / area
         my = sum(bx.cy * bx.area for _, bx in boxes) / area
         b["balance"] = -25.0 * abs(mx - ctx.W / 2.0) / ctx.W - 12.0 * abs(my - ctx.H / 2.0) / ctx.H
-    b["hierarchy"] = HIERARCHY * _hierarchy(placed, d)
+    b["hierarchy"] = HIERARCHY * _hierarchy(placed, d) - INVERSION * _inversions(placed, d)
     b["prior"] = _prior(p.name.split("@")[0], ctx.W / ctx.H, d.W / d.H)
     return sum(b.values()), b
+
+
+def _inversions(placed, d: Design) -> int:
+    """Texts now set (more than a pixel) smaller than a text they were at least
+    25% larger than."""
+    out = {tid: fs for r, _, _ in placed for tid, fs in r.fonts.items()}
+    src = {tid: float(d.by_id[tid].get("font_size") or 0) for tid in out if tid in d.by_id}
+    return sum(1 for a in out for b in out if src[a] >= 1.25 * src[b] and out[a] < out[b] - 1)
 
 
 def _hierarchy(placed, d: Design) -> float:
