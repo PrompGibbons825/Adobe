@@ -19,7 +19,8 @@ Parts (each reported as PASS / FAIL / SKIP):
   hard rules.
 * ``tiles``   for every (task dir, output dir) pair: ``rules.hard_rule_errors`` and
   ``rules.ghost_text`` must be 0 on every tile (a missing output is a hard error);
-  ``promise_errors``, ``contrast_errors`` and ``hierarchy_errors`` must not rise against the
+  ``promise_errors``, ``contrast_errors``, ``hierarchy_errors`` and ``hidden`` (elements an
+  output hides, ``tools/gate/visible.py``, loop/STEERING.md S1) must not rise against the
   base's outputs on the same tasks (with no base they are reported only).
 
 A task dir holds brief-format ``<name>.json`` tasks (``source`` + ``target_canvas``); an output
@@ -53,7 +54,7 @@ SUITES = [
     ("unittest", [PY, "-m", "unittest", "discover", "-s", "tests", "-t", "."]),
 ]
 MUST_BE_ZERO = ("hard", "ghost")
-MUST_NOT_RISE = ("promise", "contrast", "hierarchy")
+MUST_NOT_RISE = ("promise", "contrast", "hierarchy", "hidden")
 DOCKER_LIMITS = ["--cpus", "2", "--memory", "3g", "--network", "none"]
 SKIP_COPY = {".git", ".venv", "output", "__pycache__", "tests", "tools", "worktrees"}
 
@@ -146,6 +147,7 @@ def tile_metrics(src_dir: Path, out_dir: Path, kit: Optional[Path] = None) -> Di
     if kit:
         os.environ["CHAMELEON_BRAND_KIT"] = str(Path(kit).resolve())
     from tools.rules import contrast_errors, ghost_text, hard_rule_errors, hierarchy_errors, promise_errors
+    from tools.gate.visible import hidden_elements
 
     assets = Path(kit).resolve() / "assets" if kit else None
     res = {}
@@ -168,7 +170,8 @@ def tile_metrics(src_dir: Path, out_dir: Path, kit: Optional[Path] = None) -> Di
             for key, fn in (("ghost", lambda: ghost_text(out, assets) if assets else ghost_text(out)),
                             ("promise", lambda: promise_errors(src, out, tgt)),
                             ("contrast", lambda: contrast_errors(src, out, tgt)),
-                            ("hierarchy", lambda: hierarchy_errors(src, out))):
+                            ("hierarchy", lambda: hierarchy_errors(src, out)),
+                            ("hidden", lambda: hidden_elements(src, out, tgt))):
                 try:
                     m[key] = fn()
                 except Exception as ex:  # noqa: BLE001
