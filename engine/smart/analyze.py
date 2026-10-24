@@ -57,6 +57,7 @@ class Item:
     centered_label: bool = False
     hidden_reason: Optional[str] = None
     core: bool = False  # carries the headline or CTA: never dropped
+    lockup: bool = False  # several texts set as one piece of type (a shadow, a price)
     # composite (an image carrying stickers / a row of product shots)
     host: Optional["Item"] = None
     sats: List["Item"] = field(default_factory=list)
@@ -64,6 +65,11 @@ class Item:
     @property
     def is_text(self) -> bool:
         return self.kind == "text"
+
+    @property
+    def is_copy(self) -> bool:
+        """Copy that flows with the text: a text, or texts locked up as one."""
+        return self.kind == "text" or self.lockup
 
     @property
     def ids(self) -> List[str]:
@@ -161,7 +167,7 @@ def text_tight_box(el: dict, style: TextStyle) -> tuple:
     return Box(x, b.y, max(1.0, ink), blk.height), blk
 
 
-def analyze(source: dict) -> Design:
+def analyze(source: dict, lockups: bool = True) -> Design:
     W0 = float(source["canvas"]["width"])
     H0 = float(source["canvas"]["height"])
     canvas = Box(0, 0, W0, H0)
@@ -236,6 +242,8 @@ def analyze(source: dict) -> Design:
         if t == "text":
             style = TextStyle.of(e)
             tight, blk = text_tight_box(e, style)
+            if e["rotation"]:  # where its glyphs are painted
+                tight = textfit.drawn_box(e)
             fs0 = float(e.get("font_size", 16) or 16)
             items.append(Item(
                 key=e["id"], kind="text", role="text", els=[e], src_box=tight,
@@ -278,11 +286,58 @@ def analyze(source: dict) -> Design:
         if it.src_box.w < 1 or it.src_box.h < 1 or it.src_box.inter(canvas) <= 0:
             it.role = "void"  # nothing to show (zero-size or entirely off the source canvas)
         it.importance = IMPORTANCE.get(it.role, 40)
+    if lockups:
+        _make_lockups(design)
     _make_panels(design)
     _make_composites(design)
     _make_backdrops(design, pending_backdrops)
     _assign_corners(design)
     return design
+
+
+def _locked(a: Item, b: Item) -> bool:
+    """Two texts set as one piece of type. Separate lines of copy keep at least
+    a word space apart; these overlap on purpose (a shadow, stacked display
+    type) or sit closer than that (a big figure beside its cents)."""
+    A, B = a.src_box, b.src_box
+    if A.inter(B) >= 0.15 * min(A.area, B.area):
+        return True
+    fs = min(a.fs0, b.fs0)
+    gap_x = max(B.x - A.r, A.x - B.r)
+    gap_y = max(B.y - A.b, A.y - B.b)
+    side_by_side = min(A.b, B.b) - max(A.y, B.y) > 0.3 * min(A.h, B.h)
+    stacked = min(A.r, B.r) - max(A.x, B.x) > 0.3 * min(A.w, B.w)
+    return (side_by_side and gap_x < 0.3 * fs) or (stacked and gap_y < 0.1 * fs)
+
+
+def _make_lockups(d: Design) -> None:
+    """Texts locked together become one unit that scales as designed."""
+    texts = [it for it in d.items if it.kind == "text" and it.role != "void" and not it.rotation]
+    parent = {id(t): id(t) for t in texts}
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for i, a in enumerate(texts):
+        for b in texts[i + 1:]:
+            if _locked(a, b):
+                parent[find(id(a))] = find(id(b))
+    clusters: Dict[int, List[Item]] = {}
+    for t in texts:
+        clusters.setdefault(find(id(t)), []).append(t)
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        lead = max(members, key=lambda m: (m.importance, m.fs0))
+        els = sorted((e for m in members for e in m.els), key=lambda e: e["z_index"])
+        lock = Item(key=f"lockup:{lead.key}", kind="group", role=lead.role, els=els,
+                    src_box=union_all(m.src_box for m in members), importance=lead.importance,
+                    style=lead.style, fs0=lead.fs0, labels=els, lockup=True,
+                    core=any(m.role in ("headline", "cta") for m in members))
+        d.items = [it for it in d.items if all(it is not m for m in members)] + [lock]
 
 
 def _frames_something(sh: dict, els: List[dict], bg_ids, grouped_ids) -> bool:
@@ -323,7 +378,7 @@ def _make_panels(d: Design) -> None:
     white canvas and disappears, so the panel, its text and anything small on
     it become one unit that scales together."""
     canvas = Box(0, 0, d.W, d.H)
-    texts = [it for it in d.items if it.kind == "text"]
+    texts = [it for it in d.items if it.is_copy]
 
     def flat(it: Item) -> bool:  # a solid block, not a product shot or photo
         e = it.els[0]
@@ -359,7 +414,7 @@ def _make_panels(d: Design) -> None:
     # 1. each text belongs to the surface right under it (highest host below it)
     by_host: Dict[int, List[Item]] = {}
     for t in texts:
-        tb, tz = t.src_box, t.els[0]["z_index"]
+        tb, tz = t.src_box, min(e["z_index"] for e in t.els)
         under = [h for h in hosts if z(h) < tz and el_box(h.els[0]).x <= tb.cx <= el_box(h.els[0]).r and
                  el_box(h.els[0]).y <= tb.cy <= el_box(h.els[0]).b and tb.inter(el_box(h.els[0])) >= 0.5 * tb.area]
         if under:
@@ -421,7 +476,7 @@ def _make_panels(d: Design) -> None:
             new_items.append(comp)
             continue
         els = [e for m in members for e in m.els]
-        labels = [e for m in members if m.kind == "text" for e in m.els]
+        labels = [e for m in members if m.is_copy for e in m.els]
         it = Item(key=f"panel:{host.key}", kind="group", role="panel", els=sorted(els, key=lambda e: e["z_index"]),
                   src_box=union_all(m.src_box for m in members).union(el_box(host.els[0])),
                   importance=best.importance + 2, labels=labels, core=core)
@@ -545,7 +600,8 @@ def _assign_roles(d: Design) -> None:
         if it.kind != "group":
             continue
         short = all(len(str(l.get("content", ""))) <= 40 for l in it.labels)
-        if it.container is not None and it.labels and short:
+        art = any(e.get("type") == "image" for e in it.els)  # a card with a picture is content, not a button
+        if it.container is not None and it.labels and short and not art:
             if abs(it.rotation) >= 3:
                 it.role = "ribbon"
             else:
@@ -565,8 +621,11 @@ def _assign_roles(d: Design) -> None:
             primary.role = "badge"
         else:
             primary.role = "cta"
-        for it in ranked[1:]:
-            it.role = "badge"
+        for it in ranked[1:]:  # a second button beside the CTA, of its size, is a CTA too ("Learn more")
+            b = it.src_box
+            beside = min(b.b, pb.b) - max(b.y, pb.y) > 0.5 * min(b.h, pb.h)
+            alike = abs(b.h / max(1.0, pb.h) - 1.0) < 0.15 and it.main_fs() == primary.main_fs()
+            it.role = "cta" if primary.role == "cta" and beside and alike else "badge"
 
     # ---- standalone texts ----------------------------------------------------
     texts = [it for it in d.items if it.kind == "text"]
@@ -646,12 +705,17 @@ def _text_alpha(el: dict) -> float:
 
 
 def _assign_corners(d: Design) -> None:
-    """Pin small items that sit in a canvas corner (badge, ribbon, watermark...)."""
+    """Pin small items that sit in a canvas corner (badge, ribbon, watermark...).
+    Copy turned on its side ("EST. 2026" up an edge) cannot join the reading
+    flow at all: it keeps to the corner of the edge it ran along."""
     W0, H0 = d.W, d.H
     for it in d.items:
+        b = it.src_box
+        if it.kind == "text" and 45 <= abs(it.rotation) % 180 <= 135 and it.role not in ("headline", "cta"):
+            it.corner = ("t" if b.cy < H0 / 2.0 else "b") + ("l" if b.cx < W0 / 2.0 else "r")
+            continue
         if it.role in ("headline", "hero", "subhead", "body", "cta"):
             continue
-        b = it.src_box
         if b.w > 0.5 * W0 or b.h > 0.25 * H0:
             continue
         if abs(b.cx - W0 / 2.0) < 0.12 * W0:

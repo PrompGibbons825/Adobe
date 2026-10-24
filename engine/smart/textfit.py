@@ -337,6 +337,7 @@ def measure(content: str, style: TextStyle, font_size: float, wrap_width: float,
     )
 
 
+@lru_cache(maxsize=16384)
 def width_keeping_breaks(content: str, style: TextStyle, fs0: float, w0: float, fs: float) -> float:
     """A wrap width at ``fs`` that gives the line breaks ``w0`` gives at ``fs0``.
 
@@ -349,6 +350,35 @@ def width_keeping_breaks(content: str, style: TextStyle, fs0: float, w0: float, 
         if measure(content, style, fs, w * f, exact=True).lines == want:
             return w * f
     return w
+
+
+@lru_cache(maxsize=16384)
+def tight_width(content: str, style: TextStyle, font_size: float, width: float) -> float:
+    """The narrowest wrap width (at most ``width``) that keeps the line breaks
+    ``width`` gives. The renderer's wrap wants a space's advance of room past a
+    line's last glyph, so this is a little more than the widest line; with
+    letter spacing the drawn lines are wider still (see ``glyph_span``)."""
+    want = measure(content, style, font_size, width, exact=True).lines
+    lo, hi = 1.0, max(1.0, width)
+    for _ in range(16):
+        if hi - lo < 0.25:
+            break
+        mid = (lo + hi) / 2.0
+        if measure(content, style, font_size, mid, exact=True).lines == want:
+            hi = mid
+        else:
+            lo = mid
+    return min(max(1.0, width), hi + 0.5)  # headroom, so rounding the emitted width cannot add a line
+
+
+def glyph_span(blk: TextBlock, align: str) -> Tuple[float, float]:
+    """Where the glyphs start and end across the element, from its x. Lines are
+    aligned by their drawn width, which includes letter spacing the wrap
+    ignores, so glyphs can reach past the box on the side(s) away from the
+    alignment edge."""
+    ink, w = blk.ink_width, blk.wrap_width
+    start = 0.0 if align == "left" else ((w - ink) / 2.0 if align == "center" else w - ink)
+    return start, start + ink
 
 
 @lru_cache(maxsize=8192)
@@ -430,20 +460,19 @@ def has_descender(line: str) -> bool:
 def drawn_box(el: dict):
     """Where a text element's glyphs actually land, as the renderer draws them:
     exact wrap at the element width, real advances (fallback fonts included),
-    line boxes down from y, aligned within the width, rotation as a bounding box."""
-    from .geom import Box, rotated_aabb
+    line boxes down from y, aligned within the width; a rotated text as the
+    bounding box of its glyphs turned about the element's centre."""
+    from .geom import Box, rotate_about
 
     style = TextStyle.of(el)
     w = float(el.get("width", 0) or 0)
     blk = measure(str(el.get("content", "")), style, float(el.get("font_size", 12) or 12), w, exact=True)
-    ink = blk.ink_width
-    a = el.get("text_align", "left")
-    x = float(el.get("x", 0) or 0)
-    x0 = x + w - ink if a == "right" else (x + (w - ink) / 2.0 if a == "center" else x)
-    b = Box(x0, float(el.get("y", 0) or 0), max(0.0, ink), blk.height)
+    g0, _ = glyph_span(blk, el.get("text_align", "left"))
+    x, y = float(el.get("x", 0) or 0), float(el.get("y", 0) or 0)
+    b = Box(x + g0, y, max(0.0, blk.ink_width), blk.height)
     rot = float(el.get("rotation", 0) or 0)
-    if rot:  # rotated labels: the rotated bounding box of the line box (conservative)
-        b = rotated_aabb(Box(x, b.y, w, blk.height), rot)
+    if rot:
+        b = rotate_about(b, rot, x + w / 2.0, y + float(el.get("height", 0) or 0) / 2.0)
     return b
 
 
@@ -465,7 +494,17 @@ def text_overlaps(elements, exempt=frozenset(), tol: float = 1.0):
     return out
 
 
-def deliberate_overlaps(elements, share: float = 0.15):
-    """Text pairs that overlap substantially in the source: stacked display type
-    the designer meant (a word over a word), not two lines that merely touch."""
-    return frozenset((a, b) for a, b, _, f in text_overlaps(elements) if f >= share)
+def new_text_overlaps(elements, source_elements, deliberate: float = 0.15, slack: float = 0.02):
+    """Copy drawn over copy that the source did not draw that way.
+
+    A pair counts when its glyph boxes overlap by a larger share of the
+    smaller box than they did in the source (plus ``slack``). Pairs the source
+    overlapped substantially (stacked display type, a drop shadow) are the
+    design and never count."""
+    src = {(a, b): f for a, b, _, f in text_overlaps(source_elements)}
+    out = []
+    for a, b, area, f in text_overlaps(elements):
+        f0 = max(src.get((a, b), 0.0), src.get((b, a), 0.0))
+        if f0 < deliberate and f > f0 + slack:
+            out.append((a, b, area, f))
+    return out

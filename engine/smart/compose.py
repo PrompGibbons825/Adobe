@@ -25,7 +25,7 @@ from .analyze import Design, Item
 from .geom import Box, el_visual_box, union_all
 from .items import Ctx, Real, realize, realize_scaled
 from .layout import Flow, HStack, Laid, Leaf, Node, VStack, chain_positions, search_scale
-from .structure import dominant_align, row_align, rows_for, text_edges
+from .structure import dominant_align, lead_text, row_align, rows_for, text_edges
 
 Placement = Tuple[Real, float, float]
 
@@ -92,7 +92,7 @@ def scale_bounds(d: Design, ctx: Ctx, kind: str = "stack") -> Tuple[float, float
         cap *= 1.4
     head = next((i for i in d.items if i.role == "headline"), None)
     if head is not None and head.fs0 > 0:
-        n = max(1, len(str(head.els[0].get("content", ""))))
+        n = max(1, len(str(lead_text(head).get("content", ""))))
         short = min(1.0, max(0.45, 28.0 / n))
         target = 0.075 * min(ctx.W, ctx.H) * short
         room = 1.0 + 0.5 * math.log(max(1.0, hi_r / max(lo_r, 1e-6)))
@@ -118,7 +118,7 @@ def _row_node(row: Sequence[Item], hero_fill: bool, **kw) -> Node:
         return _leaf(row[0], hero_fill, **kw)
     gaps = [max(0.0, b.src_box.x - a.src_box.r) for a, b in zip(row, row[1:])]
     g = sum(gaps) / len(gaps) if gaps else None
-    if all(i.kind != "text" for i in row):
+    if not any(i.is_copy for i in row):
         return Flow([_leaf(i, False) for i in row], gap=g)
     return HStack([_leaf(i, hero_fill, **kw) for i in row], gaps=gaps)
 
@@ -283,13 +283,26 @@ def _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax):
         fb = Box(x, y, r.w, r.h)
         if any(collides(fb, Box(xx, yy, rr.w, rr.h), gap) for rr, xx, yy in placed):
             clash = True
-            if r.item.corner[0] == "t":
-                top = max(new_zone.y, fb.b + gap)
-                new_zone = Box(new_zone.x, top, new_zone.w, new_zone.b - top)
-            else:
-                bot = min(new_zone.b, fb.y - gap)
-                new_zone = Box(new_zone.x, new_zone.y, new_zone.w, bot - new_zone.y)
+            new_zone = _clear_of(new_zone, fb, r.item.corner, gap)
     return fl, bad, clash, new_zone
+
+
+def _clear_of(zone: Box, fb: Box, corner: str, gap: float) -> Box:
+    """The zone with a corner item's box (plus gap) taken off: from the top or
+    bottom, or from the side, whichever leaves the zone more room."""
+    if corner[0] == "t":
+        top = max(zone.y, fb.b + gap)
+        vertical = Box(zone.x, top, zone.w, zone.b - top)
+    else:
+        bot = min(zone.b, fb.y - gap)
+        vertical = Box(zone.x, zone.y, zone.w, bot - zone.y)
+    if corner[1] == "l":
+        left = max(zone.x, fb.r + gap)
+        side = Box(left, zone.y, zone.r - left, zone.h)
+    else:
+        right = min(zone.r, fb.x - gap)
+        side = Box(zone.x, zone.y, right - zone.x, zone.h)
+    return vertical if vertical.area >= side.area else side
 
 
 # ----------------------------------------------------------------------------
@@ -331,7 +344,7 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
         if not clash:
             return Plan(name=name, placed=placed, hidden=list(hidden) + bad, s=s, zone=zone, floaters=fl,
                         relax=relax, capped=s >= hi * 0.999)
-        if new_zone.h < 0.4 * (ctx.H - 2 * my):
+        if new_zone.h < 0.4 * (ctx.H - 2 * my) or new_zone.w < 0.5 * (ctx.W - 2 * mx):
             return None
         zone = new_zone
     return None
@@ -370,7 +383,7 @@ def plan_split(d: Design, ctx: Ctx, hidden: List[Item], hero_side: str = "left",
         if not clash:
             return Plan(name=name, placed=placed, hidden=list(hidden) + bad, s=s, zone=zone, floaters=fl,
                         relax=relax, capped=s >= hi * 0.999)
-        if new_zone.h < 0.55 * (ctx.H - 2 * my):
+        if new_zone.h < 0.55 * (ctx.H - 2 * my) or new_zone.w < 0.5 * (ctx.W - 2 * mx):
             return None
         zone = new_zone
     return None
@@ -383,8 +396,8 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
     logo = next((i for i in vis if i.role == "logo"), None)
     hero = next((i for i in vis if i.role == "hero"), None)
     ctas = [i for i in vis if i.role == "cta"]
-    texts = [i for i in vis if i.kind == "text"]
-    badges = [i for i in vis if i.role in ("badge", "panel", "group") and not i.corner]
+    texts = [i for i in vis if i.is_copy]
+    badges = [i for i in vis if i.role in ("badge", "panel", "group") and not i.corner and not i.is_copy]
     floaters = [i for i in vis if i.corner and i.role != "logo"]
     others = [i for i in vis if i not in texts and i not in ctas and i not in badges and i not in floaters
               and i is not logo and i is not hero]
@@ -438,7 +451,7 @@ def plan_scaled(d: Design, ctx: Ctx, hidden: List[Item], name: str = "scaled") -
     """A target of the source's own shape gets the design itself, uniformly
     scaled: nothing to rearrange, so nothing is. Copy that has to be set
     larger to stay legible may not run into anything it did not touch."""
-    from .textfit import deliberate_overlaps, drawn_box, text_overlaps
+    from .textfit import drawn_box, new_text_overlaps
 
     k = min(ctx.W / d.W, ctx.H / d.H)
     ox, oy = (ctx.W - d.W * k) / 2.0, (ctx.H - d.H * k) / 2.0
@@ -446,7 +459,7 @@ def plan_scaled(d: Design, ctx: Ctx, hidden: List[Item], name: str = "scaled") -
     for it in _visible(d, hidden):
         placed.append((realize_scaled(it, k, ctx), ox + it.src_box.x * k, oy + it.src_box.y * k))
     els = [e for r, x, y in placed for e in r.emit(x, y)]
-    if text_overlaps(els, exempt=deliberate_overlaps(d.elements)):
+    if new_text_overlaps(els, d.elements):
         return None
     canvas = Box(0, 0, ctx.W, ctx.H)
     for r, x, y in placed:
@@ -523,18 +536,25 @@ def plan_adapt(d: Design, ctx: Ctx, hidden: List[Item], name: str = "adapt", ins
 # ----------------------------------------------------------------------------
 
 
+SET_ROLES = ("badge", "ribbon", "legal", "watermark")  # dropped as a whole set, never one by one
+
+
 def drop_orders(d: Design) -> List[List[Item]]:
-    """Cumulative hide-sets, least important first. Items of one role that sit
-    in one row (a set of badges) are dropped together. Headline and CTA are
-    never hidden; hero and logo only as a last resort."""
+    """Cumulative hide-sets, least important first. Small items of one role
+    that sit in one row (a set of badges) are dropped together; a row of
+    content (product cards) gives way one item at a time from its end, so the
+    ones that fit stay. Headline and CTA are never hidden; hero and logo only
+    as a last resort."""
     opt = [it for it in d.items if it.role not in CORE_ROLES and it.role not in ("missing", "void") and not it.core]
     units: List[List[Item]] = []
     for row in rows_for(opt):
         by_role: Dict[str, List[Item]] = {}
         for it in row:
             by_role.setdefault(it.role, []).append(it)
-        units += list(by_role.values())
-    units.sort(key=lambda u: (max(i.importance for i in u), -min(i.src_box.y for i in u)))
+        for role, items in by_role.items():
+            units += [items] if role in SET_ROLES or role in ("subhead", "body") else [[i] for i in items]
+    units.sort(key=lambda u: (max(i.importance for i in u), -min(i.src_box.y for i in u),
+                              -max(i.src_box.x for i in u)))
     out: List[List[Item]] = [[]]
     acc: List[Item] = []
     for u in units:

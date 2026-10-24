@@ -15,7 +15,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from . import textfit
 from .analyze import Item
-from .geom import Box, el_box, rotated_aabb, union_all
+from .geom import Box, el_box, rotate_about, rotated_aabb, union_all
 from .textfit import TextBlock, TextStyle
 
 INF = float("inf")
@@ -108,20 +108,22 @@ def realize_text(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float = INF,
     style = it.style or TextStyle.of(el)
     if fs is None:
         fs = font_for(it.fs0, s, it.role, ctx, relax)
-    if max_w < fs:
+    rot = it.rotation
+    line_max = _line_room(rot, max_w, max_h, fs * style.line_height) if rot else max_w
+    if line_max < fs:
         return None
-    if mode == "fit":
+    if mode == "fit" and not rot:
         blk = textfit.fit_height(content, style, fs, max_h, max_w)
         if blk is None:
             return None
     else:
         pref = it.measure_em * fs * 1.06
         word = textfit.longest_word(content, style, fs)
-        lim = min(max_w, max(pref, word + 2))
+        lim = min(line_max, max(pref, word + 2))
         blk = textfit.balanced(content, style, fs, lim)
-        if blk.height > max_h + 0.5 and lim < max_w:  # the source measure is a preference, not a wall
-            blk = textfit.balanced(content, style, fs, max_w)
-    if blk.ink_width > max_w + 0.5 or blk.height > max_h + 0.5:
+        if blk.height > max_h + 0.5 and lim < line_max:  # the source measure is a preference, not a wall
+            blk = textfit.balanced(content, style, fs, line_max)
+    if blk.ink_width > line_max + 0.5 or (not rot and blk.height > max_h + 0.5):
         return None
     max_lines = el.get("max_lines")
     if isinstance(max_lines, int) and max_lines > 0 and blk.n_lines > max_lines:
@@ -130,17 +132,32 @@ def realize_text(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float = INF,
     exact = textfit.measure(content, style, blk.font_size, blk.wrap_width, exact=True)
     if exact.lines != blk.lines:  # never trust the fast path over the renderer's own rule
         blk = exact
-        if blk.height > max_h + 0.5 or blk.ink_width > max_w + 0.5:
-            return None
     w, h = float(blk.wrap_width), float(blk.height)
+    g0, _ = textfit.glyph_span(blk, el.get("text_align", "left"))
+    # the footprint holds the element box and every glyph (turned about the box centre)
+    fp = Box(0.0, 0.0, w, h).union(rotate_about(Box(g0, 0.0, blk.ink_width, h), rot, w / 2.0, h / 2.0))
+    if fp.w > max_w + 0.5 or fp.h > max_h + 0.5:
+        return None
 
     def emit(x: float, y: float) -> List[dict]:
         e = _copy(el)
-        e.update(x=x, y=y, width=w, height=h, font_size=blk.font_size)
+        e.update(x=x - fp.x, y=y - fp.y, width=w, height=h, font_size=blk.font_size)
         return [e]
 
-    return Real(item=it, w=w, h=h, scale=fs / max(1.0, it.fs0), fonts={el["id"]: blk.font_size},
+    return Real(item=it, w=fp.w, h=fp.h, scale=fs / max(1.0, it.fs0), fonts={el["id"]: blk.font_size},
                 blocks={el["id"]: blk}, emit_fn=emit)
+
+
+def _line_room(rot: float, max_w: float, max_h: float, line: float) -> float:
+    """The longest line a text turned by ``rot`` can have, if one line of
+    height ``line`` is to stay inside max_w x max_h."""
+    c, s = abs(math.cos(math.radians(rot))), abs(math.sin(math.radians(rot)))
+    room = INF
+    if c > 1e-3:
+        room = min(room, (max_w - line * s) / c)
+    if s > 1e-3:
+        room = min(room, (max_h - line * c) / s)
+    return max(0.0, room)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +217,74 @@ def realize_group(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float
                   relax: float = 1.0, nowrap: bool = False) -> Optional[Real]:
     if it.container is not None and it.centered_label and len(it.labels) == 1:
         return _realize_button(it, s, ctx, max_w, max_h, relax, nowrap)
-    return _realize_generic(it, s, ctx, max_w, max_h, relax)
+    r = _realize_generic(it, s, ctx, max_w, max_h, relax)
+    if r is None and it.lockup and _stacked(it):
+        r = _realize_lockup_line(it, s, ctx, max_w, max_h, relax)
+    return r
+
+
+def _stacked(it: Item) -> bool:
+    """A lockup of different lines (not one line set twice, as in a drop
+    shadow), so its parts can also be read side by side."""
+    lines = [" ".join(str(e.get("content", "")).split()).lower() for e in it.els]
+    return len(set(lines)) == len(lines)
+
+
+def _reading_order(texts: List[dict]) -> List[dict]:
+    """Parts of a lockup in reading order: left to right where they sit side by
+    side (a figure and its cents), top to bottom where they are stacked."""
+    import functools
+
+    boxes = {e["id"]: textfit.drawn_box(e) for e in texts}
+
+    def before(a: dict, b: dict) -> int:
+        A, B = boxes[a["id"]], boxes[b["id"]]
+        apart = max(B.x - A.r, A.x - B.r) > -0.1 * min(A.w, B.w)
+        level = A.y <= B.cy <= A.b or B.y <= A.cy <= B.b
+        if apart and level:
+            return -1 if A.cx < B.cx else 1
+        return -1 if A.cy < B.cy else (1 if A.cy > B.cy else 0)
+
+    return sorted(texts, key=functools.cmp_to_key(before))
+
+
+def _realize_lockup_line(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float) -> Optional[Real]:
+    """A stacked lockup ("UP TO / 50% / OFF") that cannot fit stacked, set on
+    one line in reading order, centred on a common middle, sizes in proportion."""
+    parts = _reading_order(it.els)
+    fs0 = [float(e.get("font_size", 16) or 16) for e in parts]
+    glyphs = [textfit.drawn_box(e) for e in parts]
+    # parts already side by side keep their own spacing (a figure and its cents); the rest get a word space
+    beside = [min(a.b, b.b) - max(a.y, b.y) > 0 and b.x >= a.x for a, b in zip(glyphs, glyphs[1:])]
+    g = max(s, ctx.judge_floor / min(fs0))
+    for _ in range(8):
+        blocks = [textfit.measure(str(e.get("content", "")), TextStyle.of(e), max(int(f * g), ctx.judge_floor),
+                                  1e9, exact=True) for e, f in zip(parts, fs0)]
+        word = 0.3 * min(b.font_size for b in blocks)
+        gaps = [max(0.0, (b.x - a.r) * g) if side else word for a, b, side in zip(glyphs, glyphs[1:], beside)]
+        w = sum(b.ink_width + 1.0 for b in blocks) + sum(gaps)
+        h = max(b.height for b in blocks)
+        if w <= max_w + 0.5 and h <= max_h + 0.5:
+            break
+        if max(fs0) * g < ctx.floor("body", relax):
+            return None
+        g *= 0.99 * min(max_w / w, max_h / h)
+    else:
+        return None
+    fonts = {e["id"]: b.font_size for e, b in zip(parts, blocks)}
+
+    def emit(x: float, y: float) -> List[dict]:
+        out, cx = [], x
+        for i, (e, b) in enumerate(zip(parts, blocks)):
+            o = _copy(e)
+            o.update(x=cx, y=y + (h - b.height) / 2.0, width=b.ink_width + 1.0, height=b.height,
+                     font_size=b.font_size)
+            out.append(o)
+            cx += b.ink_width + 1.0 + (gaps[i] if i < len(gaps) else 0.0)
+        return out
+
+    return Real(item=it, w=w, h=h, scale=g, fonts=fonts, blocks={e["id"]: b for e, b in zip(parts, blocks)},
+                emit_fn=emit)
 
 
 def _realize_button(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float,
@@ -284,72 +368,104 @@ def _scaled_member(m: dict, origin: Box, g: float, ox: float, oy: float, ctx: Ct
     return e
 
 
-def _separate(boxes: List[Box]) -> List[Box]:
-    """Push text boxes down (in reading order) until none overlaps another."""
+def _overlap(a: Box, b: Box) -> Tuple[float, float]:
+    return min(a.r, b.r) - max(a.x, b.x), min(a.b, b.b) - max(a.y, b.y)
+
+
+def _separate(boxes: List[Box], allowed: Optional[Dict[Tuple[int, int], Tuple[float, float]]] = None) -> List[Box]:
+    """Move text boxes apart, in reading order, until no pair overlaps by more
+    than ``allowed[(i, j)]`` = (x, y) overlap it had in the source (nothing, for
+    pairs that did not touch). Each excess goes along the axis that needs the
+    smaller move: lines stacked too tight move down, a figure and its cents
+    move apart sideways."""
+    allowed = allowed or {}
     order = sorted(range(len(boxes)), key=lambda i: (boxes[i].y, boxes[i].x))
-    done: List[Box] = []
     out = list(boxes)
+    done: List[int] = []
     for i in order:
         b = out[i].copy()
-        for _ in range(len(done) + 1):
-            hit = [d for d in done if min(b.r, d.r) - max(b.x, d.x) > 0.5 and min(b.b, d.b) - max(b.y, d.y) > 0.5]
-            if not hit:
+        for _ in range(2 * len(done) + 1):
+            moved = False
+            for j in done:
+                ox, oy = _overlap(b, out[j])
+                ax, ay = allowed.get((min(i, j), max(i, j)), (0.0, 0.0))
+                ex, ey = ox - ax, oy - ay
+                if ox > 0.5 and oy > 0.5 and ex > 0.5 and ey > 0.5:
+                    if ex < ey and b.cx > out[j].cx:
+                        b.x += ex + 0.5
+                    else:
+                        b.y += ey + 0.5
+                    moved = True
+            if not moved:
                 break
-            b.y = max(d.b for d in hit) + 0.5
         out[i] = b
-        done.append(b)
+        done.append(i)
     return out
 
 
 def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float) -> Optional[Real]:
     """Scale the group's internal arrangement uniformly. Every line stays at or
-    above the legibility floor; lines that grow push later lines down so copy
-    never overlaps copy, and the group's footprint grows to hold them."""
+    above the legibility floor and keeps its line breaks and alignment edge;
+    lines that grow push later lines down so copy never runs into copy it did
+    not overlap in the source, and the footprint grows to hold them.
+
+    A lockup (several texts set as one piece of type) keeps its proportions:
+    it is never set so small that its smallest part needs the floor."""
     src = it.src_box
+    texts = [m for m in it.els if m.get("type") == "text"]
+    fs0 = {m["id"]: float(m.get("font_size", 16) or 16) for m in texts}
+    glyphs0 = {m["id"]: textfit.drawn_box(m) for m in texts}
+    overlap0 = {(i, j): _overlap(glyphs0[a["id"]], glyphs0[b["id"]])
+                for i, a in enumerate(texts) for j, b in enumerate(texts) if i < j}
     g = s
-    if it.labels:  # the biggest line on the group must stay legible
-        lab = max(it.labels, key=lambda l: float(l.get("font_size", 16) or 16))
-        fs0 = float(lab.get("font_size", 16) or 16)
-        g = max(g, font_for(fs0, s, "body" if it.role == "panel" else it.role, ctx, relax) / fs0)
+    if texts:  # the biggest line on the group must stay legible
+        big = max(fs0.values())
+        g = max(g, font_for(big, s, "body" if it.role == "panel" else it.role, ctx, relax) / big)
+        if it.lockup:
+            g = max(g, ctx.judge_floor / min(fs0.values()))
 
     def layout(g: float):
         local, fonts, blocks = {}, {}, {}
         for m in it.els:
             b = el_box(m)
             local[m["id"]] = Box((b.x - src.x) * g, (b.y - src.y) * g, b.w * g, b.h * g)
-        texts = [m for m in it.els if m.get("type") == "text"]
+        glyphs, starts = {}, {}
         for m in texts:
-            fs0 = float(m.get("font_size", 16) or 16)
-            fs = max(int(fs0 * g), ctx.judge_floor)  # rounded down, but never small print
-            lb = local[m["id"]]
-            w = lb.w * fs / max(1e-6, fs0 * g)
-            blk = textfit.measure(str(m.get("content", "")), TextStyle.of(m), fs, w, exact=True)
-            if blk.ink_width > w:
-                w = blk.ink_width + 1.0
-                blk = textfit.measure(str(m.get("content", "")), TextStyle.of(m), fs, w, exact=True)
+            content, style = str(m.get("content", "")), TextStyle.of(m)
+            fs = max(int(fs0[m["id"]] * g), ctx.judge_floor)  # rounded down, but never small print
+            w = textfit.width_keeping_breaks(content, style, fs0[m["id"]], max(1.0, el_box(m).w), fs)
+            w = textfit.tight_width(content, style, fs, w)
+            blk = textfit.measure(content, style, fs, w, exact=True)
+            gb = glyphs0[m["id"]]  # the glyphs keep their alignment edge
             a = m.get("text_align", "left")
-            x = lb.x if a == "left" else (lb.r - w if a == "right" else lb.cx - w / 2.0)
-            local[m["id"]] = Box(x, lb.y, w, blk.height)
+            edge = gb.x if a == "left" else (gb.r if a == "right" else gb.cx)
+            gx = (edge - src.x) * g - (0.0 if a == "left" else (blk.ink_width if a == "right" else blk.ink_width / 2.0))
+            glyphs[m["id"]] = Box(gx, (gb.y - src.y) * g, blk.ink_width, blk.height)
+            starts[m["id"]] = textfit.glyph_span(blk, a)[0]
+            local[m["id"]] = Box(gx - starts[m["id"]], (gb.y - src.y) * g, w, blk.height)
             fonts[m["id"]] = fs
             blocks[m["id"]] = blk
-        if texts:
-            sep = _separate([local[m["id"]] for m in texts])
+        if texts:  # copy may overlap only as much as it did in the source
+            allowed = {k: (ox * g, oy * g) for k, (ox, oy) in overlap0.items() if ox > 0 and oy > 0}
+            sep = _separate([glyphs[m["id"]] for m in texts], allowed)
             for m, b in zip(texts, sep):
-                local[m["id"]] = b
-        u = union_all(local.values())
+                glyphs[m["id"]] = b
+                local[m["id"]] = Box(b.x - starts[m["id"]], b.y, local[m["id"]].w, b.h)
+        u = union_all(list(local.values()) + list(glyphs.values()))
         return local, fonts, blocks, u
 
     local, fonts, blocks, u = layout(g)
-    if u.w > max_w + 0.5 or u.h > max_h + 0.5:
-        f = min(max_w / max(1e-6, u.w), max_h / max(1e-6, u.h))
-        g *= f
-        if it.labels:
-            fs0 = max(float(l.get("font_size", 16) or 16) for l in it.labels)
-            if fs0 * g < ctx.floor("body", relax) * 0.999 and fs0 * g < fs0:
+    for _ in range(6):  # too big: shrink (copy held at the floor shrinks less, so repeat)
+        if u.w <= max_w + 0.5 and u.h <= max_h + 0.5:
+            break
+        g *= 0.99 * min(max_w / max(1e-6, u.w), max_h / max(1e-6, u.h))
+        if texts:
+            big = max(fs0.values())
+            if big * g < ctx.floor("body", relax) * 0.999 and big * g < big:
                 return None
         local, fonts, blocks, u = layout(g)
-        if u.w > max_w + 0.5 or u.h > max_h + 0.5:
-            return None
+    else:
+        return None
 
     def emit(x: float, y: float) -> List[dict]:
         out = []

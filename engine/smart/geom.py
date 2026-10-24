@@ -78,6 +78,21 @@ def rotated_aabb(b: Box, deg: float) -> Box:
     return Box(b.cx - w / 2.0, b.cy - h / 2.0, w, h)
 
 
+def rotate_about(b: Box, deg: float, cx: float, cy: float) -> Box:
+    """Bounding box of ``b`` rotated by ``deg`` (clockwise, as the renderer
+    does) about the point (cx, cy)."""
+    if not deg or abs(deg) < 1e-6:
+        return b.copy()
+    t = math.radians(deg)
+    c, s = math.cos(t), math.sin(t)
+    xs, ys = [], []
+    for px, py in ((b.x, b.y), (b.r, b.y), (b.x, b.b), (b.r, b.b)):
+        dx, dy = px - cx, py - cy
+        xs.append(cx + dx * c - dy * s)
+        ys.append(cy + dx * s + dy * c)
+    return Box(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+
 def el_box(el: dict) -> Box:
     return Box(float(el.get("x", 0) or 0), float(el.get("y", 0) or 0),
                max(0.0, float(el.get("width", 0) or 0)), max(0.0, float(el.get("height", 0) or 0)))

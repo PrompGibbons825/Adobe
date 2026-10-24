@@ -16,35 +16,53 @@ __all__ = ["layout_design", "finalize", "plan_design"]
 
 
 def plan_design(source: dict, target: dict):
-    d = analyze(source)
-    ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
-    plans = prune_relaxed(generate(d, ctx))
-    score_plans(plans, d, ctx)
-    plans.sort(key=lambda p: -p.score)
-    _pixel_rerank(plans, d, ctx)
-    _no_text_on_text(plans, d, ctx)
-    return d, ctx, plans
+    """Analyse, generate candidates, rank them and apply the hard checks; the
+    passing plans come back best first.
 
-
-def _no_text_on_text(plans, d: Design, ctx: Ctx) -> None:
-    """Hard check: the shipped plan has no copy drawn over other copy. Pairs that
-    overlapped deliberately in the source (stacked display type) are exempt.
-    Take the best plan that passes; if none does, give up (resize() then falls
-    back to the safe fit-and-centre layout)."""
-    from .textfit import deliberate_overlaps, text_overlaps
-
-    if not plans:
-        return
-    src_pairs = deliberate_overlaps(d.elements)
-    chosen = None
-    for i, p in enumerate(plans):
-        if not text_overlaps(emit(p, d, ctx), exempt=frozenset(src_pairs)):
-            chosen = i
+    Texts locked together (a shadow, a price) are first kept as one piece. If
+    no layout works that way, the design is planned again with them as
+    separate copy. If still nothing passes, this raises and resize() falls
+    back to the safe fit-and-centre layout."""
+    reason = "no feasible layout"
+    for lockups in (True, False):
+        d = analyze(source, lockups=lockups)
+        ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
+        plans = prune_relaxed(generate(d, ctx))
+        if plans:
+            score_plans(plans, d, ctx)
+            plans.sort(key=lambda p: -p.score)
+            _pixel_rerank(plans, d, ctx)
+            if _promote_passing(plans, source, d, ctx):
+                return d, ctx, plans
+            reason = "every candidate draws copy over copy or past the canvas"
+        if not any(it.lockup for it in d.items):
             break
-    if chosen is None:  # never ship copy over copy: the safe layout only scales the source
-        raise RuntimeError("every candidate draws copy over copy")
-    if chosen:
-        plans.insert(0, plans.pop(chosen))
+    raise RuntimeError(reason)
+
+
+def _promote_passing(plans, source: dict, d: Design, ctx: Ctx) -> bool:
+    """Hard check, on the finished output exactly as it will be emitted: no
+    copy over copy that the source did not draw (see
+    textfit.new_text_overlaps) and no glyph past the canvas edge. Moves the
+    best plan that passes to the front; False if none does."""
+    from .textfit import drawn_box, new_text_overlaps
+
+    target = {"width": ctx.W, "height": ctx.H}
+    canvas = Box(-0.5, -0.5, ctx.W + 1.0, ctx.H + 1.0)
+
+    def passes(p: Plan) -> bool:
+        els = finalize(source, {"canvas": target, "elements": emit(p, d, ctx)}, target)["elements"]
+        shown = [e for e in els if e.get("type") == "text" and float(e.get("opacity", 1)) > 0
+                 and str(e.get("content", "")).strip()]
+        if any(drawn_box(e).inter(canvas) < drawn_box(e).area - 1.0 for e in shown):
+            return False
+        return not new_text_overlaps(els, d.elements)
+
+    chosen = next((i for i, p in enumerate(plans) if passes(p)), None)
+    if chosen is None:
+        return False
+    plans.insert(0, plans.pop(chosen))
+    return True
 
 
 def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
@@ -74,8 +92,6 @@ def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
 
 def layout_design(source: dict, target: dict) -> dict:
     d, ctx, plans = plan_design(source, target)
-    if not plans:
-        raise RuntimeError("no feasible layout")
     out = emit(plans[0], d, ctx)
     return {"canvas": {"width": int(target["width"]), "height": int(target["height"])}, "elements": out}
 

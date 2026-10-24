@@ -69,7 +69,7 @@ def _alike(items: Sequence[Item]) -> bool:
     """Siblings that read as one row: same kind, similar size (badges, products, icons)."""
     if len(items) < 2:
         return False
-    kinds = {("button" if i.kind == "group" else i.kind) for i in items}
+    kinds = {("copy" if i.is_copy else ("button" if i.kind == "group" else i.kind)) for i in items}
     if len(kinds) != 1:
         return False
     if any(i.role in ("headline", "logo") for i in items):
@@ -106,10 +106,16 @@ def rows_for(items: Sequence[Item]) -> List[List[Item]]:
     return stack_rows(xy_tree(items))
 
 
+def lead_text(it: Item) -> dict:
+    """The biggest text of a copy item (a lockup's main line)."""
+    texts = [e for e in it.els if e.get("type") == "text"]
+    return max(texts, key=lambda e: float(e.get("font_size", 0) or 0))
+
+
 def dominant_align(items: Sequence[Item]) -> str:
     votes = {"left": 0.0, "center": 0.0, "right": 0.0}
     for it in items:
-        els = it.els if it.kind == "text" else []
+        els = [e for e in it.els if e.get("type") == "text"] if it.is_copy else []
         for e in els:
             a = e.get("text_align", "left")
             votes[a if a in votes else "left"] += it.importance
@@ -121,8 +127,8 @@ def dominant_align(items: Sequence[Item]) -> str:
 def row_align(row: Sequence[Item], W0: float, dom: str, text_left: float, text_right: float) -> str:
     """start / center / end for a row in a single column."""
     b = union_all(i.src_box for i in row)
-    if len(row) == 1 and row[0].kind == "text":
-        a = row[0].els[0].get("text_align", "left")
+    if len(row) == 1 and row[0].is_copy:
+        a = lead_text(row[0]).get("text_align", "left")
         return {"left": "start", "center": "center", "right": "end"}.get(a, "start")
     if abs(b.cx - W0 / 2.0) <= 0.06 * W0 and dom == "center":
         return "center"
@@ -136,7 +142,7 @@ def row_align(row: Sequence[Item], W0: float, dom: str, text_left: float, text_r
 
 
 def text_edges(items: Sequence[Item]) -> Tuple[float, float]:
-    texts = [i for i in items if i.kind == "text"]
+    texts = [i for i in items if i.is_copy]
     if not texts:
         return 0.0, 0.0
     return min(t.src_box.x for t in texts), max(t.src_box.r for t in texts)
