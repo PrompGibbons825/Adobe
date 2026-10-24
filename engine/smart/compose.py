@@ -255,6 +255,33 @@ def place_floater(it: Item, s: float, ctx: Ctx, mx: float, my: float, relax: flo
     return (r, x, y)
 
 
+def place_floaters(floaters: Sequence[Item], s: float, ctx: Ctx, mx: float, my: float,
+                   relax: float) -> Tuple[List[Placement], List[Item]]:
+    """Corner items, most important first. One that would sit on another in
+    its corner queues beside it along the edge; if it cannot, it is dropped."""
+    gap = 0.6 * ctx.base_fs
+    placed: List[Placement] = []
+    failed: List[Item] = []
+    for f in sorted(floaters, key=lambda f: -f.importance):
+        p = place_floater(f, s, ctx, mx, my, relax)
+        if p is None:
+            failed.append(f)
+            continue
+        r, x, y = p
+        right = (f.corner or "tr")[1] == "r"
+        for _ in range(len(placed) + 1):
+            hit = next((Box(xx, yy, rr.w, rr.h) for rr, xx, yy in placed
+                        if collides(Box(x, y, r.w, r.h), Box(xx, yy, rr.w, rr.h), gap)), None)
+            if hit is None:
+                break
+            x = hit.x - gap - r.w if right else hit.r + gap
+        if hit is not None or x < mx - 0.5 or x + r.w > ctx.W - mx + 0.5:
+            failed.append(f)
+        else:
+            placed.append((r, x, y))
+    return placed, failed
+
+
 def overflow(placed: Sequence[Placement], ctx: Ctx) -> Tuple[float, float, float, float]:
     """How far painted element boxes poke out of the canvas on each side."""
     l = t = r_ = b = 0.0
@@ -272,10 +299,7 @@ def collides(a: Box, b: Box, pad: float = 0.0) -> bool:
 
 def _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax):
     """Place corner items; report a smaller zone if they clash with the content."""
-    fl, bad = [], []
-    for f in floaters:
-        p = place_floater(f, s, ctx, mx, my, relax)
-        (bad if p is None else fl).append(f if p is None else p)
+    fl, bad = place_floaters(floaters, s, ctx, mx, my, relax)
     gap = 0.6 * ctx.base_fs
     new_zone = zone.copy()
     clash = False
@@ -411,8 +435,9 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
     kids: List[Node] = []
     if logo is not None and not stack_logo:
         kids.append(Leaf(logo, fill=True, cap_rel=1.7, min_rel=1.0, max_w_frac=0.2))
-    if hero is not None:
-        kids.append(Leaf(hero, fill=True, cap_rel=1.6, min_rel=0.4, max_w_frac=0.3))
+    if hero is not None:  # on a strip the type scale is tiny; the picture may still fill the strip's height
+        kids.append(Leaf(hero, fill=True, cap_rel=1.6, min_rel=0.4, max_w_frac=0.3,
+                         cap_floor=0.9 * zone.h / max(1.0, hero.src_box.h)))
     if copy_rows or (stack_logo and logo is not None):
         rows = ([[logo]] if stack_logo and logo is not None else []) + copy_rows
         col, _ = column(d, rows, force_align="center" if centred else "start", gap_scale=0.6)
@@ -430,11 +455,12 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
         return None
     placed = place_row(laid, ctx, laid.zone)
     fl = []
-    for f in floaters:
-        p = place_floater(f, s, ctx, mx, my, relax)
-        if p is None or any(collides(Box(p[1], p[2], p[0].w, p[0].h), Box(xx, yy, rr.w, rr.h), 0.4 * ctx.base_fs)
-                            for rr, xx, yy in placed):
-            hid.append(f)
+    corner, failed = place_floaters(floaters, s, ctx, mx, my, relax)
+    hid += failed
+    for p in corner:  # a one-line banner has no room to give: a corner item that clashes is dropped
+        if any(collides(Box(p[1], p[2], p[0].w, p[0].h), Box(xx, yy, rr.w, rr.h), 0.4 * ctx.base_fs)
+               for rr, xx, yy in placed):
+            hid.append(p[0].item)
         else:
             fl.append(p)
     return Plan(name=name, placed=placed, hidden=hid, s=s, zone=zone, floaters=fl, relax=relax,
@@ -618,7 +644,7 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
             if busy_bg:  # copy over a photo: also try it against either side
                 yield "stack-start", plan_stack, dict(force_align="start")
                 yield "stack-end", plan_stack, dict(force_align="end")
-        if r >= 1.15:
+        if r >= 0.95:
             for side in ("left", "right"):
                 for frac in (0.34, 0.48):
                     for fold in ((False, True) if has_corners else (False,)):

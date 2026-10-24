@@ -24,6 +24,8 @@ from .items import Ctx
 
 ALPHA = 1.1
 LINE_CAP = {"headline": 4, "subhead": 5, "body": 6, "legal": 3}
+INFLATION = 2.0  # per unit of importance and of log-excess share (see _inflation)
+SHARE_SLACK = math.log(2.5)  # a secondary item may grow to 2.5x its share of the canvas freely
 
 
 def _prior(name: str, r: float, r0: float = 1.0) -> float:
@@ -103,6 +105,7 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
                     lines_pen += it.importance * 0.25 * (14 - chars) / 14
     b["visible"] = vis
     b["hidden"] = -sum(h.importance for h in p.hidden if h.role != "missing")
+    b["inflation"] = -INFLATION * _inflation(placed, d, ctx)
     b["small_text"] = -small
     b["lines"] = -lines_pen
 
@@ -126,6 +129,27 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         b["balance"] = -25.0 * abs(mx - ctx.W / 2.0) / ctx.W - 12.0 * abs(my - ctx.H / 2.0) / ctx.H
     b["prior"] = _prior(p.name, ctx.W / ctx.H, d.W / d.H)
     return sum(b.values()), b
+
+
+def _inflation(placed, d: Design, ctx: Ctx) -> float:
+    """Secondary items blown up past their place in the hierarchy.
+
+    On a small canvas the legibility floor can make a badge or a caption take
+    many times its share of the canvas, until it rivals the headline; a
+    designer would drop it instead. Each secondary item pays for the excess
+    of its canvas share over 2.5x its share in the source (log scale)."""
+    from .compose import CORE_ROLES
+
+    total = 0.0
+    for r, _, _ in placed:
+        it = r.item
+        if it.core or it.role in CORE_ROLES or it.src_box.area <= 0:
+            continue
+        share0 = it.src_box.area / (d.W * d.H)
+        share = r.w * r.h / (ctx.W * ctx.H)
+        if share > 0:
+            total += it.importance * max(0.0, math.log(share / share0) - SHARE_SLACK)
+    return total
 
 
 def pixel_penalty(stats, src_stats, importance) -> float:

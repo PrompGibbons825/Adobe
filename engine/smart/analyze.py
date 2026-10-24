@@ -61,6 +61,7 @@ class Item:
     # composite (an image carrying stickers / a row of product shots)
     host: Optional["Item"] = None
     sats: List["Item"] = field(default_factory=list)
+    memo: dict = field(default_factory=dict, repr=False, compare=False)  # per-item derived values
 
     @property
     def is_text(self) -> bool:
@@ -186,7 +187,11 @@ def analyze(source: dict, lockups: bool = True) -> Design:
         cov = el_box(e).inter(canvas) / max(1.0, canvas.area)
         if cov >= 0.88 and abs(e["rotation"]) < 1 and e["z_index"] <= zmin_text:
             backgrounds.append(e)
+    regions = [] if backgrounds else _background_regions(els, canvas, zmin_text)
+    if regions:  # the region under the headline is the background; the others frame their content
+        backgrounds.append(regions[0])
     bg_ids = {e["id"] for e in backgrounds}
+    region_ids = {e["id"] for e in regions[1:]}
 
     # --- explicit groups -----------------------------------------------------------
     groups: Dict[str, List[dict]] = {}
@@ -267,6 +272,8 @@ def analyze(source: dict, lockups: bool = True) -> Design:
                 it.role = "missing"
                 it.hidden_reason = "asset not in brand kit"
             items.append(it)
+        elif e["id"] in region_ids:
+            pending_backdrops.append(e)
         elif t == "shape":
             if _frames_something(e, els, bg_ids, grouped_ids):
                 pending_backdrops.append(e)
@@ -338,6 +345,50 @@ def _make_lockups(d: Design) -> None:
                     style=lead.style, fs0=lead.fs0, labels=els, lockup=True,
                     core=any(m.role in ("headline", "cta") for m in members))
         d.items = [it for it in d.items if all(it is not m for m in members)] + [lock]
+
+
+def _background_regions(els: List[dict], canvas: Box, zmin_text: float) -> List[dict]:
+    """Flat panels that together are the background: a canvas split into a
+    dark half and a bright half, say. Each spans the canvas one way, sits
+    under all copy, and together they cover it. The one under the most
+    prominent copy comes first; [] if the canvas is not split this way."""
+    def flat(e: dict) -> bool:
+        if e.get("type") == "shape":
+            return e.get("shape_type", "rectangle") == "rectangle"
+        a = assets.info(e.get("asset_id"))
+        return a.found and a.opaque and a.busy < 0.25
+
+    out = []
+    for e in els:
+        if e.get("type") not in ("image", "shape") or e.get("group_id") or abs(e["rotation"]) >= 1 \
+                or e["z_index"] > zmin_text or not flat(e):
+            continue
+        b = el_box(e).inter_box(canvas)
+        if b is None or b.area < 0.15 * canvas.area:
+            continue
+        full_h = b.y <= 0.02 * canvas.h and b.b >= 0.98 * canvas.h
+        full_w = b.x <= 0.02 * canvas.w and b.r >= 0.98 * canvas.w
+        if full_h or full_w:
+            out.append(e)
+    if len(out) < 2 or _covered(out, canvas) < 0.9:
+        return []
+    texts = [e for e in els if e.get("type") == "text" and str(e.get("content", "")).strip()]
+    if texts:
+        lead = max(texts, key=lambda e: float(e.get("font_size", 0) or 0) * (1.12 if e.get("font_weight") == "bold" else 1))
+        lb = el_box(lead)
+        out.sort(key=lambda e: -el_box(e).inter(lb))
+    return out
+
+
+def _covered(els: List[dict], canvas: Box, n: int = 24) -> float:
+    """Share of the canvas covered by the union of these boxes (on an n x n grid)."""
+    boxes = [el_box(e) for e in els]
+    hits = 0
+    for i in range(n):
+        for j in range(n):
+            x, y = canvas.x + (i + 0.5) * canvas.w / n, canvas.y + (j + 0.5) * canvas.h / n
+            hits += any(b.x <= x <= b.r and b.y <= y <= b.b for b in boxes)
+    return hits / (n * n)
 
 
 def _frames_something(sh: dict, els: List[dict], bg_ids, grouped_ids) -> bool:

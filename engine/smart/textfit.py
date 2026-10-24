@@ -296,6 +296,20 @@ def letter_spacing(style: TextStyle, font_size: float) -> float:
 
 
 def measure(content: str, style: TextStyle, font_size: float, wrap_width: float, exact: bool = False) -> TextBlock:
+    """The block ``content`` makes at ``font_size`` wrapped at ``wrap_width``.
+    ``exact`` runs the renderer's own character-level wrap (cached); the
+    default fast path gives the same lines (tests.test_engine.TextParity)."""
+    if exact:
+        return _measure_exact(content, style, max(1, int(font_size)), float(wrap_width))
+    return _measure(content, style, font_size, wrap_width, False)
+
+
+@lru_cache(maxsize=65536)
+def _measure_exact(content: str, style: TextStyle, fs: int, wrap_width: float) -> TextBlock:
+    return _measure(content, style, fs, wrap_width, True)
+
+
+def _measure(content: str, style: TextStyle, font_size: float, wrap_width: float, exact: bool) -> TextBlock:
     fs = max(1, int(font_size))
     if exact:
         widths = char_widths(style.family, style.weight, style.style, float(fs), content)
@@ -358,8 +372,13 @@ def tight_width(content: str, style: TextStyle, font_size: float, width: float) 
     ``width`` gives. The renderer's wrap wants a space's advance of room past a
     line's last glyph, so this is a little more than the widest line; with
     letter spacing the drawn lines are wider still (see ``glyph_span``)."""
-    want = measure(content, style, font_size, width, exact=True).lines
-    lo, hi = 1.0, max(1.0, width)
+    blk = measure(content, style, font_size, width, exact=True)
+    want = blk.lines
+    # never narrower than the widest line's own glyphs (a word that cannot break
+    # keeps one line at any width, but its box should still hold it)
+    spacing = letter_spacing(style, font_size)
+    widest = max((w - spacing * max(0, len(l) - 1) for l, w in zip(blk.lines, blk.line_widths)), default=1.0)
+    lo, hi = max(1.0, widest), max(1.0, width, widest)
     for _ in range(16):
         if hi - lo < 0.25:
             break
@@ -368,7 +387,7 @@ def tight_width(content: str, style: TextStyle, font_size: float, width: float) 
             hi = mid
         else:
             lo = mid
-    return min(max(1.0, width), hi + 0.5)  # headroom, so rounding the emitted width cannot add a line
+    return min(max(1.0, width, widest), hi + 0.5)  # headroom, so rounding the width cannot add a line
 
 
 def glyph_span(blk: TextBlock, align: str) -> Tuple[float, float]:

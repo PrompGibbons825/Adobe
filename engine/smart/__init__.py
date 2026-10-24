@@ -108,6 +108,8 @@ def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
     for r, x, y in plan.placed + plan.floaters:
         for e in r.emit(x, y):
             out[e["id"]] = e
+        for e in r.dropped:
+            out[e["id"]] = _hidden(e, d, ctx)
     for e in d.backgrounds:
         b = _strip(e)
         b.update(x=0.0, y=0.0, width=ctx.W, height=ctx.H)

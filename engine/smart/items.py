@@ -20,6 +20,8 @@ from .textfit import TextBlock, TextStyle
 
 INF = float("inf")
 
+CAPTION_GROWTH = 2.0  # how much larger than its art's scale a caption may be set before it is left out
+
 # Legibility floors, as multiples of the canvas's base readable size.
 FLOOR_MULT = {
     "headline": 1.45, "subhead": 1.0, "body": 1.0, "cta": 1.0, "badge": 0.9,
@@ -64,6 +66,7 @@ class Real:
     fonts: Dict[str, int] = field(default_factory=dict)
     blocks: Dict[str, TextBlock] = field(default_factory=dict)
     emit_fn: Optional[Callable[[float, float], List[dict]]] = None
+    dropped: List[dict] = field(default_factory=list)  # member elements left out of this rendition
 
     def emit(self, x: float, y: float) -> List[dict]:
         els = self.emit_fn(x, y) if self.emit_fn else []
@@ -133,9 +136,7 @@ def realize_text(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float = INF,
     if exact.lines != blk.lines:  # never trust the fast path over the renderer's own rule
         blk = exact
     w, h = float(blk.wrap_width), float(blk.height)
-    g0, _ = textfit.glyph_span(blk, el.get("text_align", "left"))
-    # the footprint holds the element box and every glyph (turned about the box centre)
-    fp = Box(0.0, 0.0, w, h).union(rotate_about(Box(g0, 0.0, blk.ink_width, h), rot, w / 2.0, h / 2.0))
+    fp = text_footprint(Box(0.0, 0.0, w, h), blk, el.get("text_align", "left"), rot)
     if fp.w > max_w + 0.5 or fp.h > max_h + 0.5:
         return None
 
@@ -146,6 +147,19 @@ def realize_text(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float = INF,
 
     return Real(item=it, w=fp.w, h=fp.h, scale=fs / max(1.0, it.fs0), fonts={el["id"]: blk.font_size},
                 blocks={el["id"]: blk}, emit_fn=emit)
+
+
+def text_footprint(box: Box, blk: TextBlock, align: str, rot: float) -> Box:
+    """Everything a text element paints or reserves: its box, its glyphs
+    (which letter spacing can push past the box) and, if it is turned, both
+    turned about the box centre, as the renderer turns it and as finalize()
+    keeps it on the canvas."""
+    g0, _ = textfit.glyph_span(blk, align)
+    glyphs = Box(box.x + g0, box.y, blk.ink_width, box.h)
+    fp = box.union(glyphs)
+    if rot:
+        fp = fp.union(rotated_aabb(box, rot)).union(rotate_about(glyphs, rot, box.cx, box.cy))
+    return fp
 
 
 def _line_room(rot: float, max_w: float, max_h: float, line: float) -> float:
@@ -298,8 +312,14 @@ def _realize_button(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, re
     style = TextStyle.of(lab)
     content = str(lab.get("content", ""))
     src_blk = textfit.measure(content, style, fs0, 1e9)
-    pad_x0 = max(0.0, (cb.w - src_blk.ink_width) / 2.0)
-    pad_x = max(pad_x0 * g, 0.55 * fs)
+    # Padding in ems keeps the source's proportions; a label held up at the
+    # legibility floor (q times larger than the layout scale) gets a tighter
+    # pill, as a designer sets a button on a small format, down to a compact
+    # 0.8 em a side and 2.6 em tall.
+    q = max(1.0, g / max(s, 1e-6))
+    pad_em = max(0.8, max(0.0, (cb.w - src_blk.ink_width) / 2.0) / fs0 / q)
+    h_em = max(2.6, cb.h / fs0 / q)
+    pad_x = max(pad_em * fs, 0.55 * fs)
     rot = it.rotation
     cos_t, sin_t = abs(math.cos(math.radians(rot))), abs(math.sin(math.radians(rot)))
 
@@ -310,10 +330,10 @@ def _realize_button(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, re
     blk = _label_block(lab, fs, max(fs * 2.0, inner_max - 2 * min_pad))
     if nowrap and blk.n_lines > 1:
         return None
-    w = max(cb.w * g, blk.ink_width + 2 * pad_x)
+    w = max(cb.w * g / q, blk.ink_width + 2 * pad_x)
     if w > inner_max:  # tight canvas: give up padding before anything else
         w = max(blk.ink_width + 2 * min_pad, inner_max)
-    h = max(cb.h * g, blk.height + 0.45 * fs)
+    h = max(min(cb.h * g, h_em * fs), blk.height + 0.45 * fs)
     if blk.n_lines > 1:
         h = max(h, blk.height + 1.0 * fs)
     h_cap = max_h / max(0.2, cos_t) if rot else max_h
@@ -414,9 +434,12 @@ def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, r
     src = it.src_box
     texts = [m for m in it.els if m.get("type") == "text"]
     fs0 = {m["id"]: float(m.get("font_size", 16) or 16) for m in texts}
-    glyphs0 = {m["id"]: textfit.drawn_box(m) for m in texts}
-    overlap0 = {(i, j): _overlap(glyphs0[a["id"]], glyphs0[b["id"]])
-                for i, a in enumerate(texts) for j, b in enumerate(texts) if i < j}
+    if "glyphs" not in it.memo:  # where each text's glyphs sit in the source, and how they overlap
+        g0 = {m["id"]: textfit.drawn_box(m) for m in texts}
+        it.memo["glyphs"] = g0
+        it.memo["overlap"] = {(i, j): _overlap(g0[a["id"]], g0[b["id"]])
+                              for i, a in enumerate(texts) for j, b in enumerate(texts) if i < j}
+    glyphs0, overlap0 = it.memo["glyphs"], it.memo["overlap"]
     g = s
     if texts:  # the biggest line on the group must stay legible
         big = max(fs0.values())
@@ -436,22 +459,33 @@ def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, r
             w = textfit.width_keeping_breaks(content, style, fs0[m["id"]], max(1.0, el_box(m).w), fs)
             w = textfit.tight_width(content, style, fs, w)
             blk = textfit.measure(content, style, fs, w, exact=True)
-            gb = glyphs0[m["id"]]  # the glyphs keep their alignment edge
+            gb = glyphs0[m["id"]]
             a = m.get("text_align", "left")
-            edge = gb.x if a == "left" else (gb.r if a == "right" else gb.cx)
-            gx = (edge - src.x) * g - (0.0 if a == "left" else (blk.ink_width if a == "right" else blk.ink_width / 2.0))
-            glyphs[m["id"]] = Box(gx, (gb.y - src.y) * g, blk.ink_width, blk.height)
             starts[m["id"]] = textfit.glyph_span(blk, a)[0]
-            local[m["id"]] = Box(gx - starts[m["id"]], (gb.y - src.y) * g, w, blk.height)
+            rot = float(m.get("rotation", 0) or 0)
+            if rot:  # turned copy keeps its centre; its glyphs turn about the box centre
+                b0 = el_box(m)
+                cx, cy = (b0.cx - src.x) * g, (b0.cy - src.y) * g
+                local[m["id"]] = Box(cx - w / 2.0, cy - blk.height / 2.0, w, blk.height)
+                glyphs[m["id"]] = rotate_about(Box(cx - w / 2.0 + starts[m["id"]], cy - blk.height / 2.0,
+                                                   blk.ink_width, blk.height), rot, cx, cy)
+            else:  # the glyphs keep their alignment edge
+                edge = gb.x if a == "left" else (gb.r if a == "right" else gb.cx)
+                gx = (edge - src.x) * g - (0.0 if a == "left" else (blk.ink_width if a == "right" else blk.ink_width / 2.0))
+                glyphs[m["id"]] = Box(gx, (gb.y - src.y) * g, blk.ink_width, blk.height)
+                local[m["id"]] = Box(gx - starts[m["id"]], (gb.y - src.y) * g, w, blk.height)
             fonts[m["id"]] = fs
             blocks[m["id"]] = blk
         if texts:  # copy may overlap only as much as it did in the source
             allowed = {k: (ox * g, oy * g) for k, (ox, oy) in overlap0.items() if ox > 0 and oy > 0}
             sep = _separate([glyphs[m["id"]] for m in texts], allowed)
-            for m, b in zip(texts, sep):
+            for m, b in zip(texts, sep):  # move each element box with its glyphs
+                dx, dy = b.x - glyphs[m["id"]].x, b.y - glyphs[m["id"]].y
                 glyphs[m["id"]] = b
-                local[m["id"]] = Box(b.x - starts[m["id"]], b.y, local[m["id"]].w, b.h)
-        u = union_all(list(local.values()) + list(glyphs.values()))
+                local[m["id"]] = local[m["id"]].moved(dx, dy)
+        u = union_all(list(local.values()) + list(glyphs.values()) +
+                      [text_footprint(local[m["id"]], blocks[m["id"]], m.get("text_align", "left"),
+                                      float(m.get("rotation", 0) or 0)) for m in texts])
         return local, fonts, blocks, u
 
     local, fonts, blocks, u = layout(g)
@@ -491,12 +525,18 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float):
     hb = host.src_box
     k = rh.w / max(1e-6, hb.w)  # px of output per px of source
     parts = [(rh, 0.0, 0.0)]
+    dropped: List[dict] = []
     for sat in it.sats:
         if sat.kind == "text":
+            # a secondary caption that would have to grow past twice its art's scale to stay
+            # legible no longer belongs on the art: it is left out rather than blown up
+            if ctx.judge_floor > CAPTION_GROWTH * sat.fs0 * k and sat.role not in ("headline", "cta") and not sat.core:
+                dropped += sat.els
+                continue
             # copy on art keeps its place and measure, so captions do not collide
-            rs = _scaled_text(sat, k, ctx)
+            rs, ox, oy = _scaled_text(sat, k, ctx)
             eb = el_box(sat.els[0])
-            parts.append((rs, (eb.x - hb.x) * k, (eb.y - hb.y) * k))
+            parts.append((rs, (eb.x - hb.x) * k + ox, (eb.y - hb.y) * k + oy))
             continue
         rs = realize(sat, t, ctx, relax=relax)
         if rs is None:
@@ -504,38 +544,49 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float):
         fx = (sat.src_box.cx - hb.x) / max(1e-6, hb.w)
         fy = (sat.src_box.cy - hb.y) / max(1e-6, hb.h)
         parts.append((rs, fx * rh.w - rs.w / 2.0, fy * rh.h - rs.h / 2.0))
-    tix = [i for i, (r, _, _) in enumerate(parts) if r.item.kind == "text"]
-    if len(tix) > 1:  # captions that grew to the floor must not run into each other
-        sep = _separate([Box(parts[i][1], parts[i][2], parts[i][0].w, parts[i][0].h) for i in tix])
+    tix = [i for i, (r, _, _) in enumerate(parts) if r.item.is_copy]
+    if len(tix) > 1:  # captions that grew to the floor must not run into each other (any more than designed)
+        src = [parts[i][0].item.src_box for i in tix]
+        allowed = {}
+        for a in range(len(tix)):
+            for b in range(a + 1, len(tix)):
+                ox, oy = _overlap(src[a], src[b])
+                if ox > 0 and oy > 0:
+                    allowed[(a, b)] = (ox * k, oy * k)
+        sep = _separate([Box(parts[i][1], parts[i][2], parts[i][0].w, parts[i][0].h) for i in tix], allowed)
         for i, b in zip(tix, sep):
             parts[i] = (parts[i][0], b.x, b.y)
     x0 = min(px for _, px, _ in parts)
     y0 = min(py for _, _, py in parts)
     x1 = max(px + r.w for r, px, _ in parts)
     y1 = max(py + r.h for r, _, py in parts)
-    return parts, x0, y0, x1 - x0, y1 - y0, rh
+    return parts, x0, y0, x1 - x0, y1 - y0, rh, dropped
 
 
-def _scaled_text(it: Item, k: float, ctx: Ctx) -> Real:
-    """A caption scaled with the art it sits on: same place, same measure (in
-    ems), font rounded down but never below small-print legibility."""
+def _scaled_text(it: Item, k: float, ctx: Ctx) -> Tuple[Real, float, float]:
+    """A caption scaled with the art it sits on: same place, same line breaks,
+    font rounded down but never below small-print legibility. Returns the
+    realized caption and where its footprint starts relative to the scaled
+    source box (glyphs can reach past the box: letter spacing, rotation)."""
     el = it.els[0]
-    style = it.style or TextStyle.of(el)
+    content, style = str(el.get("content", "")), it.style or TextStyle.of(el)
     fs0 = max(1.0, it.fs0)
     fs = max(int(fs0 * k), ctx.judge_floor)
     eb = el_box(el)
-    width = max(1.0, eb.w * fs / fs0)
-    blk = textfit.measure(str(el.get("content", "")), style, fs, width, exact=True)
-    width = max(width, blk.ink_width + 1.0)
-    blk = textfit.measure(str(el.get("content", "")), style, fs, width, exact=True)
+    width = textfit.width_keeping_breaks(content, style, fs0, max(1.0, eb.w), fs)
+    blk = textfit.measure(content, style, fs, width, exact=True)
+    rot = it.rotation
+    # the box keeps its scaled top-left, or its centre if it is turned (the renderer's pivot)
+    bx, by = ((eb.w * k - width) / 2.0, (eb.h * k - blk.height) / 2.0) if rot else (0.0, 0.0)
+    fp = text_footprint(Box(bx, by, width, blk.height), blk, el.get("text_align", "left"), rot)
 
     def emit(x: float, y: float) -> List[dict]:
         e = _copy(el)
-        e.update(x=x, y=y, width=width, height=blk.height, font_size=fs)
+        e.update(x=x + bx - fp.x, y=y + by - fp.y, width=width, height=blk.height, font_size=fs)
         return [e]
 
-    return Real(item=it, w=width, h=blk.height, scale=fs / fs0, fonts={el["id"]: fs},
-                blocks={el["id"]: blk}, emit_fn=emit)
+    real = Real(item=it, w=fp.w, h=fp.h, scale=fs / fs0, fonts={el["id"]: fs}, blocks={el["id"]: blk}, emit_fn=emit)
+    return real, fp.x, fp.y
 
 
 def realize_composite(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF,
@@ -559,7 +610,7 @@ def realize_composite(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: f
         res = best
     if res is None:
         return None
-    parts, x0, y0, w, h, rh = res
+    parts, x0, y0, w, h, rh, dropped = res
     fonts, blocks = {}, {}
     for r, _, _ in parts:
         fonts.update(r.fonts)
@@ -571,7 +622,7 @@ def realize_composite(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: f
             out += r.emit(x + px - x0, y + py - y0)
         return out
 
-    return Real(item=it, w=w, h=h, scale=rh.scale, fonts=fonts, blocks=blocks, emit_fn=emit)
+    return Real(item=it, w=w, h=h, scale=rh.scale, fonts=fonts, blocks=blocks, emit_fn=emit, dropped=dropped)
 
 
 def _align_shift(e: dict, w_scaled: float, w: float) -> float:
