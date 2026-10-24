@@ -646,6 +646,9 @@ class Run(TempEnv):
         self.assertEqual(gate["cursor_asks"], gate["panel"]["usage"]["cursor_asks"])
         self.assertEqual(gate["panel"]["active"], ["claude", "cursor"])
         self.assertEqual(gate["panel"]["looks"][0]["designs"], 3)
+        sk = gate["panel"]["sentinel_kinds"]["sentinel"]
+        self.assertEqual(sorted(sk), ["claude", "cursor"])
+        self.assertTrue(all(m["correct"] == m["n"] > 0 for m in sk["claude"].values()))
         self.assertIn("hidden", gate["floor"]["parts"]["tiles"]["sets"][self.version]["totals"])
         # aggregates only: no tile id leaves the private folder
         self.assertNotRegex(json.dumps({k: v for k, v in gate.items() if k != "prereg"}), r'"i0\d\d')

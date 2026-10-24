@@ -628,6 +628,22 @@ class Panel:
         return {"n": len(allv), "correct": int(sum(allv)), "accuracy": (sum(allv) / len(allv)) if allv else None,
                 "by_kind": {k: round(sum(v) / len(v), 3) for k, v in sorted(by.items())}}
 
+    def sentinel_kinds(self) -> Dict[str, Dict[str, dict]]:
+        """Per ask kind (``sentinel``, ``sentinel_small``), family and perturbation kind: how many
+        sentinel asks were answered and how many chose the good side (overall)."""
+        out: Dict[str, Dict[str, dict]] = {}
+        for aid, a in self.asks.items():
+            if a["kind"] not in ("sentinel", "sentinel_small"):
+                continue
+            v = self.vote(aid)
+            if not v:
+                continue
+            m = out.setdefault(a["kind"], {}).setdefault(a["family"], {}).setdefault(
+                a["key"].rsplit(".", 1)[-1], {"n": 0, "correct": 0})
+            m["n"] += 1
+            m["correct"] += int(v["overall"])
+        return out
+
     def judge_tiles(self, tiles: List[dict], batch: int, pool: Optional[List[dict]] = None,
                     share: float = 0.10, reencode_cand: bool = False, families: Optional[List[str]] = None) -> dict:
         """Judge a batch of changed tiles (dicts with set, tile, design, tier, source, base, cand,

@@ -279,9 +279,11 @@ def verdict_line(rep: dict) -> str:
         parts.append(f"proxy {_fmt(pr)}{' REJECT' if pr.get('reject') else ''}")
     ev = (rep.get("panel") or {}).get("final")
     if ev:
-        for v in p["sets"]:
-            s = sealed._parse(v)[0]
-            parts.append(f"{v} t1 {_fmt(ev['cells'].get(f'{s} t1'))} t2 {_fmt(ev['cells'].get(f'{s} t2'))}")
+        by_set: Dict[str, List[str]] = {}
+        for v in p["sets"]:  # versions of one set pool into the same cells: print them once
+            by_set.setdefault(sealed._parse(v)[0], []).append(v)
+        for s, vs in by_set.items():
+            parts.append(f"{'+'.join(vs)} t1 {_fmt(ev['cells'].get(f'{s} t1'))} t2 {_fmt(ev['cells'].get(f'{s} t2'))}")
         parts.append("harm " + (", ".join(ev["harm"]) if ev["harm"] else "none"))
         fam = ev.get("family") or {}
         if fam:
@@ -358,7 +360,8 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
     for s in sets:
         for t in s["tasks"]:
             o = outs[s["version"]][t["task_id"]]
-            rec = {"set": s["set"], "tile": t["task_id"], "design": design_id(t), "tier": tier_of(t["target_canvas"]),
+            rec = {"set": s["set"], "version": s["version"], "tile": t["task_id"], "design": design_id(t),
+                   "tier": tier_of(t["target_canvas"]),
                    "source": t["source"], "base": o["base"], "cand": o["cand"], "kit": s["kit"],
                    "reference": t.get("reference")}
             rec["bleed"] = _bleed_counts(rec)
@@ -374,7 +377,7 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
     random.Random(seed).shuffle(designs)
     cap = designs[: rule["looks"][-1]]
     rep["changed"] = {"tiles": len(tiles), "designs": len(designs), "judged_cap": len(cap),
-                      "by_set": {s["version"]: sum(1 for t in tiles if t["set"] == s["set"]) for s in sets}}
+                      "by_set": {s["version"]: sum(1 for t in tiles if t["version"] == s["version"]) for s in sets}}
     _say(f"changed {len(tiles)} tiles in {len(designs)} designs")
     if not designs:
         return finish("REJECT", "no changed tiles")
@@ -516,6 +519,8 @@ def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, tra
                                                                           "families", "coverage", "agreement")},
                     # pairwise votes decide; the 1-10 score deltas and small-defect sentinels are report only
                     "deltas": stats.score_deltas(recs), "sentinels": sent, "small_sentinels": small,
+                    # per family and perturbation kind, correct/asked (aggregates: kinds are ours, not sealed)
+                    "sentinel_kinds": panel.sentinel_kinds(),
                     "families": list(panel.families), "active": list(active), "dropped": dropped,
                     "usage": panel.usage(),
                     "tiebreak_tiles": sum(1 for r in recs if r.get("tiebreak_used")), "tiles": len(recs)}
