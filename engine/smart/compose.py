@@ -32,7 +32,10 @@ Placement = Tuple[Real, float, float]
 CORE_ROLES = ("headline", "cta", "logo", "hero")
 SAME_SHAPE = 1.03  # aspect ratios this close are the same format at another size
 EMPHASIS = (1.35, 1.7)  # display emphasis tried for a short headline when the design reflows
-DISPLAY_WORDS = 8  # a headline this short can be set as display type
+DISPLAY_WORDS = 8  # a headline this short can be set as display type; a longer one only gets the first step
+BOND = 0.3  # rows closer than this times the smaller one's height read as one unit and spread as one
+WIDE_MEASURE = 1.8  # on a much wider canvas, copy is also tried this much wider than its source measure
+WIDER = 1.5  # ... when the target's aspect ratio is this many times the source's
 
 
 @dataclass
@@ -197,22 +200,46 @@ def solve(root: Node, ctx: Ctx, zone: Box, lo: float, hi: float) -> Tuple[Option
 # placing a solved tree inside the zone
 
 
+def _room(a: Box, b: Box) -> float:
+    """The space the source put between two consecutive rows of a column: the
+    gap between them, whichever way it ran (a banner's gutters become a
+    column's breathing room, though a gutter counts for no more than the
+    taller row: past that it is the strip's spare width, not spacing). Rows
+    set tight (a subhead tucked under its headline) are bonded and get none."""
+    side_by_side = b.y < a.b - 0.5 and a.y < b.b - 0.5
+    g = min(max(0.0, b.x - a.r, a.x - b.r), max(a.h, b.h)) if side_by_side else b.y - a.b
+    return g if g >= BOND * min(a.h, b.h) else 0.0
+
+
 def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design, ctx: Ctx,
-                 zone: Box) -> List[Placement]:
+                 zone: Box, side: Optional[str] = None) -> List[Placement]:
     """Rows top to bottom with their measured gaps; the height left over is
     shared between the top margin, each gap and the bottom margin in
-    proportion to the room the source left there. The source's spacing
-    pattern survives (a design that breathes at the bottom still does, rows
-    that sat close stay close) while gaps follow the content, not the canvas."""
+    proportion to the room the source left there (``_room``; the margins are
+    the content's own). The source's spacing pattern survives (a design that
+    breathes at the bottom still does, rows that sat close stay close) while
+    gaps follow the content, not the canvas.
+
+    Across, the column is one block whose centre sits where the source's
+    content was centred, relative to the canvas width (a balanced design is
+    centred whatever its text alignment; one set off to a side stays there),
+    unless ``side`` pins it. Rows align inside the block."""
     parts: List[Laid] = laid.parts  # type: ignore[attr-defined]
     gaps: List[float] = laid.gap_list  # type: ignore[attr-defined]
-    room = [boxes[0].y] + [b.y - a.b for a, b in zip(boxes, boxes[1:])] + [d.H - boxes[-1].b]
-    room = [max(0.0, r) for r in room]
+    room = [min(b.y for b in boxes)] + [_room(a, b) for a, b in zip(boxes, boxes[1:])] + \
+        [d.H - max(b.b for b in boxes)]
     slack = max(0.0, zone.h - sum(p.h for p in parts) - sum(gaps))
     share = [slack * r / sum(room) for r in room] if sum(room) > 0 else [slack / 2.0] + [0.0] * (len(parts) - 1) + [slack / 2.0]
+    bw = max(p.w for p in parts)
+    if side in ("start", "end"):
+        bx = zone.x if side == "start" else zone.r - bw
+    else:
+        cx0 = (max(0.0, min(b.x for b in boxes)) + min(d.W, max(b.r for b in boxes))) / 2.0
+        bx = zone.x + zone.w * cx0 / max(1.0, d.W) - bw / 2.0
+        bx = min(max(bx, zone.x), zone.r - bw) if zone.w > bw else zone.cx - bw / 2.0
     out, y = [], zone.y + share[0]
     for i, (p, a) in enumerate(zip(parts, aligns)):
-        x = zone.x if a == "start" else (zone.r - p.w if a == "end" else zone.cx - p.w / 2.0)
+        x = bx if a == "start" else (bx + bw - p.w if a == "end" else bx + (bw - p.w) / 2.0)
         out += p.place(x, y)
         y += p.h + (gaps[i] + share[i + 1] if i < len(gaps) else 0.0)
     return out
@@ -369,7 +396,7 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
         s, laid, relax = solve(root, ctx, zone, lo, hi)
         if laid is None:
             return None
-        placed = place_column(laid, boxes, root.align, d, ctx, laid.zone)
+        placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, side=force_align)
         fl, bad, clash, new_zone = _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax)
         if not clash:
             return Plan(name=name, placed=placed, hidden=list(hidden) + bad, s=s, zone=zone, floaters=fl,
@@ -644,7 +671,7 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
     busy_bg = any(b.get("type") == "image" and _assets.info(b.get("asset_id")).busy > 0.3 for b in d.backgrounds)
     head = next((it for it in d.items if it.role == "headline" and it.is_copy), None)
     words = str(lead_text(head).get("content", "")).split() if head is not None else []
-    display_headline = 0 < len(words) <= DISPLAY_WORDS
+    emphasis = () if not words else EMPHASIS if len(words) <= DISPLAY_WORDS else EMPHASIS[:1]
 
     def archetypes(force_all: bool):
         if r <= 2.2 or force_all:
@@ -662,15 +689,21 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
             for stack_logo in (False, True):
                 yield "row" + ("-logo-stacked" if stack_logo else ""), plan_row, dict(stack_logo=stack_logo)
 
+    measures = (1.0, WIDE_MEASURE) if r >= WIDER * d.W / d.H else (1.0,)
+
     def variants(force_all: bool = False):
         """(name, planner, options, ctx). A reflowed design is also offered with
-        its headline set as display type, larger than the rest (EMPHASIS)."""
+        its headline set as display type, larger than the rest (EMPHASIS; a
+        long headline only the first step, see items._display), and, on a much
+        wider canvas, with its copy set to a longer line, so a column of copy
+        can trade lines for size (WIDE_MEASURE)."""
         yield "adapt", plan_adapt, {}, ctx
         for name, fn, kw in archetypes(force_all):
-            yield name, fn, kw, ctx
-            if display_headline:
-                for e in EMPHASIS:
-                    yield f"{name}@{e:g}", fn, kw, replace(ctx, emphasis=e)
+            for m in measures:
+                mname, mctx = (name, ctx) if m == 1.0 else (f"{name}~{m:g}", replace(ctx, measure=m))
+                yield mname, fn, kw, mctx
+                for e in emphasis:
+                    yield f"{mname}@{e:g}", fn, kw, replace(mctx, emphasis=e)
 
     if not _visible(d, missing):  # nothing to lay out: every element is void or missing
         return [Plan(name="empty", placed=[], hidden=list(missing), s=1.0, zone=Box(0, 0, ctx.W, ctx.H))]

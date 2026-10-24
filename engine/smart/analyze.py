@@ -561,7 +561,7 @@ def _make_composites(d: Design) -> None:
         xb = x.src_box
         best = None
         for h in imgs:
-            hb = h.src_box
+            hb = el_box(h.els[0])  # the frame the designer placed the sticker against, margins included
             if xb.inter(hb) >= 0.25 * max(1.0, xb.area) and xb.area <= 0.35 * hb.area and \
                     min(e["z_index"] for e in x.els) > max(e["z_index"] for e in h.els):
                 if best is None or hb.area > best.src_box.area:
@@ -673,11 +673,22 @@ def _assign_roles(d: Design) -> None:
         else:
             it.role = "group"
     if buttons:
+        bg = {b["id"] for b in d.backgrounds}
+        pictures = [e for e in d.elements if e.get("type") == "image" and e["id"] not in bg]
+
+        def sticker(it: Item) -> bool:
+            """Round, or stuck on a picture: a badge, which a real button outranks for CTA."""
+            c = it.container
+            cb = el_box(c)
+            on_art = any(el_box(e).inter(cb) >= 0.3 * max(1.0, cb.area) and c["z_index"] > e["z_index"]
+                         for e in pictures)
+            return c.get("shape_type") == "ellipse" or on_art
+
         def btn_score(it: Item) -> float:
             b = el_box(it.container)
             lower = b.cy / H0
             return b.area / canvas_area * 10 + it.main_fs() / 100.0 + 0.3 * lower
-        ranked = sorted(buttons, key=btn_score, reverse=True)
+        ranked = sorted(buttons, key=lambda it: (not sticker(it), btn_score(it)), reverse=True)
         primary = ranked[0]
         pb = primary.src_box
         corner_top = pb.cy < 0.22 * H0 and (pb.cx < 0.3 * W0 or pb.cx > 0.7 * W0)
@@ -720,6 +731,11 @@ def _assign_roles(d: Design) -> None:
             e = it.els[0]
             name = str(e.get("asset_id", "")).lower()
             b = el_box(e)
+            a = assets.info(e.get("asset_id"))
+            if a.found and a.opaque and a.busy < 0.25 and any(  # a flat block carrying copy is a panel
+                    b.x <= t.src_box.cx <= b.r and b.y <= t.src_box.cy <= b.b and
+                    min(x["z_index"] for x in t.els) > e["z_index"] for t in texts):
+                return 0.0
             sc = 0.0
             if "logo" in name or "wordmark" in name or "lockup" in name:
                 sc += 3.0

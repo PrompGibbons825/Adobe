@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+from engine.smart.geom import el_visual_box
+from engine.smart.textfit import drawn_box
 from tools.make_cases import GOLD, ORANGE, PLUM, WHITE, button, text
 from tools.sheet import CATALOGUE
 
@@ -118,6 +120,41 @@ def whole_units(*units: Tuple[str, ...]) -> Check:
         if min(tgt.values()) >= ROOMY_SIDE and not any(shown[u[0]] for u in units):
             errs.append("every unit hidden")
         return errs
+    return check
+
+
+def balanced(tol: float = 0.12) -> Check:
+    """A design whose content was centred across the canvas still is, whatever
+    its text alignment, on every target that reflows it into a column."""
+    def check(src, out, tgt):
+        W = tgt["width"]
+        if W / tgt["height"] > 2.2:  # strips are rows; their spread is the row's business
+            return []
+        boxes = [drawn_box(e) if e["type"] == "text" else el_visual_box(e) for e in out["elements"]
+                 if e["id"] != "bg" and float(e.get("opacity", 1)) > 0 and float(e.get("font_size", 2) or 2) > 1]
+        if not boxes:
+            return []
+        cx = (min(b.x for b in boxes) + max(b.r for b in boxes)) / 2.0
+        if abs(cx - W / 2.0) > tol * W:
+            return [f"content centred at {cx / W:.2f} of the width, not the middle"]
+        return []
+    return check
+
+
+def stays_under(top: str, under: str) -> Check:
+    """``under`` reads straight after ``top``: just below it (within a line of
+    its own type), sharing its column. Re-wrapping either is fine."""
+    def check(src, out, tgt):
+        oo = {e["id"]: e for e in out["elements"]}
+        a, b = oo[top], oo[under]
+        if float(a.get("opacity", 1)) <= 0 or float(b.get("opacity", 1)) <= 0:
+            return []
+        A, B = drawn_box(a), drawn_box(b)
+        gap = B.y - A.b
+        share = min(A.r, B.r) - max(A.x, B.x)
+        if not (-2.0 <= gap <= 1.5 * float(b["font_size"])) or share < 0.5 * min(A.w, B.w):
+            return [f"{under} no longer reads after {top} (gap {gap:.0f} px, shared width {share:.0f} px)"]
+        return []
     return check
 
 
@@ -406,6 +443,35 @@ def cases() -> List[Case]:
                  shape("line", 340, 680, 400, 10, GOLD, z=3, kind="line", stroke_color=GOLD, stroke_width=2),
                  *button("cta", 340, 740, 400, 90, "Shop now", 28),
              ], show=("headline", "cta_label"), show_roomy=("logo",), check=lambda s, o, t: _thin("rule", s, o)),
+
+        Case("sticker_on_product",
+             "a big round sticker on the product's corner, outside its visible pixels, next to a smaller "
+             "pill button: the pill is the CTA, and the sticker travels with the product",
+             1280, 720, [
+                 text("headline", 60, 240, 560, 150, "Join the club that makes Monday feel good", 52,
+                      "Solstice Serif", True, align="left"),
+                 *button("cta", 60, 430, 150, 48, "Join now", 18),
+                 image("product", 820, 90, 400, 540),
+                 *[dict(e, z_index=7 + i) for i, e in enumerate(
+                     button("sticker", 1100, 90, 170, 170, "FREE", 40, fill=GOLD, color=PLUM, radius=85))],
+             ], show=("headline", "cta_label"), show_roomy=("product",),
+             together=(("product", "sticker_label"),)),
+
+        Case("left_aligned_strip",
+             "a banner set flush left (logo | headline over its subhead | button): as a column its "
+             "block belongs in the middle, left-aligned inside, and the subhead stays under the headline "
+             "even though only a sliver of space runs between them and gutters set the columns apart",
+             1584, 396, [
+                 logo(40, 140, 240, 80),
+                 text("headline", 340, 40, 720, 260, "Open house this Sunday", 104, "Solstice Serif", True,
+                      align="left"),
+                 text("subhead", 340, 305, 720, 50, "Call us to book a private tour.", 40, align="left",
+                      color="rgba(255,255,255,0.85)"),
+                 *button("cta", 1150, 160, 380, 76, "Book a viewing", 30),
+             ], targets=("ig-square", "ig-portrait", "ig-landscape", "fb-link", "story", "med-rect", "skyscraper",
+                         "half-page"),
+             show=("headline", "cta_label"), show_roomy=("subhead",),
+             check=all_of(balanced(), stays_under("headline", "subhead"))),
 
         Case("crowded_l3",
              "the Level 3 load in miniature: a run-on headline, three badges, a ribbon, a legal line and a "

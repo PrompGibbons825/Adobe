@@ -176,5 +176,30 @@ class Samples(unittest.TestCase):
                 self.assertEqual(hard_rule_errors(src, out, tgt) + promise_errors(src, out, tgt), [])
 
 
+
+class GeneratedDesigns(unittest.TestCase):
+    """Designs the engine was never looked at on (tools.designs, a seed the audit
+    does not use): every rule holds and the core message survives everywhere."""
+
+    FORMATS = ("ig-portrait", "story", "fb-link", "leaderboard", "med-rect", "skyscraper")
+
+    def test_rules_and_core_message(self):
+        from tools.designs import designs
+        from tools.sheet import CATALOGUE
+
+        for t in designs(12, seed=7):
+            src = t["source"]
+            for fmt in self.FORMATS:
+                w, h = CATALOGUE[fmt]
+                tgt = {"width": w, "height": h}
+                with self.subTest(design=t["task_id"], notes=t["notes"], target=fmt):
+                    out, fell_back = run(src, tgt)
+                    self.assertFalse(fell_back)
+                    self.assertEqual(hard_rule_errors(src, out, tgt) + promise_errors(src, out, tgt), [])
+                    shown = {e["id"] for e in out["elements"] if float(e.get("opacity", 1)) > 0}
+                    core = {"headline", "cta_label"} & {e["id"] for e in src["elements"]}
+                    self.assertEqual(core - shown, set())
+
+
 if __name__ == "__main__":
     unittest.main()

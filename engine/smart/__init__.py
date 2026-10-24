@@ -9,9 +9,11 @@ from .analyze import Design, Item, analyze, as_number
 from .color import normalize as normalize_colour
 from .compose import Plan, generate
 from .geom import Box, el_box, rotated_aabb
-from .items import Ctx
+from .items import Ctx, forget_realized
 from .score import prune_relaxed, score_plans
 from .textfit import TextStyle, letter_spacing
+
+RERANK = 8  # how many of the best candidates the pixel critic looks at
 
 __all__ = ["layout_design", "finalize", "plan_design"]
 
@@ -26,13 +28,15 @@ def plan_design(source: dict, target: dict):
     back to the safe fit-and-centre layout."""
     reason = "no feasible layout"
     for lockups in (True, False):
+        forget_realized()  # items are keyed by identity: a fresh analysis must not meet stale sizes
         d = analyze(source, lockups=lockups)
         ctx = Ctx(W=float(target["width"]), H=float(target["height"]), W0=d.W, H0=d.H)
         plans = prune_relaxed(generate(d, ctx))
         if plans:
             score_plans(plans, d, ctx)
             plans.sort(key=lambda p: -p.score)
-            _pixel_rerank(plans, d, ctx)
+            plans[:] = _diverse(plans, RERANK)
+            _pixel_rerank(plans, d, ctx, RERANK)
             if _promote_passing(plans, source, d, ctx):
                 return d, ctx, plans
             reason = "every candidate draws copy over copy or past the canvas"
@@ -64,6 +68,28 @@ def _promote_passing(plans, source: dict, d: Design, ctx: Ctx) -> bool:
         return False
     plans.insert(0, plans.pop(chosen))
     return True
+
+
+def _diverse(plans, top: int, per_kind: int = 2):
+    """Best first, without repeats, and with the first ``top`` places shared
+    out: identical layouts (a variant that changed nothing) count once, and no
+    archetype takes more than ``per_kind`` of the places the pixel critic
+    looks at, so variants of one plan cannot crowd out a different one."""
+    seen, unique = set(), []
+    for p in plans:
+        key = tuple(sorted((r.item.key, round(x), round(y), round(r.w), round(r.h)) for r, x, y in p.placed + p.floaters))
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    head, rest, count = [], [], {}
+    for p in unique:
+        kind = p.name.split("@")[0].split("~")[0]
+        if len(head) < top and count.get(kind, 0) < per_kind:
+            count[kind] = count.get(kind, 0) + 1
+            head.append(p)
+        else:
+            rest.append(p)
+    return head + rest
 
 
 def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:

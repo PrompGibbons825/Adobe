@@ -28,7 +28,7 @@ docker run --rm --network none \
 
 No model, no network, no extra dependencies: the engine uses only what the starter
 already installs (skia and numpy through cr-renderer, and Pillow). A task takes
-about 0.3 s at the median and under 1.5 s at the 95th percentile; the first task
+about 0.3 s at the median and under 2 s at the 95th percentile; the first task
 in a run also pays a few seconds of one-time font and library loading.
 
 ## Approach
@@ -50,13 +50,15 @@ The input carries only ids, types and geometry, so roles are inferred:
 | CTA / badge / ribbon | a filled shape carrying a short label (explicit `group_id` or detected); the largest is the CTA, an alike button beside it is a CTA too, a rotated one is a ribbon |
 | logo / hero / watermark | image geometry and stacking (the asset name is only a weak hint) |
 | panel | a shape or flat image that frames copy (a dark band, a card); it is redrawn around wherever its content lands |
-| composite | a photo with captions or stickers on it, or a row of product shots: one piece |
+| composite | a photo with captions or stickers on it, or a row of product shots: one piece. A sticker is a round button-like group, or one stuck on a picture; a real button outranks it for CTA, and it keeps to the design's scale when its picture grows |
 | lockup | texts set as one piece of type: a drop shadow, stacked display type ("UP TO / 50% / OFF"), a price and its cents. They overlap on purpose or sit closer than a word space, and keep their arrangement |
 | corner items | small badges, ribbons and watermarks pinned to a canvas corner, and copy turned on its side |
 | missing asset | a small image whose file is not in the brand kit (never drawn as a grey box) |
 
 A recursive XY-cut gives the reading structure: what sits beside what, and the
-order a single column should present it in.
+order a single column should present it in. It cuts along the widest
+whitespace first, so a sliver of space under a headline does not split it from
+its subhead when gutters set logo, copy and button apart.
 
 **2. Measure exactly like the renderer** (`textfit.py`, `assets.py`)
 
@@ -85,13 +87,20 @@ When a design reflows, a short headline is also offered as **display type**, the
 way Adobe's reference output sets it: 1.35× and 1.7× larger than the rest of the
 design, up to the canvas's display size (15% of the short side on posts and
 stories, up to 42% of a strip's height), at about two words a line and at most
-three lines. Two-line headlines break after punctuation or where a style run
-changes colour ("Chase / the Light") when that is nearly as even as the most
-balanced break. Columns follow a typographic **rhythm**:
+three lines. A longer headline is offered the first step only, and only into
+the lines it already takes. Two-line headlines break after punctuation or where
+a style run changes colour ("Chase / the Light") when that is nearly as even as
+the most balanced break. On a canvas much wider than the source, copy is also
+offered a **longer line** (1.8× its source measure, never past a 70-character
+reading line), so a column of copy can trade lines for size. Columns follow a
+typographic **rhythm**:
 - a gap is at most the smaller of the two rows it separates;
 - gaps give way before a hero shrinks;
 - leftover height is shared between the margins and gaps in proportion to the
-  room the source left there.
+  room the source left there; rows set tight (a subhead tucked under its
+  headline) are bonded and take none of it;
+- across, the column is one block centred where the source's content was
+  centred, with each row's text alignment kept inside it.
 Headline and CTA are never dropped. Copy never goes below a legibility floor
 (cap height of about 7 px when the canvas is viewed at 1024 px). When a label
 is held up at the floor, its button gets a tighter pill rather than a bigger one.
@@ -104,7 +113,9 @@ up to 1.6× more than in the source earns credit; flattening or overshooting cos
 it), a prior for the archetype that suits the format, and a charge for secondary
 items that take far more of the canvas than they had in the source. The best eight are then re-ranked by the pixels under
 their copy (contrast and texture, rendered through the real renderer), relative to
-the source.
+the source. Those eight are shared out first: identical layouts count once and no
+archetype takes more than two places, so variants of one plan cannot crowd out a
+different one.
 
 **5. Check, emit and enforce the rules** (`__init__.py`)
 
@@ -137,9 +148,10 @@ fit-and-centre layout, so a run never crashes.
   part and kept inside, because "nothing off-canvas" is a structural check. A
   rotated element counts both its box and its turned box.
 - Nothing is tuned to the three samples. Development used them, eight more source
-  designs (`tools/make_cases.py`), 22 synthetic finicky designs (`tests/`), 64 real
-  Crello templates that designers re-made at other sizes, and about 20 real
-  platform formats from 320×50 to A4.
+  designs (`tools/make_cases.py`), 24 synthetic finicky designs (`tests/`), 64 real
+  Crello templates that designers re-made at other sizes, designs generated from a
+  small design grammar (`tools/designs.py`), and about 20 real platform formats
+  from 320×50 to A4.
 
 ## Testing (dev only, not part of the image)
 
@@ -148,6 +160,7 @@ python -m unittest discover -s tests -t .        # everything (a few minutes)
 python -m tests.run [names] --sheet out.png      # the finicky suite as one report + contact sheet
 python -m tools.stress --n 300 --seed 1          # random and degenerate designs, every hard rule
 python -m tools.sheet input/*.json --catalogue -o sheet.png   # designs across ~20 formats
+python -m tools.audit --n 40 --seed 1 --sheet audit.png        # layout quality on unseen designs
 ```
 
 - `tests/finicky.py`: designs that each probe one finicky part: unbreakable words,
@@ -162,6 +175,16 @@ python -m tools.sheet input/*.json --catalogue -o sheet.png   # designs across ~
   determinism and the samples.
 - `tools/rules.py` is the one definition of a valid output, shared by the tests
   and the stress tool.
+- `tools/designs.py` writes plausible source designs the engine was never tuned
+  on: six arrangements (centred column, left column beside a product, product
+  beside copy, banner row, card, band), copy of any length from four domains,
+  light and dark themes, optional kicker, subhead, legal, sticker and decoration.
+  `tools/audit.py` resizes them to every format and flags what a reviewer would
+  notice, relative to the source: empty bands, lopsided or sparse content,
+  cramped edges, lost core items, flattened hierarchy, a product reduced to a
+  speck. It prints the counts and a contact sheet of the worst runs.
+  `tests/test_engine.py` runs a dozen of them (on a seed the audit does not use)
+  through the hard rules.
 
 ## Repo layout
 

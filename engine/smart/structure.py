@@ -44,16 +44,28 @@ def _segments(items: Sequence[Item], axis: str) -> List[List[Item]]:
     return segs
 
 
+def _widest_gap(segs: List[List[Item]], axis: str) -> float:
+    def lo(seg):
+        return min(i.src_box.y if axis == "y" else i.src_box.x for i in seg)
+
+    def hi(seg):
+        return max(i.src_box.b if axis == "y" else i.src_box.r for i in seg)
+    return max((lo(b) - hi(a) for a, b in zip(segs, segs[1:])), default=0.0)
+
+
 def xy_tree(items: Sequence[Item], depth: int = 0) -> Tree:
+    """Cut where the widest whitespace runs: across (into bands) or down (into
+    columns), whichever gap is wider, so a sliver of space under a headline does
+    not split it from its subhead when gutters clearly set the columns apart."""
     items = list(items)
     if len(items) == 1:
         return items[0]
     if depth > 12:
         return ("v", sorted(items, key=lambda i: (i.src_box.cy, i.src_box.x)))
     bands = _segments(items, "y")
-    if len(bands) > 1:
-        return ("v", [xy_tree(b, depth + 1) for b in bands])
     cols = _segments(items, "x")
+    if len(bands) > 1 and (len(cols) < 2 or _widest_gap(bands, "y") >= _widest_gap(cols, "x")):
+        return ("v", [xy_tree(b, depth + 1) for b in bands])
     if len(cols) > 1:
         return ("h", [xy_tree(c, depth + 1) for c in cols])
     return ("v", sorted(items, key=lambda i: (i.src_box.cy, i.src_box.x)))

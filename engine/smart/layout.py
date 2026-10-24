@@ -83,12 +83,12 @@ class Leaf(Node):
     def measure(self, s, ctx, max_w, max_h, relax):
         it = self.item
         if self.fill:
-            cap = max(self.cap_rel * s, self.cap_floor)
-            r = realize(it, cap, ctx, max_w * self.max_w_frac, max_h)
+            grow = max(self.cap_rel * s, self.cap_floor) / max(s, 1e-9)  # as k, so the layout scale stays s
+            r = realize(it, s, ctx, max_w * self.max_w_frac, max_h, k=grow)
             if r is None:
                 return None
             if r.scale < self.min_rel * s * 0.999:  # too small, unless the width cannot hold more
-                widest = realize(it, cap, ctx, max_w * self.max_w_frac, INF)
+                widest = realize(it, s, ctx, max_w * self.max_w_frac, INF, k=grow)
                 if widest is None or r.scale < min(self.min_rel * s, widest.scale) * 0.999:
                     return None
         else:
