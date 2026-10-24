@@ -24,6 +24,7 @@ from .items import Ctx
 
 ALPHA = 1.1
 LINE_CAP = {"headline": 4, "subhead": 5, "body": 6, "legal": 3}
+HIERARCHY = 12.0  # for a headline that stands out 1.6x more than in the source (or less, negative)
 INFLATION = 2.0  # per unit of importance and of log-excess share (see _inflation)
 SHARE_SLACK = math.log(2.5)  # a secondary item may grow to 2.5x its share of the canvas freely
 
@@ -99,7 +100,8 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
             cap = LINE_CAP.get(it.role, 1)
             if blk.n_lines > cap:
                 lines_pen += it.importance * 0.05 * (blk.n_lines - cap)
-            if blk.n_lines > 1:
+            display = it.role == "headline" and blk.n_lines <= 3  # display type sets a few words a line
+            if blk.n_lines > 1 and not display:
                 chars = sum(len(l) for l in blk.lines) / blk.n_lines
                 if chars < 14:
                     lines_pen += it.importance * 0.25 * (14 - chars) / 14
@@ -127,8 +129,30 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         mx = sum(bx.cx * bx.area for _, bx in boxes) / area
         my = sum(bx.cy * bx.area for _, bx in boxes) / area
         b["balance"] = -25.0 * abs(mx - ctx.W / 2.0) / ctx.W - 12.0 * abs(my - ctx.H / 2.0) / ctx.H
-    b["prior"] = _prior(p.name, ctx.W / ctx.H, d.W / d.H)
+    b["hierarchy"] = HIERARCHY * _hierarchy(placed, d)
+    b["prior"] = _prior(p.name.split("@")[0], ctx.W / ctx.H, d.W / d.H)
     return sum(b.values()), b
+
+
+def _hierarchy(placed, d: Design) -> float:
+    """Whether the headline stands out from the next largest copy as a
+    designer would set it on a new format, in [-1, 1]. Reflowing a design is
+    when the headline becomes display type, so contrast up to 1.6x the
+    source's earns up to 1; past that it gives the credit back (at 2.56x it
+    is worth nothing: the rest of the copy has become an afterthought). Less
+    contrast than the source (the legibility floor raising small copy) costs
+    the same way down to -1."""
+    def size(it, fonts=None):
+        return max(fonts.values()) if fonts else it.main_fs()
+
+    head = [r for r, _, _ in placed if r.item.role == "headline" and r.fonts]
+    rest = [r for r, _, _ in placed if r.item.role != "headline" and r.fonts]
+    if not head or not rest:
+        return 0.0
+    out = size(head[0].item, head[0].fonts) / max(size(r.item, r.fonts) for r in rest)
+    src = head[0].item.main_fs() / max(1e-6, max(r.item.main_fs() for r in rest))
+    x = math.log(out / max(1e-6, src)) / math.log(1.6)
+    return max(-1.0, x if x <= 1.0 else 2.0 - x)
 
 
 def _inflation(placed, d: Design, ctx: Ctx) -> float:

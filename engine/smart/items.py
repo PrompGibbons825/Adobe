@@ -35,6 +35,14 @@ class Ctx:
     H: float
     W0: float
     H0: float
+    emphasis: float = 1.0  # how much larger than the rest the headline is set in this plan
+
+    @property
+    def display_max(self) -> float:
+        """The largest a display headline is set on this canvas, in px: 15% of
+        the short side on posts and stories, up to 42% of a strip's height."""
+        e = max(self.W, self.H) / max(1.0, min(self.W, self.H))
+        return min(self.W, self.H) * (0.15 + 0.27 * min(1.0, max(0.0, (e - 2.0) / 4.0)))
 
     @property
     def base_fs(self) -> float:
@@ -126,6 +134,8 @@ def realize_text(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float = INF,
         blk = textfit.balanced(content, style, fs, lim)
         if blk.height > max_h + 0.5 and lim < line_max:  # the source measure is a preference, not a wall
             blk = textfit.balanced(content, style, fs, line_max)
+        if blk.n_lines == 2:  # break where the copy breaks itself, if that is nearly as even
+            blk = textfit.phrase_wrap(content, style, fs, lim, textfit.run_edges(el)) or blk
     if blk.ink_width > line_max + 0.5 or (not rot and blk.height > max_h + 0.5):
         return None
     max_lines = el.get("max_lines")
@@ -668,8 +678,33 @@ def realize_scaled(it: Item, k: float, ctx: Ctx) -> Real:
     return Real(item=it, w=src.w * k, h=src.h * k, scale=k, fonts=fonts, blocks=blocks, emit_fn=emit)
 
 
+DISPLAY_LINES = 3  # display type sets a short headline in at most this many lines
+
+
+def _display(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float, mode: str) -> Optional[Real]:
+    """The headline as display type: up to ``ctx.emphasis`` times the design's
+    scale, never past the canvas's display size, and stepped down until it
+    takes no more lines than display type should: about two words a line, at
+    most DISPLAY_LINES (or its source's count). None if even a small boost
+    does not fit; the caller then sets it at ``s``."""
+    words = len(" ".join(str(e.get("content", "")) for e in it.els if e.get("type") == "text").split())
+    lines = max(it.src_lines, min(DISPLAY_LINES, math.ceil(words / 2)))
+    top = max(s, min(s * ctx.emphasis, ctx.display_max / max(1.0, it.main_fs())))
+    for f in (1.0, 0.8, 0.6, 0.4, 0.2):
+        t = s + (top - s) * f
+        r = realize_text(it, t, ctx, max_w, max_h, mode=mode, relax=relax) if it.kind == "text" else \
+            realize_group(it, t, ctx, max_w, max_h, relax=relax)
+        if r is not None and all(b.n_lines <= lines for b in r.blocks.values()):
+            return r
+    return None
+
+
 def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF,
             relax: float = 1.0, k: float = 1.0, mode: str = "stack", nowrap: bool = False) -> Optional[Real]:
+    if ctx.emphasis != 1.0 and it.role == "headline" and it.is_copy:
+        r = _display(it, s, ctx, max_w, max_h, relax, mode)
+        if r is not None:
+            return r
     if it.kind == "composite":
         return realize_composite(it, s, ctx, max_w, max_h, relax=relax, k=k)
     if it.kind == "text":

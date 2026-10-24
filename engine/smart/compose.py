@@ -18,19 +18,21 @@ illegibility. Scoring (score.py) picks the winner.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .analyze import Design, Item
 from .geom import Box, el_visual_box, union_all
 from .items import Ctx, Real, realize, realize_scaled
-from .layout import Flow, HStack, Laid, Leaf, Node, VStack, chain_positions, search_scale
+from .layout import Flow, HStack, Laid, Leaf, Node, VStack, search_scale
 from .structure import dominant_align, lead_text, row_align, rows_for, text_edges
 
 Placement = Tuple[Real, float, float]
 
 CORE_ROLES = ("headline", "cta", "logo", "hero")
 SAME_SHAPE = 1.03  # aspect ratios this close are the same format at another size
+EMPHASIS = (1.35, 1.7)  # display emphasis tried for a short headline when the design reflows
+DISPLAY_WORDS = 8  # a headline this short can be set as display type
 
 
 @dataclass
@@ -195,18 +197,24 @@ def solve(root: Node, ctx: Ctx, zone: Box, lo: float, hi: float) -> Tuple[Option
 # placing a solved tree inside the zone
 
 
-def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design, ctx: Ctx, zone: Box,
-                 weights: Sequence[float]) -> List[Placement]:
-    """Vertical positions as close as possible to where each row sat in the source."""
+def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design, ctx: Ctx,
+                 zone: Box) -> List[Placement]:
+    """Rows top to bottom with their measured gaps; the height left over is
+    shared between the top margin, each gap and the bottom margin in
+    proportion to the room the source left there. The source's spacing
+    pattern survives (a design that breathes at the bottom still does, rows
+    that sat close stay close) while gaps follow the content, not the canvas."""
     parts: List[Laid] = laid.parts  # type: ignore[attr-defined]
     gaps: List[float] = laid.gap_list  # type: ignore[attr-defined]
-    sizes = [p.h for p in parts]
-    targets = [b.cy / d.H * ctx.H - h / 2.0 for b, h in zip(boxes, sizes)]
-    ys = chain_positions(targets, list(weights), sizes, gaps, zone.y, zone.b)
-    out = []
-    for p, y, a in zip(parts, ys, aligns):
+    room = [boxes[0].y] + [b.y - a.b for a, b in zip(boxes, boxes[1:])] + [d.H - boxes[-1].b]
+    room = [max(0.0, r) for r in room]
+    slack = max(0.0, zone.h - sum(p.h for p in parts) - sum(gaps))
+    share = [slack * r / sum(room) for r in room] if sum(room) > 0 else [slack / 2.0] + [0.0] * (len(parts) - 1) + [slack / 2.0]
+    out, y = [], zone.y + share[0]
+    for i, (p, a) in enumerate(zip(parts, aligns)):
         x = zone.x if a == "start" else (zone.r - p.w if a == "end" else zone.cx - p.w / 2.0)
         out += p.place(x, y)
+        y += p.h + (gaps[i] + share[i + 1] if i < len(gaps) else 0.0)
     return out
 
 
@@ -357,13 +365,11 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
     if zone.w < 20 or zone.h < 20:
         return None
     root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.7, force_align=force_align)
-    weights = [3.0 if any(i.role == "headline" for i in r) else (1.5 if any(i.role == "hero" for i in r) else 1.0)
-               for r in rows]
     for _ in range(4):
         s, laid, relax = solve(root, ctx, zone, lo, hi)
         if laid is None:
             return None
-        placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, weights)
+        placed = place_column(laid, boxes, root.align, d, ctx, laid.zone)
         fl, bad, clash, new_zone = _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax)
         if not clash:
             return Plan(name=name, placed=placed, hidden=list(hidden) + bad, s=s, zone=zone, floaters=fl,
@@ -636,9 +642,11 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
     from . import assets as _assets
 
     busy_bg = any(b.get("type") == "image" and _assets.info(b.get("asset_id")).busy > 0.3 for b in d.backgrounds)
+    head = next((it for it in d.items if it.role == "headline" and it.is_copy), None)
+    words = str(lead_text(head).get("content", "")).split() if head is not None else []
+    display_headline = 0 < len(words) <= DISPLAY_WORDS
 
-    def variants(force_all: bool = False):
-        yield "adapt", plan_adapt, {}
+    def archetypes(force_all: bool):
         if r <= 2.2 or force_all:
             yield "stack", plan_stack, {}
             if busy_bg:  # copy over a photo: also try it against either side
@@ -654,6 +662,16 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
             for stack_logo in (False, True):
                 yield "row" + ("-logo-stacked" if stack_logo else ""), plan_row, dict(stack_logo=stack_logo)
 
+    def variants(force_all: bool = False):
+        """(name, planner, options, ctx). A reflowed design is also offered with
+        its headline set as display type, larger than the rest (EMPHASIS)."""
+        yield "adapt", plan_adapt, {}, ctx
+        for name, fn, kw in archetypes(force_all):
+            yield name, fn, kw, ctx
+            if display_headline:
+                for e in EMPHASIS:
+                    yield f"{name}@{e:g}", fn, kw, replace(ctx, emphasis=e)
+
     if not _visible(d, missing):  # nothing to lay out: every element is void or missing
         return [Plan(name="empty", placed=[], hidden=list(missing), s=1.0, zone=Box(0, 0, ctx.W, ctx.H))]
     if same_shape(d, ctx):
@@ -667,12 +685,16 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
             hidden = missing + drop
             if any(h.role in CORE_ROLES for h in drop) and plans:
                 break  # core items are only given up when nothing else worked
-            for name, fn, kw in variants(force_all):
-                if name in done:
+            fitted = set()
+            for name, fn, kw, c in variants(force_all):
+                base = name.split("@")[0]
+                # emphasis only makes the headline larger: if the plain plan did not fit, neither will it
+                if name in done or (base != name and base not in fitted):
                     continue
-                p = _with_insets(fn, d, ctx, hidden, name=name, **kw)
+                p = _with_insets(fn, d, c, hidden, name=name, **kw)
                 if p:
                     plans.append(p)
+                    fitted.add(name)
                     if p.relax >= 1.0 and p.capped:
                         done.add(name)
         if plans:

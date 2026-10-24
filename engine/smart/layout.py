@@ -20,6 +20,7 @@ from .analyze import Item
 from .items import INF, Ctx, Real, realize
 
 Placement = Tuple[Real, float, float]
+RHYTHM = 1.0  # a gap in a column is at most this times the smaller of the rows it separates
 
 
 @dataclass
@@ -73,6 +74,12 @@ class Leaf(Node):
     def items(self) -> List[Item]:
         return [self.item]
 
+    def natural_h(self, s: float, ctx: Ctx, max_w: float) -> float:
+        """Height at the layout scale itself, room permitting (what a hero
+        would like before it starts to give way)."""
+        r = realize(self.item, s, ctx, max_w * self.max_w_frac, INF)
+        return r.h if r is not None else 0.0
+
     def measure(self, s, ctx, max_w, max_h, relax):
         it = self.item
         if self.fill:
@@ -117,11 +124,17 @@ class VStack(Node):
         return _gap(g, s, ctx, self.gap_min)
 
     def measure(self, s, ctx, max_w, max_h, relax):
+        """Rows top to bottom. A gap is the source's gap at this scale, but never
+        more than RHYTHM times the smaller of the two rows it separates: spacing
+        follows the content, so a large empty stretch in the source does not
+        take the room a hero needs. Heroes (fill leaves) take what is left;
+        where they leave room, place_column() spreads it as the source did."""
         if not self.children:
             return Laid(0, 0, lambda x, y: [])
         n = len(self.children)
-        gaps = [self.gap_px(i, s, ctx) for i in range(n - 1)]
-        total = sum(gaps)
+        base = [self.gap_px(i, s, ctx) for i in range(n - 1)]
+        least = [min(b, self.gap_min * ctx.base_fs) for b in base]
+        total = sum(least)
         if total > max_h + 0.5:
             return None
         laids: List[Optional[Laid]] = [None] * n
@@ -136,6 +149,22 @@ class VStack(Node):
             total += l.h
             if total > max_h + 0.5:
                 return None
+        gaps = []
+        for i, b in enumerate(base):
+            sides = [laids[j].h for j in (i, i + 1) if laids[j] is not None]
+            # a hairline between two rows does not set the rhythm: its taller neighbour does
+            room = max(min(sides), 0.5 * max(sides)) if sides else b
+            gaps.append(max(least[i], min(b, RHYTHM * room)))
+        if fill:  # spacing gives way before a hero shrinks below its size at this scale
+            want = sum(self.children[i].natural_h(s, ctx, max_w) for i in fill)
+            short = want - (max_h - total - sum(gaps) + sum(least))
+            give = sum(g - l for g, l in zip(gaps, least))
+            if short > 0 and give > 0:
+                k = min(1.0, short / give)
+                gaps = [g - k * (g - l) for g, l in zip(gaps, least)]
+        total += sum(gaps) - sum(least)
+        if total > max_h + 0.5:
+            return None
         for i in fill:  # heroes take what is left, shared evenly
             share = (max_h - total) / max(1, len([j for j in fill if laids[j] is None]))
             l = self.children[i].measure(s, ctx, max_w, share, relax)
@@ -360,36 +389,3 @@ def search_scale(fits: Callable[[float], Optional[Laid]], lo: float, hi: float, 
         if b / max(a, 1e-9) < 1.004:
             break
     return best_s, best
-
-
-def isotonic(t: List[float], w: List[float]) -> List[float]:
-    """Weighted pool-adjacent-violators: closest non-decreasing sequence to t."""
-    blocks = []  # [value, weight, count]
-    for ti, wi in zip(t, w):
-        blocks.append([ti, wi, 1])
-        while len(blocks) > 1 and blocks[-2][0] > blocks[-1][0]:
-            v2, w2, c2 = blocks.pop()
-            v1, w1, c1 = blocks.pop()
-            ww = w1 + w2
-            blocks.append([(v1 * w1 + v2 * w2) / ww, ww, c1 + c2])
-    out = []
-    for v, _, c in blocks:
-        out += [v] * c
-    return out
-
-
-def chain_positions(targets: List[float], weights: List[float], sizes: List[float], gaps: List[float],
-                    lo: float, hi: float) -> List[float]:
-    """Positions closest to ``targets`` keeping order, sizes and minimum gaps, inside [lo, hi]."""
-    n = len(sizes)
-    off = [0.0] * n
-    for i in range(1, n):
-        off[i] = off[i - 1] + sizes[i - 1] + gaps[i - 1]
-    t = [targets[i] - off[i] for i in range(n)]
-    z = isotonic(t, weights)
-    upper = hi - sizes[-1] - off[-1]
-    if upper < lo:
-        z = [lo] * n
-    else:
-        z = [min(max(v, lo), upper) for v in z]
-    return [z[i] + off[i] for i in range(n)]

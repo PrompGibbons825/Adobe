@@ -496,6 +496,54 @@ def _balanced(content: str, style: TextStyle, fs: int, max_width: float) -> Text
     return blk
 
 
+_PHRASE_END = set(",.;:!?—–")
+SEMANTIC_SLACK = 1.18  # a break at a phrase edge is preferred unless its lines are this much less even
+
+
+def phrase_wrap(content: str, style: TextStyle, font_size: float, max_width: float,
+                edges: frozenset = frozenset()) -> Optional[TextBlock]:
+    """Two lines broken where the copy breaks itself: after punctuation, or
+    where a style run starts or ends (indices in ``edges``), if that is no
+    more than SEMANTIC_SLACK less even than the most even break. The renderer
+    only wraps greedily, so the result is the wrap width that makes the greedy
+    wrap break exactly there; None when no break qualifies."""
+    fs = max(1, int(font_size))
+    widths = char_widths(style.family, style.weight, style.style, float(fs), content)
+    if "\n" in content or len(widths) != len(content):
+        return None
+    P = [0.0]
+    for w in widths:
+        P.append(P[-1] + w)
+    spaces = [i for i, c in enumerate(content) if c == " " and 0 < i < len(content) - 1]
+    options = []
+    for b in spaces:
+        w1, w2 = P[b], P[-1] - P[b + 1]
+        nxt = content.find(" ", b + 1)
+        reach = P[nxt if nxt > 0 else len(content)]  # line 1 plus the next word, which must not fit
+        lo, hi = max(P[b + 1], w2), reach
+        if lo + 0.5 >= hi or max(w1, w2) > max_width:
+            continue
+        semantic = content[b - 1] in _PHRASE_END or b in edges or b + 1 in edges
+        options.append((max(w1, w2), semantic, lo + 0.5))
+    if not options:
+        return None
+    best = min(o[0] for o in options)
+    chosen = [o for o in options if o[1] and o[0] <= SEMANTIC_SLACK * best]
+    if not chosen:
+        return None
+    blk = measure(content, style, fs, min(chosen)[2], exact=True)
+    return blk if blk.n_lines == 2 else None
+
+
+def run_edges(el: dict) -> frozenset:
+    """Indices where a style run (a colour change, say) starts or ends."""
+    out = set()
+    for r in el.get("style_runs") or []:
+        if isinstance(r, dict) and isinstance(r.get("start"), int) and isinstance(r.get("end"), int):
+            out.update((r["start"], r["end"] + 1))
+    return frozenset(out)
+
+
 def fit_height(content: str, style: TextStyle, font_size: float, max_height: float,
                max_width: float) -> Optional[TextBlock]:
     """Narrowest balanced block at ``font_size`` whose height fits ``max_height``
