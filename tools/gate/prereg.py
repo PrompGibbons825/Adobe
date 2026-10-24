@@ -20,7 +20,9 @@ A prereg holds everything the verdict depends on, fixed before anything renders:
      "null": false,
      "floor": ["suites", "docker", "metamorphic", "tiles"],
      "rule": {...},                               tools.gate.stats.DEFAULT_RULE, overrides allowed
-     "panel": {...},                              tools.gate.panel.DEFAULT_PANEL, overrides allowed
+     "panel": {...},                              tools.gate.panel.DEFAULT_PANEL, written out in full
+                                                  by ``make`` (protocol two-family: families, tiebreak,
+                                                  batch, agent_daily_cap...), so the models are fixed
      "anchors": {"parity_designs": 30},
      "created": "<UTC>"}
 
@@ -123,6 +125,38 @@ def validate(p: dict) -> List[str]:
     bad = set(p.get("rule", {})) - set(DEFAULT_RULE)
     if bad:
         errs.append(f"unknown rule keys {sorted(bad)}")
+    errs += validate_panel(p.get("panel") or {})
+    return errs
+
+
+def validate_panel(cfg: dict) -> List[str]:
+    """The two-family protocol (loop/STEERING.md S10): at least two judge families of different
+    CLIs, a tie-break judge, 1-12 comparisons per call."""
+    from tools.gate.panel import CLIS, DEFAULT_PANEL, PANEL_KEYS, TIEBREAK
+
+    errs = []
+    bad = set(cfg) - PANEL_KEYS
+    if bad:
+        errs.append(f"unknown panel keys {sorted(bad)}")
+    c = dict(DEFAULT_PANEL, **cfg)
+    if c["protocol"] != "two-family":
+        errs.append(f"unknown panel protocol {c['protocol']!r}")
+    fams = c.get("families")
+    if not isinstance(fams, dict) or len(fams) != 2:
+        errs.append("panel families must name exactly two judge families")
+    else:
+        for name, f in fams.items():
+            if name == TIEBREAK or not isinstance(f, dict) or f.get("cli") not in CLIS or not f.get("model"):
+                errs.append(f"panel family {name!r} needs a cli ({'/'.join(CLIS)}) and a model")
+        if len({(f or {}).get("model") for f in fams.values()}) < 2:
+            errs.append("the two panel families must use different models")
+    tb = c.get("tiebreak")
+    if not isinstance(tb, dict) or tb.get("cli") not in CLIS or not tb.get("model"):
+        errs.append("panel tiebreak needs a cli and a model")
+    elif isinstance(fams, dict) and tb.get("model") in {(f or {}).get("model") for f in fams.values()}:
+        errs.append("the tie-break judge must be a third model")
+    if not (isinstance(c.get("batch"), int) and 1 <= c["batch"] <= 12):
+        errs.append("panel batch must be 1-12 comparisons per call")
     return errs
 
 
@@ -194,6 +228,12 @@ def record(chk: dict, status: str, **extra) -> None:
         f.write(json.dumps(rec) + "\n")
 
 
+def _full_panel(overrides: Optional[dict]) -> dict:
+    from tools.gate.panel import DEFAULT_PANEL
+
+    return json.loads(json.dumps(dict(DEFAULT_PANEL, **(overrides or {}))))
+
+
 def make(gid: str, base: str, cand: Optional[str], sets: Optional[List[str]] = None, hypothesis: str = "",
          null: bool = False, builtin: Optional[str] = None, rule: Optional[dict] = None,
          panel: Optional[dict] = None, floor: Optional[List[str]] = None) -> dict:
@@ -210,7 +250,7 @@ def make(gid: str, base: str, cand: Optional[str], sets: Optional[List[str]] = N
          "candidate": candidate, "sets": list(sets), "null": null,
          "floor": floor if floor is not None else ([] if null else
                                                    ["tiles"] if builtin else list(FLOOR_PARTS)),
-         "rule": rule or {}, "panel": panel or {}, "anchors": {"parity_designs": 0 if null else 30},
+         "rule": rule or {}, "panel": _full_panel(panel), "anchors": {"parity_designs": 0 if null else 30},
          "created": _now()}
     if "novel" not in {sealed._parse(v)[0] for v in p["sets"]} and "primary" not in p["rule"]:
         p["rule"]["primary"] = sealed._parse(p["sets"][0])[0]  # no sealed-novel yet: say so in the prereg

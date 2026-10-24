@@ -21,6 +21,15 @@ Tests (one-sided, percentile cluster bootstrap with ``boot`` resamples):
   ``futility_upper``, so it cannot plausibly reach the bar; stopping then costs power, never
   false wins.
 
+**Two families** (loop/STEERING.md S10): a tile record may carry ``family`` (each judge
+family's own score, from tools.gate.panel.score_tile); ``score`` is then the pooled score.
+
+* **family harm**: per family, the win cell on overall; an upper bound at ``alpha_family_harm``
+  below 0.5 is significant harm and blocks an ACCEPT (no change only one family likes).
+* **families_required**: a run whose tiles carry fewer families (one was dropped on its
+  sentinels) can only REJECT or REPORT; where it would accept, the decision is REPORT.
+* ``family_agreement``: the share of tiles where the families' overall votes agree (report).
+
 Sequential looks: the panel judges designs in a pre-registered random order and looks after
 ``looks`` designs (40/80/120). The win test's alpha is spent with an O'Brien-Fleming-type
 function, alpha(t) = 2 - 2 Phi(z_{1-alpha/2} / sqrt t), and each look gets the increment, so
@@ -51,6 +60,8 @@ DEFAULT_RULE = {
     "boot": 10000,
     "sentinel_min": 0.85,     # a look whose sentinel accuracy is below this is discarded
     "sentinel_share": 0.10,
+    "alpha_family_harm": 0.10,  # one-sided, per family on the win cell (S10)
+    "families_required": 2,   # fewer families judging: REJECT or REPORT, never ACCEPT
     "proxy_reject_upper": 0.35,  # proxy may reject when its win-rate upper bound is below this
     "seed": 0,
 }
@@ -159,6 +170,15 @@ def evaluate(tiles: List[dict], rule: dict, alpha_win: float, final: bool, seed:
             continue
         if c["upper"] < 0.5:
             harm.append(key)
+    fams = sorted({f for t in tiles for f in (t.get("family") or {})})
+    family = {}
+    for j, f in enumerate(fams):
+        ft = [dict(t, score=t["family"][f]) for t in tiles if f in (t.get("family") or {})]
+        v = list(design_scores(ft, "overall", [r["primary"]], r["win_tier"]).values())
+        family[f] = b = bounds(v, r["alpha_family_harm"], r["alpha_family_harm"], n, seed + 2000 + j)
+        if b["n"] and b["n"] >= r["min_designs"] and b["upper"] < 0.5:
+            harm.append(f"family {f}")
+    single = bool(fams) and len(fams) < int(r["families_required"])
     reasons = []
     if harm:
         reasons.append("significant harm on " + ", ".join(harm))
@@ -179,8 +199,23 @@ def evaluate(tiles: List[dict], rule: dict, alpha_win: float, final: bool, seed:
             reasons.append(f"futile: {win_key} upper {win['upper']:.2f} < {r['futility_upper']}")
         else:
             decision = "CONTINUE"
+    if single and decision == "ACCEPT":
+        decision = "REPORT"
+        reasons.append(f"single-family run ({', '.join(fams)}): would accept, but can only reject or report")
     return {"decision": decision, "reasons": reasons, "win_cell": win_key, "win_pass": win_pass,
-            "alpha_win": alpha_win, "cells": cells, "criteria": crits, "harm": harm}
+            "alpha_win": alpha_win, "cells": cells, "criteria": crits, "harm": harm, "family": family,
+            "families": fams, "agreement": family_agreement(tiles)}
+
+
+def family_agreement(tiles: Iterable[dict]) -> Optional[dict]:
+    """Share of tiles judged by two or more families whose overall votes all agree."""
+    n = agree = 0
+    for t in tiles:
+        fv = [v.get("overall") for v in (t.get("family") or {}).values() if v.get("overall") is not None]
+        if len(fv) >= 2:
+            n += 1
+            agree += len(set(fv)) == 1
+    return {"n": n, "rate": agree / n} if n else None
 
 
 def sequential(tiles: List[dict], order: List[str], rule: dict, seed: int = 0) -> dict:
@@ -212,8 +247,16 @@ def flip(tiles: List[dict], designs: set) -> List[dict]:
         if f"{t['set']}/{t['design']}" in designs:
             t = dict(t, score={k: 1 - v for k, v in t["score"].items()},
                      delta={k: -v for k, v in (t.get("delta") or {}).items()})
+            if t.get("family"):
+                t["family"] = {f: {k: 1 - v for k, v in sc.items()} for f, sc in t["family"].items()}
         out.append(t)
     return out
+
+
+def family_view(tiles: Iterable[dict], fam: str) -> List[dict]:
+    """The tiles as family ``fam`` alone scored them (for its own null run)."""
+    return [dict(t, score=dict(t["family"][fam]), family={fam: dict(t["family"][fam])})
+            for t in tiles if fam in (t.get("family") or {})]
 
 
 def null_false_win_rate(tiles: List[dict], order: List[str], rule: dict, n_perm: int = 200,

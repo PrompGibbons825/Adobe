@@ -1,6 +1,6 @@
 """The gate: floor -> proxy -> panel, on the sealed sets a committed prereg names.
 
-    loop/capped .venv/bin/python -m tools.gate.run --prereg tools/gate/prereg/<id>.json [--resume]
+    loop/capped .venv/bin/python -m tools.gate.run --prereg tools/gate/prereg/<id>.json [--resume] [--wait]
 
 Steps (each one can end the run with REJECT):
 
@@ -17,15 +17,20 @@ Steps (each one can end the run with REJECT):
    promise, contrast, hierarchy and hidden elements must not rise vs base).
 5. **proxy** (tools.judge.terms) on the changed tiles of the designs the panel would judge: it
    may only reject, when its candidate win rate's upper bound is below ``proxy_reject_upper``.
-6. **panel** (tools.gate.panel) in pre-registered random design order with sequential looks;
-   the decision is tools.gate.stats.evaluate. A look whose sentinel accuracy is below
-   ``sentinel_min`` is discarded and the run ends INVALID (no ACCEPT).
+6. **panel** (tools.gate.panel, two families: S10) in pre-registered random design order with
+   sequential looks; the decision is tools.gate.stats.evaluate on the pooled tile scores plus
+   the per-family harm test. Sentinels are checked per family at every look: a family below
+   ``sentinel_min`` is dropped from the run (its votes leave every tile) and the verdict says so;
+   a single-family run can only REJECT or REPORT; when every family fails the run is INVALID.
+   At the Cursor cap (or a rate/usage limit) the run is PAUSED (exit 4) and continues with
+   ``--resume``; ``--wait`` sleeps to the next UTC day instead. It never accepts on one family.
 7. **anchors** (reported only): designer parity on sets with references, and any
    ``anchors/<product>/<task>@<W>x<H>.png`` (Express, Adobe's reference crops) against the
    candidate on that dev task.
 
-Writes ``output/gate/<id>/gate.json`` (aggregates only: no tile ids, no content) and prints one
-verdict line. Everything that ties asks to tiles stays in ``output/gate/<id>/private/`` (mode
+Writes ``output/gate/<id>/gate.json`` (aggregates only: no tile ids, no content; ``cursor_asks``
+is the number of ``agent`` calls) and prints one verdict line, which carries each family's point
+estimate on the win cell and their agreement rate. Everything that ties asks to tiles stays in ``output/gate/<id>/private/`` (mode
 700, sealed-derived: nobody reads it by hand).
 """
 
@@ -254,6 +259,10 @@ def _fmt(c: dict) -> str:
     return f"{c['point']:.2f} [{c['lower']:.2f},{c['upper']:.2f}] n={c['n']}"
 
 
+def _pt(c: dict) -> str:
+    return f"{c['point']:.2f}" if c and c.get("point") is not None else "n/a"
+
+
 def verdict_line(rep: dict) -> str:
     p = rep["prereg"]
     cand = p["candidate"].get("label") or P.cand_key(p["candidate"])
@@ -272,9 +281,20 @@ def verdict_line(rep: dict) -> str:
             s = sealed._parse(v)[0]
             parts.append(f"{v} t1 {_fmt(ev['cells'].get(f'{s} t1'))} t2 {_fmt(ev['cells'].get(f'{s} t2'))}")
         parts.append("harm " + (", ".join(ev["harm"]) if ev["harm"] else "none"))
+        fam = ev.get("family") or {}
+        if fam:
+            ag = ev.get("agreement") or {}
+            parts.append("families " + " ".join(f"{f} {_pt(c)}" for f, c in fam.items())
+                         + (f" agree {ag['rate']:.2f} n={ag['n']}" if ag else " agree n/a"))
         se = rep["panel"].get("sentinels") or {}
-        if se.get("n"):
-            parts.append(f"sentinels {se['accuracy']:.2f} n={se['n']}")
+        ss = [f"{f} {v['accuracy']:.2f} n={v['n']}" for f, v in se.items() if v.get("n")]
+        if ss:
+            parts.append("sentinels " + " ".join(ss))
+        if rep["panel"].get("dropped"):
+            parts.append("dropped " + ", ".join(f"{f} ({d})" for f, d in rep["panel"]["dropped"].items()))
+    u = (rep.get("panel") or {}).get("usage")
+    if u:
+        parts.append(f"cursor_asks {u.get('cursor_asks', 0)}")
     an = rep.get("anchors") or {}
     if "parity" in an and an["parity"].get("n"):
         parts.append(f"parity {an['parity']['share']:.2f} n={an['parity']['n']}")
@@ -283,14 +303,15 @@ def verdict_line(rep: dict) -> str:
             parts.append(f"{k} {v['share']:.2f} n={v['n']}")
     nl = rep.get("null")
     if nl:
-        parts.append(f"null false-win {nl['rate']:.3f} ({nl['false_wins']}/{nl['n_perm']})")
+        parts.append(f"null false-win {nl['rate']:.3f} ({nl['false_wins']}/{nl['n_perm']})"
+                     + "".join(f" {f} {r['rate']:.3f}" for f, r in (nl.get("families") or {}).items()))
     parts.append(rep["verdict"])
     return " | ".join(parts)
 
 
 def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = None,
         out_root: Path = OUT_ROOT, keep_images: bool = False,
-        materializer: Callable[[dict, Path], Path] = materialize) -> dict:
+        materializer: Callable[[dict, Path], Path] = materialize, wait: bool = False) -> dict:
     chk = P.check(Path(prereg_path), resume)
     p = chk["prereg"]
     rule = stats.rule_with_defaults(p.get("rule"))
@@ -366,54 +387,122 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
         if rep["proxy"]["reject"]:
             return finish("REJECT", "proxy")
 
-    # panel, sequential looks
-    from tools.gate.panel import Panel
+    # panel, sequential looks (two families, S10)
+    from tools.gate import panel as PN
 
-    panel = Panel(p["id"], private / "panel", p.get("panel"), judge=judge, seed=seed)
+    panel = PN.Panel(p["id"], private / "panel", p.get("panel"), judge=judge, seed=seed)
+    try:
+        return _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, transform, finish,
+                            keep_images, wait)
+    except PN.CapReached as e:
+        rep["panel"] = dict(rep.get("panel") or {}, usage=panel.usage())
+        rep["verdict"] = f"PAUSED ({e}; resume with --resume, or run with --wait)"
+        rep["line"] = verdict_line(rep)
+        (out / "gate.json").write_text(json.dumps(rep, indent=1, default=str))
+        P.record(chk, "paused", line=rep["line"])
+        _say(rep["line"])
+        return rep
+
+
+def _capped(fn: Callable, wait: bool):
+    """``fn()``, sleeping past the Cursor cap when ``wait`` (the panel resumes where it stopped)."""
+    from tools.gate.panel import CapReached
+
+    while True:
+        try:
+            return fn()
+        except CapReached as e:
+            if not wait:
+                raise
+            secs = max(60.0, e.reset_at - __import__("time").time() + 120)
+            _say(f"paused: {e}; waiting {secs / 3600:.1f} h")
+            __import__("time").sleep(secs)
+
+
+def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, transform, finish,
+                 keep_images, wait) -> dict:
+    from tools.gate.panel import score_tiles
+
     sizes = stats.look_sizes(len(designs), rule["looks"])
     alphas = stats.spend(rule["alpha_win"], [k / sizes[-1] for k in sizes], rule["spending"])
-    recs, looks, sent = [], [], {"n": 0, "correct": 0}
+    active = list(panel.families)
+    raw, recs, looks = [], [], []
+    sent = {f: {"n": 0, "correct": 0} for f in active}
+    small: Dict[str, dict] = {}
+    dropped: Dict[str, str] = {}
     ref_pool = [t for t in pool if t.get("reference")] or pool
     verdict, why, ev = "REJECT", "", None
     prev = 0
     for i, (k, a) in enumerate(zip(sizes, alphas)):
         batch = [t for d in designs[prev:k] for t in by_design[d]]
         prev = k
-        res = panel.judge_tiles(batch, i, pool=ref_pool, share=rule["sentinel_share"],
-                                reencode_cand=bool(transform))
-        s = res["sentinels"]
-        sent["n"] += s["n"]
-        sent["correct"] += s["correct"]
-        recs += res["tiles"]
-        ev = stats.evaluate(recs, rule, a, final=i == len(sizes) - 1, seed=seed + i)
-        looks.append({"look": i + 1, "designs": k, "alpha": a, "decision": ev["decision"],
-                      "sentinel_accuracy": s["accuracy"], "asks": res["asks"], "failed": res["failed"]})
-        _say(f"look {i + 1}: {k} designs, {ev['win_cell']} {_fmt(ev['cells'][ev['win_cell']])} -> {ev['decision']}"
-             + (f" sentinels {s['accuracy']:.2f}" if s["accuracy"] is not None else ""))
-        if s["accuracy"] is not None and s["accuracy"] < rule["sentinel_min"]:
-            verdict, why = "INVALID", f"sentinels {s['accuracy']:.2f} < {rule['sentinel_min']} at look {i + 1}"
+        res = _capped(lambda: panel.judge_tiles(batch, i, pool=ref_pool, share=rule["sentinel_share"],
+                                                reencode_cand=bool(transform), families=list(active)), wait)
+        raw += res["tiles"]
+        for f, s in res["sentinels"].items():
+            sent.setdefault(f, {"n": 0, "correct": 0})
+            sent[f]["n"] += s["n"]
+            sent[f]["correct"] += s["correct"]
+            if s["accuracy"] is not None and s["accuracy"] < rule["sentinel_min"] and f in active:
+                active.remove(f)
+                dropped[f] = f"sentinels {s['accuracy']:.2f} < {rule['sentinel_min']} at look {i + 1}"
+        for f, s in res["small_sentinels"].items():
+            m = small.setdefault(f, {"n": 0, "correct": 0})
+            m["n"] += s["n"]
+            m["correct"] += s["correct"]
+        look = {"look": i + 1, "designs": k, "alpha": a, "asks": res["asks"], "failed": res["failed"],
+                "tiebreaks": res["tiebreaks"],
+                "sentinel_accuracy": {f: s["accuracy"] for f, s in res["sentinels"].items()}}
+        looks.append(look)
+        if not active:
+            verdict, why = "INVALID", "every family failed its sentinels: " + "; ".join(
+                f"{f} {r}" for f, r in dropped.items())
+            look["decision"] = "INVALID"
+            _say(f"look {i + 1}: {why}")
             break
+        recs = score_tiles(raw, active)
+        ev = stats.evaluate(recs, rule, a, final=i == len(sizes) - 1, seed=seed + i)
+        look["decision"] = ev["decision"]
+        look["families"] = list(active)
+        _say(f"look {i + 1}: {k} designs, {ev['win_cell']} {_fmt(ev['cells'][ev['win_cell']])} -> {ev['decision']}"
+             + "".join(f" {f} sentinels {s['accuracy']:.2f}" for f, s in res["sentinels"].items()
+                       if s["accuracy"] is not None)
+             + (f" dropped {','.join(dropped)}" if dropped else ""))
         if ev["decision"] != "CONTINUE" and not p.get("null"):
             verdict, why = ev["decision"], "; ".join(ev["reasons"])
             break
         verdict, why = ev["decision"], "; ".join(ev["reasons"])
-    sent["accuracy"] = sent["correct"] / sent["n"] if sent["n"] else None
+    if verdict == "ACCEPT" and len(active) < int(rule["families_required"]):  # belt and braces
+        verdict, why = "REPORT", f"single-family run ({', '.join(active)})"
+    for f, d in (dropped.items() if verdict != "INVALID" else ()):
+        why =(why + "; " if why else "") + f"family {f} dropped ({d})"
+    for d in (sent, small):
+        for v in d.values():
+            v["accuracy"] = v["correct"] / v["n"] if v["n"] else None
     rep["panel"] = {"looks": looks, "final": ev and {k: ev[k] for k in ("decision", "win_cell", "win_pass", "cells",
-                                                                          "criteria", "harm", "reasons")},
+                                                                          "criteria", "harm", "reasons", "family",
+                                                                          "families", "agreement")},
                     # pairwise votes decide; the 1-10 score deltas and small-defect sentinels are report only
-                    "deltas": stats.score_deltas(recs), "sentinels": sent,
-                    "small_sentinels": panel.sentinel_accuracy(
-                        [a for a, r in panel.asks.items() if r["kind"] == "sentinel_small"]),
+                    "deltas": stats.score_deltas(recs), "sentinels": sent, "small_sentinels": small,
+                    "families": list(panel.families), "active": list(active), "dropped": dropped,
                     "usage": panel.usage(),
-                    "second_judge_tiles": sum(1 for r in recs if r.get("second_judge")), "tiles": len(recs)}
+                    "tiebreak_tiles": sum(1 for r in recs if r.get("tiebreak_used")), "tiles": len(recs)}
 
-    # null run: how often would the rule accept a relabelling of these judgements?
+    # null run: how often would the rule accept a relabelling of these judgements? (pooled and per family)
     if p.get("null") and verdict != "INVALID":
         order = [d for d in designs[:prev]]
         nl = stats.null_false_win_rate(recs, order, rule, n_perm=200, seed=seed)
-        nl["pass"] = nl["rate"] <= 0.05 and nl["observed"] != "ACCEPT"
+        fam = {}
+        for j, f in enumerate(active):
+            r = stats.null_false_win_rate(stats.family_view(recs, f), order, dict(rule, families_required=1),
+                                          n_perm=200, seed=seed + 31 * (j + 1))
+            fam[f] = r
+        nl["families"] = fam
+        nl["pass"] = (nl["rate"] <= 0.05 and nl["observed"] != "ACCEPT"
+                      and all(r["rate"] <= 0.05 and r["observed"] != "ACCEPT" for r in fam.values()))
         rep["null"] = nl
-        verdict, why = ("NULL PASS" if nl["pass"] else "NULL FAIL"), f"observed {nl['observed']}"
+        verdict = "NULL PASS" if nl["pass"] else "NULL FAIL"
+        why = f"observed {nl['observed']}" + "".join(f"; family {f} dropped ({d})" for f, d in dropped.items())
 
     # anchors (reported only)
     an: dict = {}
@@ -422,16 +511,18 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
         items = [t for t in pool if t.get("reference") and t.get("cand") is not None]
         items = sorted(items, key=lambda t: hashlib.sha256(f"{seed}{t['tile']}".encode()).hexdigest())[:nd]
         if items:
-            r = panel.compare("parity", [{"key": f"{t['set']}/{t['tile']}", "source": t["source"], "x": t["cand"],
-                                          "y": t["reference"], "kit": t["kit"]} for t in items], 100)
+            its = [{"key": f"{t['set']}/{t['tile']}", "source": t["source"], "x": t["cand"],
+                    "y": t["reference"], "kit": t["kit"]} for t in items]
+            r = _capped(lambda: panel.compare("parity", its, 100, families=list(active)), wait)
             an["parity"] = {"n": len(r), "share": sum(1 for x in r if x["x_share"] >= 0.5) / len(r) if r else None}
     for prod, items in anchor_items(roots).items():
-        r = panel.compare(f"anchor-{prod}", items, 200)
+        r = _capped(lambda: panel.compare(f"anchor-{prod}", items, 200, families=list(active)), wait)
         an[prod] = {"n": len(r), "share": sum(1 for x in r if x["x_share"] >= 0.5) / len(r) if r else None}
     if not any(k for k in an if k != "parity"):
         an["express"] = {"n": 0, "note": "no anchors/express/ yet"}
     rep["anchors"] = an
     rep["panel"]["usage"] = panel.usage()
+    rep["cursor_asks"] = rep["panel"]["usage"]["cursor_asks"]
     if not keep_images:
         panel.clean_images()
     return finish(verdict, why)
@@ -442,12 +533,16 @@ def main(argv=None) -> int:
     ap.add_argument("--prereg", required=True)
     ap.add_argument("--resume", action="store_true", help="continue this same gate id after an interruption")
     ap.add_argument("--keep-images", action="store_true", help="keep the blind ask images after the run")
+    ap.add_argument("--wait", action="store_true",
+                    help="at the Cursor cap, sleep until the next UTC day instead of pausing (exit 4)")
     a = ap.parse_args(argv)
     try:
-        rep = run(Path(a.prereg), a.resume, keep_images=a.keep_images)
+        rep = run(Path(a.prereg), a.resume, keep_images=a.keep_images, wait=a.wait)
     except P.Refused as e:
         print(f"GATE REFUSED: {e}", file=sys.stderr)
         return 3
+    if rep["verdict"].startswith("PAUSED"):
+        return 4
     return 0 if rep["verdict"].startswith(("ACCEPT", "NULL PASS")) else 1
 
 
