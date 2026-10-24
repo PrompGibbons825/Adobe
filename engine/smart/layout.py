@@ -22,6 +22,8 @@ from .items import INF, Ctx, Real, realize
 Placement = Tuple[Real, float, float]
 RHYTHM = 1.0  # a gap in a column is at most this times the smaller of the rows it separates
 SEPARATION = 0.5  # ... and never gives way below this times it (unless the source set them closer)
+PROXIMITY = 0.5  # lines of one text block sit no further apart than this times the smaller of them
+GROUP_CONTRAST = 2.0  # ... and a gap between groups never gives way below this times the gaps inside a block
 CLEAR_SPACE = 0.5  # a logo keeps this times its height clear above and below
 
 
@@ -108,10 +110,11 @@ def _gap(base: float, s: float, ctx: Ctx, lo: float = 0.35) -> float:
 class VStack(Node):
     def __init__(self, children: Sequence[Node], gaps: Optional[Sequence[float]] = None,
                  align: Optional[Sequence[str]] = None, default_align: str = "center",
-                 gap_min: float = 0.35):
+                 gap_min: float = 0.35, tight: Optional[Sequence[bool]] = None):
         self.children = list(children)
         n = len(self.children)
         self.gaps = list(gaps) if gaps is not None else [None] * max(0, n - 1)
+        self.tight = list(tight) if tight is not None else [False] * max(0, n - 1)  # gaps inside a text block
         self.align = list(align) if align is not None else [default_align] * n
         self.gap_min = gap_min
         self.flex = any(c.flex for c in self.children)
@@ -163,12 +166,22 @@ class VStack(Node):
             least[i] = lift
         if total > max_h + 0.5:
             return None
+        inside = [least[i] for i in range(n - 1) if self.tight[i]]
+        if inside:
+            # proximity holds at the minimum too: groups stand further apart than lines of a block,
+            # when that fits - contrast is a preference, never a reason to leave copy out
+            lifted = [max(least[i], min(base[i], GROUP_CONTRAST * max(inside))) if not self.tight[i] else least[i]
+                      for i in range(n - 1)]
+            if total + sum(lifted) - sum(least) <= max_h + 0.5:
+                total += sum(lifted) - sum(least)
+                least = lifted
         gaps = []
         for i, b in enumerate(base):
             sides = [laids[j].h for j in (i, i + 1) if laids[j] is not None]
             # a hairline between two rows does not set the rhythm: its taller neighbour does
             room = max(min(sides), 0.5 * max(sides)) if sides else b
-            gaps.append(max(least[i], min(b, RHYTHM * room)))
+            cap = PROXIMITY * min(sides) if sides and self.tight[i] else RHYTHM * room
+            gaps.append(max(least[i], min(b, cap)))
         if fill:  # spacing gives way before a hero shrinks below its size at this scale
             want = sum(self.children[i].natural_h(s, ctx, max_w) for i in fill)
             short = want - (max_h - total - sum(gaps) + sum(least))

@@ -49,6 +49,7 @@ COLUMN_ROOM = 1.35  # how much further than sqrt(area) a column may grow on a ta
 ROW_GAP = 0.25  # a banner row's gaps widen to fill it, up to this share of the canvas width each
 WIDE_MEASURE = 1.8  # on a much wider canvas, copy is also tried this much wider than its source measure
 WIDER = 1.5  # ... when the target's aspect ratio is this many times the source's
+TOUCH = 0.01  # px: boxes this much closer than their gap only touch it
 
 
 @dataclass
@@ -203,13 +204,18 @@ def column(d: Design, rows: List[List[Item]], hero_fill: bool = False, force_ali
                 g = typical if typical is not None else 0.5 * ref
                 g = min(max(g, 0.3 * ref), 1.0 * ref)
             gaps.append(g * gap_scale)
+    # proximity: lines of one text block (two copy rows in a row) sit tight; groups stand apart.
+    # A brand set in type and a call to action are groups of their own, not lines of the block
+    copy = [all(i.is_copy and i.role not in ("cta", "logo") for i in row) for row in rows]
+    tight = [a and b for a, b in zip(copy, copy[1:])]
     for a, b, bd in reversed(_panel_runs(d, rows)):  # a panel's rows become one padded block
-        inner = VStack(nodes[a:b + 1], gaps=gaps[a:b], align=aligns[a:b + 1])
+        inner = VStack(nodes[a:b + 1], gaps=gaps[a:b], align=aligns[a:b + 1], tight=tight[a:b])
         nodes[a:b + 1] = [Padded(inner, bd.pad, bd.edges)]
         gaps[a:b] = []
+        tight[a:b] = []
         aligns[a:b + 1] = [aligns[a]]
         boxes[a:b + 1] = [el_box(bd.el)]
-    return VStack(nodes, gaps=gaps, align=aligns), boxes
+    return VStack(nodes, gaps=gaps, align=aligns, tight=tight), boxes
 
 
 def _padded_runs(d: Design, parts: List[Node], join) -> Optional[List[Node]]:
@@ -296,7 +302,7 @@ def _room(a: Box, b: Box) -> float:
 
 
 def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design, ctx: Ctx,
-                 zone: Box, side: Optional[str] = None) -> List[Placement]:
+                 zone: Box, side: Optional[str] = None, tight: Sequence[bool] = ()) -> List[Placement]:
     """Rows top to bottom with their measured gaps; the height left over is
     shared between the top margin, each gap and the bottom margin in
     proportion to the room the source left there (``_room``; the margins are
@@ -314,7 +320,8 @@ def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design,
     top, bottom = min(b.y for b in boxes), d.H - max(b.b for b in boxes)
     mid = (top + bottom) / 2.0  # a reflowed column leans less than its source: half way to centred
     top, bottom = top + BALANCE * (mid - top), bottom + BALANCE * (mid - bottom)
-    room = [top] + [_room(a, b) for a, b in zip(boxes, boxes[1:])] + [bottom]
+    inner = [0.0 if i < len(tight) and tight[i] else _room(a, b) for i, (a, b) in enumerate(zip(boxes, boxes[1:]))]
+    room = [top] + inner + [bottom]  # a text block's own gaps take none of the spare height
     slack = max(0.0, zone.h - sum(p.h for p in parts) - sum(gaps))
     if sum(room) > 0:
         share = [slack * r / sum(room) for r in room]
@@ -428,7 +435,9 @@ def overflow(placed: Sequence[Placement], ctx: Ctx) -> Tuple[float, float, float
 
 
 def collides(a: Box, b: Box, pad: float = 0.0) -> bool:
-    return a.expanded(pad).inter(b) > 0
+    """Closer than pad. Boxes that sit exactly pad apart (a zone cut to clear a
+    corner item and then filled) do not collide: a hair of float error is not a clash."""
+    return a.expanded(pad - TOUCH).inter(b) > 0
 
 
 def _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax):
@@ -499,7 +508,7 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
             return None
         if tall_ad:  # a tall ad unit read at a glance: the button is the column's second focal point
             s, laid, relax = _with_bold_cta(root, d, ctx, zone, lo, hi, (s, laid, relax), TALL_CTA)
-        placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, side=force_align)
+        placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, side=force_align, tight=root.tight)
         fl, bad, clash, new_zone = _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax)
         if not clash:
             return Plan(name=name, placed=placed, hidden=list(hidden) + bad, s=s, zone=zone, floaters=fl,
