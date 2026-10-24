@@ -193,6 +193,24 @@ def ghost_text(out: dict, assets: Path = ASSETS, min_pixels: int = 12) -> List[s
     return errs
 
 
+def contrast_errors(src: dict, out: dict, tgt: dict) -> List[str]:
+    """Copy that lost its contrast: below 3:1 against what is under it and
+    clearly worse than in the source (white copy that left its dark panel for
+    a white canvas). Measured like the engine's pixel critic: WCAG contrast at
+    the 10th percentile of the region, on a small render without the copy."""
+    from engine.smart import pixels
+
+    hidden = {e["id"] for e in out["elements"] if float(e.get("opacity", 1) or 0) <= 0}
+    before = pixels.measure(src["elements"], src["canvas"]["width"], src["canvas"]["height"], skip=set())
+    after = pixels.measure(out["elements"], tgt["width"], tgt["height"], skip=hidden)
+    errs = []
+    for tid, (c, _) in after.items():
+        c0 = before.get(tid, (4.5, 0.0))[0]
+        if c < 3.0 and c < 0.7 * min(c0, 4.5):
+            errs.append(f"{tid}: contrast {c:.1f}:1 (source {c0:.1f}:1)")
+    return errs
+
+
 def rule_report(src: dict, out: dict, tgt: dict, smart: bool = True, render_check: bool = False,
                 assets: Optional[Path] = None) -> List[str]:
     errs = hard_rule_errors(src, out, tgt)

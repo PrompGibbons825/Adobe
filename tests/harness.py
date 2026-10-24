@@ -12,7 +12,7 @@ from engine.resize import resize
 from engine.smart.geom import el_box
 from engine.smart.textfit import drawn_box
 from tests.finicky import ROOMY_SIDE, Case
-from tools.rules import ghost_text, hard_rule_errors, promise_errors
+from tools.rules import contrast_errors, ghost_text, hard_rule_errors, promise_errors
 
 
 def run(src: dict, tgt: dict) -> Tuple[dict, bool]:
@@ -86,5 +86,5 @@ def evaluate(case: Case, target: str, render_check: bool = True) -> Tuple[dict, 
     if case.check:
         errs += case.check(src, out, tgt)
     if render_check:
-        errs += ghost_text(out)
+        errs += ghost_text(out) + contrast_errors(src, out, tgt)
     return out, errs
