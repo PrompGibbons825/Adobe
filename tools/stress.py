@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import io
 import json
-import math
 import random
 import sys
 import time
@@ -20,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from engine.resize import resize  # noqa: E402
-from engine.smart.geom import Box, rotated_aabb  # noqa: E402
+from tools.rules import hard_rule_errors, promise_errors, render_image  # noqa: E402
 from tools.sheet import CATALOGUE  # noqa: E402
 
 ASSETS = ["solstice_bottle.png", "solstice_logo_lockup.png", "solstice_bg_gradient.png", "does_not_exist.png"]
@@ -111,54 +110,6 @@ def random_design(rng: random.Random) -> dict:
     return {"canvas": {"width": W, "height": H}, "elements": els}
 
 
-def check(src: dict, out: dict, tgt: dict, smart: bool = True) -> list:
-    errs = []
-    if smart:  # what the layout engine promises (the safe fallback for impossible content does not)
-        from engine.smart.items import Ctx
-        from engine.smart.textfit import deliberate_overlaps, text_overlaps
-
-        floor = Ctx(W=tgt["width"], H=tgt["height"], W0=1, H0=1).judge_floor
-        for e in out["elements"]:
-            if e["type"] == "text" and float(e.get("opacity", 1) or 0) > 0 and str(e.get("content", "")).strip() \
-                    and e.get("font_size", 99) < floor:
-                errs.append(f"{e['id']}: small print {e.get('font_size')}px < {floor}px")
-        for a, b, area, _ in text_overlaps(out["elements"], exempt=deliberate_overlaps(src["elements"])):
-            errs.append(f"text over text: {a} x {b} ({area:.0f} px2)")
-    W, H = tgt["width"], tgt["height"]
-    if out.get("canvas") != {"width": W, "height": H}:
-        errs.append("canvas")
-    sid = [e["id"] for e in src["elements"]]
-    oid = [e.get("id") for e in out["elements"]]
-    if sorted(sid) != sorted(oid) or len(set(oid)) != len(oid):
-        errs.append("ids")
-    so = {e["id"]: e for e in src["elements"]}
-    for e in out["elements"]:
-        s = so.get(e["id"], {})
-        for k in ("x", "y", "width", "height"):
-            v = e.get(k)
-            if not isinstance(v, (int, float)) or not math.isfinite(v):
-                errs.append(f"{e['id']}: bad {k}")
-        b = Box(e["x"], e["y"], e["width"], e["height"])
-        vb = b.union(rotated_aabb(b, float(e.get("rotation", 0) or 0)))
-        if vb.x < -0.6 or vb.y < -0.6 or vb.r > W + 0.6 or vb.b > H + 0.6:
-            errs.append(f"{e['id']}: off-canvas {vb}")
-        if e["type"] == "text":
-            if e.get("content") != s.get("content") or e.get("font_family") != s.get("font_family"):
-                errs.append(f"{e['id']}: content/font changed")
-            if not isinstance(e.get("font_size"), int) or e["font_size"] < 1:
-                errs.append(f"{e['id']}: font_size {e.get('font_size')}")
-        if e["type"] == "image" and s.get("width", 0) > 0 and s.get("height", 0) > 0 and \
-                (e["width"] <= 0 or e["height"] <= 0):
-            errs.append(f"{e['id']}: image collapsed to {e['width']}x{e['height']}")
-        if e["type"] == "image" and s.get("width", 0) > 0 and s.get("height", 0) > 0 and e["height"] > 0:
-            full = e["x"] <= 0.5 and e["y"] <= 0.5 and e.get("fit") == "cover" and e["width"] >= W - 1
-            ra = s["width"] / s["height"]
-            rb = e["width"] / e["height"]
-            if not full and abs(rb / ra - 1) > 0.05:
-                errs.append(f"{e['id']}: ratio {ra:.3f}->{rb:.3f}")
-    return errs
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=200)
@@ -190,13 +141,12 @@ def main() -> int:
         if fell_back:
             fallbacks += 1
             print(f"[{i}] FALLBACK {src['canvas']} -> {tgt}\n" + buf.getvalue().strip().splitlines()[-1])
-        errs = check(src, out, tgt, smart=not fell_back)
+        # the safe fallback (impossible content) only promises the hard rules
+        errs = hard_rule_errors(src, out, tgt) + ([] if fell_back else promise_errors(src, out, tgt))
         if a.render:
             try:
-                from renderer.converter.convert import render_design_to_png
                 with redirect_stderr(io.StringIO()):
-                    render_design_to_png(out, Path(__file__).resolve().parents[1] / "brand_kit" / "assets",
-                                         "/tmp/_stress_render.png")
+                    render_image(out)
             except Exception as ex:  # noqa: BLE001
                 errs.append(f"RENDER CRASH {type(ex).__name__}: {str(ex)[:120]}")
         if errs:

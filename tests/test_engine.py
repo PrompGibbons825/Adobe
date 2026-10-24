@@ -1,0 +1,142 @@
+"""Engine tests (stdlib unittest, no extra dependencies).
+
+    .venv/bin/python -m unittest discover -s tests -t .          # everything (~4 min)
+    .venv/bin/python -m unittest tests.test_engine.TextParity     # one group
+
+The finicky cases (tests/finicky.py) run on each of their targets through
+tests/harness.py; `python -m tests.run` prints the same checks as one report.
+"""
+
+from __future__ import annotations
+
+import json
+import random
+import unittest
+from pathlib import Path
+
+from engine.smart.geom import el_box
+from engine.smart.paths import find_asset
+from engine.smart.textfit import drawn_box
+from tests.finicky import cases, malformed
+from tests.harness import evaluate, run
+from tools.rules import hard_rule_errors, promise_errors, render_image
+
+REPO = Path(__file__).resolve().parents[1]
+SAMPLES = sorted((REPO / "input").glob("*.json")) + sorted((REPO / "tools" / "cases").glob("*.json"))
+
+
+def _sources():
+    return [(p.stem, json.loads(p.read_text())["source"]) for p in SAMPLES]
+
+
+def _in_kit(asset_id: str) -> bool:
+    return find_asset(asset_id) is not None
+
+
+class FinickyCases(unittest.TestCase):
+    def test_every_case_on_every_target(self):
+        for case in cases():
+            for target in case.targets:
+                with self.subTest(case=case.name, target=target):
+                    _, errs = evaluate(case, target)
+                    self.assertEqual(errs, [], case.probe)
+
+
+class MalformedInput(unittest.TestCase):
+    def test_hard_rules_hold_and_output_renders(self):
+        for name, src, tgt in malformed():
+            with self.subTest(variant=name):
+                out, _ = run(src, tgt)
+                self.assertEqual(hard_rule_errors(src, out, tgt), [])
+                render_image(out)  # the reference renderer must not raise on anything we emit
+
+
+class SameShape(unittest.TestCase):
+    """When the shape does not change, the designer's own layout is the answer."""
+
+    def _check_scaled(self, name, src, k, tol):
+        W, H = src["canvas"]["width"], src["canvas"]["height"]
+        tgt = {"width": round(W * k), "height": round(H * k)}
+        out, fell_back = run(src, tgt)
+        self.assertFalse(fell_back)
+        so = {e["id"]: e for e in src["elements"]}
+        side = max(tgt["width"], tgt["height"])
+        for e in out["elements"]:
+            s = so[e["id"]]
+            if float(e.get("opacity", 1) or 1) <= 0 and s.get("asset_id") and not _in_kit(s["asset_id"]):
+                continue  # a missing asset may be dropped
+            if e["type"] == "text":  # text boxes are emitted tight: compare where the glyphs land
+                a, b = drawn_box(e), drawn_box(s)
+                got, want = (a.x, a.y, a.w, a.h), (b.x * k, b.y * k, b.w * k, b.h * k)
+            else:
+                b = el_box(s)
+                if b.x < 0 or b.y < 0 or b.r > W or b.b > H:
+                    continue  # bleed is pulled onto the canvas
+                got, want = (e["x"], e["y"], e["width"], e["height"]), (b.x * k, b.y * k, b.w * k, b.h * k)
+            for key, g, w in zip(("x", "y", "w", "h"), got, want):
+                self.assertLessEqual(abs(g - w), tol * side + 1.0, f"{name}: {e['id']}.{key} {g:.1f} vs {w:.1f}")
+
+    def test_identity(self):
+        for name, src in _sources():
+            with self.subTest(design=name):
+                self._check_scaled(name, src, 1.0, 0.02)
+
+    def test_uniform_scale(self):
+        for name, src in _sources():
+            for k in (0.5, 2.0):
+                with self.subTest(design=name, k=k):
+                    self._check_scaled(name, src, k, 0.04)
+
+
+class TextParity(unittest.TestCase):
+    """Text is measured exactly the way the reference renderer wraps it."""
+
+    def test_fast_wrap_equals_renderer_wrap(self):
+        from engine.smart import textfit
+        from renderer.converter.wrap import char_widths, wrap_text
+
+        rng = random.Random(7)
+        words = ("golden hour light sparkling botanical Sonnenuntergangsgetränke crème brûlée — €4,99 "
+                 "solstice.com/terms ☀ a of the and LIMITED EDITION 2026").split()
+        book = textfit.book()
+        fonts = [("Solstice Serif", "bold", "bold"), ("Solstice Sans", "regular", "regular"),
+                 ("Solstice Sans", "bold", "bold"), ("Solstice Sans", "regular", "italic")]
+        for i in range(300):
+            content = " ".join(rng.choice(words) for _ in range(rng.randint(1, 18)))
+            if rng.random() < 0.15:
+                content = content.replace(" ", "\n", 1)
+            family, weight, style = rng.choice(fonts)
+            size = rng.randint(8, 120)
+            width = rng.uniform(20, 1200)
+            st = textfit.TextStyle(family, weight, style, 1.2, 0.0)
+            ours = textfit.measure(content, st, size, width)
+            ref = wrap_text(content, char_widths(book.manager, family, weight, style, float(size), content), width)
+            with self.subTest(i=i, content=content, size=size, width=round(width)):
+                self.assertEqual(ours.lines, ref.split("\n"))
+
+
+class Determinism(unittest.TestCase):
+    def test_same_input_same_output(self):
+        for name, src in _sources()[:4]:
+            for tgt in ({"width": 1600, "height": 400}, {"width": 1080, "height": 1920}):
+                with self.subTest(design=name, target=tgt):
+                    a, _ = run(src, tgt)
+                    b, _ = run(src, tgt)
+                    self.assertEqual(a, b)
+
+
+class Samples(unittest.TestCase):
+    """The official samples and the extra kit cases on their own targets."""
+
+    def test_samples(self):
+        for p in SAMPLES:
+            task = json.loads(p.read_text())
+            src, tgt = task["source"], task["target_canvas"]
+            with self.subTest(design=p.stem):
+                out, fell_back = run(src, tgt)
+                self.assertFalse(fell_back)
+                self.assertEqual(hard_rule_errors(src, out, tgt) + promise_errors(src, out, tgt), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

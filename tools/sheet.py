@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from engine.resize import resize  # noqa: E402
 from engine.smart import emit, finalize, plan_design  # noqa: E402
-from renderer.converter.convert import render_design_to_png  # noqa: E402
+from tools.rules import render_image  # noqa: E402
 
 ASSETS = Path(__file__).resolve().parents[1] / "brand_kit" / "assets"
 
@@ -36,12 +36,19 @@ CATALOGUE = {
 
 
 def render(design: dict, max_side: int = 480) -> Image.Image:
-    path = Path("/tmp/_sheet_render.png")
-    render_design_to_png(design, ASSETS, path)
-    im = Image.open(path).convert("RGB")
+    im = render_image(design, ASSETS)
     w, h = im.size
     f = min(max_side / w, (max_side * 1.4) / h)
     return im.resize((max(1, round(w * f)), max(1, round(h * f))), Image.LANCZOS)
+
+
+def resize_explained(src: dict, tgt: dict):
+    """resize(), plus the name of the plan that won (or FALLBACK)."""
+    try:
+        d, ctx, plans = plan_design(src, tgt)
+        return finalize(src, {"canvas": tgt, "elements": emit(plans[0], d, ctx)}, tgt), plans[0].name
+    except Exception:  # noqa: BLE001 - resize() falls back the same way
+        return resize(src, tgt), "FALLBACK"
 
 
 def tile(im: Image.Image, label: str, cell: int) -> Image.Image:
@@ -80,9 +87,8 @@ def main() -> int:
             targets = [("given", task["target_canvas"])]
         for name, tgt in targets:
             if a.top <= 1:
-                out = resize(src, tgt)
-                d, ctx, plans = plan_design(src, tgt)
-                lab = f"{Path(inp).stem[-12:]} {name} {tgt['width']}x{tgt['height']} [{plans[0].name if plans else 'FALLBACK'}]"
+                out, how = resize_explained(src, tgt)
+                lab = f"{Path(inp).stem[-12:]} {name} {tgt['width']}x{tgt['height']} [{how}]"
                 tiles.append(tile(render(out, a.cell), lab, a.cell))
             else:
                 d, ctx, plans = plan_design(src, tgt)
