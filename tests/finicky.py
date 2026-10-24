@@ -49,13 +49,18 @@ class Case:
     together: Tuple[Tuple[str, str], ...] = ()
     check: Optional[Check] = None
     background: bool = True
+    bg_fit: str = "cover"  # the source background's fit
+    # Targets on which the current engine is KNOWN to fail this case (a failure class found by the
+    # loop, not fixed yet). The suite reports them as XFAIL and stays green; once the engine
+    # passes one, the run reports XPASS and fails, so the mark is removed with the fix.
+    xfail: Tuple[str, ...] = ()
 
     @property
     def source(self) -> dict:
         els = [dict(e) for e in self.elements]
         if self.background:
             els.insert(0, {"id": "bg", "type": "image", "x": 0, "y": 0, "width": self.W, "height": self.H,
-                           "z_index": 0, "asset_id": "solstice_bg_gradient.png", "fit": "cover"})
+                           "z_index": 0, "asset_id": "solstice_bg_gradient.png", "fit": self.bg_fit})
         return {"canvas": {"width": self.W, "height": self.H}, "elements": els}
 
     def target(self, name: str) -> dict:
@@ -248,6 +253,61 @@ def framed(panel: str, members: Tuple[str, ...], least: float = 4.0) -> Check:
     return check
 
 
+def never_stretched(*ids: str, tol: float = 0.05) -> Check:
+    """An image with fit "fill" is drawn stretched to its box, so its box must keep the source
+    box's aspect ratio (within tol). A full-bleed background that must cover a different shape
+    has to become fit "cover" (cropped) instead."""
+    def check(src, out, tgt):
+        so = {e["id"]: e for e in src["elements"]}
+        errs = []
+        for e in out["elements"]:
+            if e["id"] in ids and e.get("fit") == "fill" and float(e.get("opacity", 1)) > 0:
+                a0 = so[e["id"]]["width"] / so[e["id"]]["height"]
+                a1 = e["width"] / max(1e-6, e["height"])
+                if abs(a1 / a0 - 1) > tol:
+                    errs.append(f"{e['id']}: fit fill stretched, aspect {a0:.2f} -> {a1:.2f}")
+        return errs
+    return check
+
+
+def stays_band(*ids: str) -> Check:
+    """A band that ran edge to edge in the source still runs edge to edge (one axis, both
+    sides) on the target: it does not shrink into a floating card or an L shape."""
+    def check(src, out, tgt):
+        errs = []
+        for e in out["elements"]:
+            if e["id"] in ids and float(e.get("opacity", 1)) > 0:
+                x0, y0, x1, y1 = _box(e)
+                W, H = tgt["width"], tgt["height"]
+                across = x0 <= 0.5 and x1 >= W - 0.5
+                down = y0 <= 0.5 and y1 >= H - 0.5
+                if not (across or down):
+                    errs.append(f"{e['id']}: band became a card ({x0:.0f},{y0:.0f},{x1:.0f},{y1:.0f})")
+        return errs
+    return check
+
+
+def at_least_share(pid: str, share: float) -> Check:
+    """This element's longer side is at least `share` of the target's shorter side."""
+    def check(src, out, tgt):
+        e = next(x for x in out["elements"] if x["id"] == pid)
+        if float(e.get("opacity", 1)) <= 0:
+            return []
+        side = max(e["width"], e["height"])
+        need = share * min(tgt["width"], tgt["height"])
+        return [f"{pid}: {side:.0f} px, wants {need:.0f}"] if side < need else []
+    return check
+
+
+def label_at_least(pid: str, share: float) -> Check:
+    """A text's font size is at least `share` of the target's shorter side."""
+    def check(src, out, tgt):
+        e = next(x for x in out["elements"] if x["id"] == pid)
+        need = share * min(tgt["width"], tgt["height"])
+        return [f"{pid}: font {e['font_size']:.0f}, wants {need:.0f}"] if e["font_size"] < need else []
+    return check
+
+
 def all_of(*checks: Check) -> Check:
     def check(src, out, tgt):
         return [e for c in checks for e in c(src, out, tgt)]
@@ -259,6 +319,10 @@ def all_of(*checks: Check) -> Check:
 
 
 def cases() -> List[Case]:
+    return _base_cases() + round5_cases()
+
+
+def _base_cases() -> List[Case]:
     return [
         Case("unbreakable_words",
              "a word wider than a narrow column: the renderer never breaks inside a word, so the type "
@@ -652,6 +716,149 @@ def cases() -> List[Case]:
                       color="rgba(255,255,255,0.6)", z=6),
              ], targets=STRIPS + TALL + SMALL, show=("headline", "cta_label"), show_roomy=("logo",)),
     ]
+
+
+def round5_cases() -> List[Case]:
+    """Failure classes named by the gate in rounds 1-4 (loop/weaknesses.md). Several are known
+    failures of the engine (``xfail``); each is a general class, built from the brand kit."""
+    wide_copy = [
+        logo(1250, 90, 300, 100),
+        text("headline", 100, 120, 1000, 200, "Taste the longest day", 96, "Solstice Serif", True, align="left"),
+        text("subhead", 100, 340, 1000, 80, "Three botanical infusions, until the equinox.", 32,
+             color="rgba(255,255,255,0.85)", align="left"),
+        *button("cta", 100, 480, 420, 90, "Shop now", 30),
+    ]
+    sq_copy = [
+        logo(390, 70),
+        image("product", 340, 200, 400, 520),
+        text("headline", 90, 760, 900, 130, "Golden Hour", 84, "Solstice Serif", True),
+        *button("cta", 340, 930, 400, 90, "Shop now", 28),
+    ]
+    band_src = [
+        shape("band", 0, 380, 1080, 320, "rgba(40,20,70,0.92)", z=1),
+        logo(390, 60),
+        text("headline", 90, 410, 900, 160, "Summer sale", 96, "Solstice Serif", True, z=5),
+        text("subhead", 140, 580, 800, 70, "Up to 40% off every infusion", 34, z=5),
+        *button("cta", 340, 780, 400, 90, "Shop now", 28),
+    ]
+    return [
+        Case("fill_background_wide",
+             "a full-bleed background with fit 'fill' (the Crello export default) on a wide design: "
+             "re-laid on any other shape it is cropped, never stretched",
+             1600, 700, wide_copy, targets=("ig-square", "story", "pinterest", "skyscraper", "half-page",
+                                           "leaderboard", "billboard", "med-rect"),
+             show=("headline", "cta_label"), bg_fit="fill",
+             check=all_of(never_stretched("bg"), full_bleed("bg")),
+             ),  # passes today (cropped as cover); kept as a guard
+
+        Case("fill_background_square",
+             "a square design whose background is fit 'fill', to strips and tall formats",
+             1080, 1080, sq_copy, targets=("story", "leaderboard", "billboard", "skyscraper", "fb-link",
+                                           "mobile-banner", "a4"),
+             show=("headline", "cta_label"), bg_fit="fill",
+             check=all_of(never_stretched("bg"), full_bleed("bg")),
+             ),
+
+        Case("band_stays_band_on_squares",
+             "a full-width colour band behind the copy: on a square or a small rectangle it stays a band "
+             "(edge to edge), not an L shape or a floating card",
+             1080, 1350, band_src, targets=("ig-square", "med-rect", "fb-link", "pres-16x9", "email-header",
+                                            "ig-portrait"),
+             show=("headline", "cta_label"), check=stays_band("band"),
+             xfail=("fb-link", "pres-16x9", "email-header")),
+
+        Case("tiny_items_kept_on_small_canvases",
+             "a discount sticker and a legal line are small in the source but part of the offer: on a "
+             "square and on 300x250 they are kept (smaller type allowed), not hidden",
+             1080, 1080, [
+                 logo(390, 50, 300, 100),
+                 image("product", 320, 190, 440, 520),
+                 text("headline", 90, 740, 900, 120, "Summer Sale", 80, "Solstice Serif", True),
+                 *button("sticker", 800, 190, 180, 180, "-40%", 40, fill=PLUM, radius=90),
+                 *button("cta", 340, 890, 400, 80, "Shop now", 28),
+                 text("legal", 90, 1010, 900, 30, "Offer ends 31 August. Terms apply.", 14,
+                      color="rgba(255,255,255,0.75)", z=5),
+             ], targets=("ig-square", "med-rect", "fb-link", "half-page", "ig-portrait"),
+             show=("headline", "cta_label", "sticker_label", "legal"),
+             xfail=("med-rect",)),
+
+        Case("product_not_a_thumbnail",
+             "one big product and a short headline: on 300x250 and square formats the product keeps a "
+             "real share of the canvas instead of shrinking to a thumbnail beside the copy",
+             1080, 1350, [
+                 logo(390, 50, 300, 100),
+                 image("product", 240, 200, 600, 780),
+                 text("headline", 90, 1020, 900, 110, "Golden Hour", 84, "Solstice Serif", True),
+                 *button("cta", 340, 1180, 400, 90, "Shop now", 28),
+             ], targets=("med-rect", "ig-square", "fb-link", "half-page", "email-header"),
+             show=("headline", "cta_label", "product"), check=at_least_share("product", 0.5)),
+
+        Case("button_label_not_minimum_on_small",
+             "a call to action on 300x250: the label is set at a size a person can read (at least 6% "
+             "of the short side), not the renderer's minimum",
+             1080, 1080, sq_copy, targets=("med-rect", "email-header"),
+             show=("headline", "cta_label"), check=label_at_least("cta_label", 0.06),
+             xfail=("med-rect", "email-header")),
+    ]
+
+
+# ----------------------------------------------------------------------------
+# relations: two runs of the engine that must agree (loop/weaknesses.md, r1). Not about one
+# output's quality but about the engine being a well-behaved function of its input.
+
+
+@dataclass
+class Relation:
+    name: str
+    probe: str
+    kind: str  # "scale": design and target both k times larger; "step": target one pixel wider/taller
+    source: dict
+    target: dict
+    k: int = 2
+    xfail: bool = False
+
+
+def _scaled(src: dict, k: float) -> dict:
+    out = json.loads(json.dumps(src))
+    out["canvas"] = {"width": src["canvas"]["width"] * k, "height": src["canvas"]["height"] * k}
+    for e in out["elements"]:
+        for f in ("x", "y", "width", "height", "font_size", "letter_spacing", "corner_radius"):
+            if isinstance(e.get(f), (int, float)):
+                e[f] = e[f] * k
+    return out
+
+
+def relations() -> List[Relation]:
+    by = {c.name: c for c in cases()}
+    pick = ("explicit_newlines", "letter_spaced_caps", "crowded_l3", "band_stays_band_on_squares",
+            "tiny_items_kept_on_small_canvases")
+    out: List[Relation] = []
+    for n in pick:
+        c = by[n]
+        for t in ("ig-square", "story", "med-rect", "leaderboard", "fb-link"):
+            out.append(Relation(f"scale2x/{n}@{t}",
+                                "design and target both doubled: the same layout, doubled",
+                                "scale", c.source, c.target(t), 2, xfail=(n, t) in SCALE_XFAIL))
+    for n in ("explicit_newlines", "crowded_l3", "band_stays_band_on_squares", "tiny_items_kept_on_small_canvases"):
+        c = by[n]
+        for (w, h) in ((1080, 1080), (300, 250), (728, 90), (1200, 628), (1080, 1920), (970, 250)):
+            for dw, dh in ((1, 0), (0, 1)):
+                out.append(Relation(f"step/{n}@{w}x{h}+{dw}{dh}",
+                                    "one pixel more of width or height must not flip the layout",
+                                    "step", c.source, {"width": w, "height": h}, 1,
+                                    xfail=(n, w, h, dw, dh) in STEP_XFAIL))
+    return out
+
+
+# Measured failures of the engine on 2026-10-24 (absolute-pixel thresholds, hard cut-offs).
+SCALE_XFAIL = {("explicit_newlines", "med-rect"), ("explicit_newlines", "leaderboard"),
+               ("letter_spaced_caps", "med-rect"), ("letter_spaced_caps", "leaderboard"),
+               ("crowded_l3", "med-rect"), ("crowded_l3", "leaderboard"), ("crowded_l3", "fb-link"),
+               ("band_stays_band_on_squares", "med-rect"),
+               ("tiny_items_kept_on_small_canvases", "med-rect"),
+               ("tiny_items_kept_on_small_canvases", "leaderboard")}
+STEP_XFAIL = {("crowded_l3", 1200, 628, 1, 0), ("crowded_l3", 1080, 1920, 1, 0),
+              ("crowded_l3", 1080, 1920, 0, 1)}
 
 
 # ----------------------------------------------------------------------------

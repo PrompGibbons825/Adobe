@@ -11,7 +11,7 @@ from typing import List, Tuple
 from engine.resize import resize
 from engine.smart.geom import el_box
 from engine.smart.textfit import drawn_box
-from tests.finicky import ROOMY_SIDE, BleedProbe, Case
+from tests.finicky import ROOMY_SIDE, BleedProbe, Case, Relation, _scaled
 from tools.rules import (bleed_report, contrast_errors, ghost_text, hard_rule_errors, hierarchy_errors,
                          promise_errors)
 
@@ -105,3 +105,36 @@ def probe_errors(p: BleedProbe) -> List[str]:
     off = [e for e in hard if "off-canvas" in e]
     other = [f"unrelated error: {e}" for e in hard if "off-canvas" not in e]
     return other + ([] if off else ["forbidden bleed accepted"])
+
+
+def relation_errors(r: Relation) -> List[str]:
+    """How far the two runs of a relation disagree: visibility, then each element's box (and a
+    text's size) in units of the canvas. Tolerances are loose; a flipped layout is far outside."""
+    t = r.target
+    if r.kind == "scale":
+        a, _ = run(r.source, t)
+        b, _ = run(_scaled(r.source, r.k), {"width": t["width"] * r.k, "height": t["height"] * r.k})
+        f, W, H = 1.0 / r.k, t["width"], t["height"]
+        tol = 0.04
+    else:
+        t2 = {"width": t["width"] + (r.name.endswith("+10")), "height": t["height"] + (r.name.endswith("+01"))}
+        a, _ = run(r.source, t)
+        b, _ = run(r.source, t2)
+        f, W, H = 1.0, t["width"], t["height"]
+        tol = 0.03
+    oa = {e["id"]: e for e in a["elements"]}
+    errs = []
+    for e in b["elements"]:
+        o = oa[e["id"]]
+        if _visible(o) != _visible(e):
+            errs.append(f"{e['id']}: shown in one run, hidden in the other")
+            continue
+        if not _visible(o):
+            continue
+        d = max(abs(o["x"] - e["x"] * f) / W, abs(o["y"] - e["y"] * f) / H,
+                abs(o["width"] - e["width"] * f) / W, abs(o["height"] - e["height"] * f) / H)
+        if d > tol:
+            errs.append(f"{e['id']}: box moved {d:.0%} of the canvas")
+        elif e.get("type") == "text" and abs(o["font_size"] - e["font_size"] * f) > 0.1 * o["font_size"] + 1:
+            errs.append(f"{e['id']}: font {o['font_size']:.0f} vs {e['font_size'] * f:.0f}")
+    return errs
