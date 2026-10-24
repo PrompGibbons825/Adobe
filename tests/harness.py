@@ -9,7 +9,9 @@ from contextlib import redirect_stderr
 from typing import List, Tuple
 
 from engine.resize import resize
-from tests.finicky import Case
+from engine.smart.geom import el_box
+from engine.smart.textfit import drawn_box
+from tests.finicky import ROOMY_SIDE, Case
 from tools.rules import ghost_text, hard_rule_errors, promise_errors
 
 
@@ -31,13 +33,20 @@ def _scale(src_el: dict, out_el: dict) -> float:
     return out_el["width"] / max(1e-6, float(src_el["width"]))
 
 
+def _seen(e: dict):
+    """Where the element is seen: a text's glyphs, anything else's box."""
+    return drawn_box(e) if e.get("type") == "text" else el_box(e)
+
+
 def _centre(e: dict) -> Tuple[float, float]:
-    return e["x"] + e["width"] / 2.0, e["y"] + e["height"] / 2.0
+    b = _seen(e)
+    return b.cx, b.cy
 
 
-def together_errors(case: Case, src: dict, out: dict) -> List[str]:
+def together_errors(case: Case, src: dict, out: dict, roomy: bool = True) -> List[str]:
     """Each pair keeps its source arrangement: the offset between the two, in
-    units of the first element's scale, is what it was."""
+    units of the first element's scale, is what it was. On a strip a stacked
+    pair may be re-set side by side, but the two still have to touch."""
     so = {e["id"]: e for e in src["elements"]}
     oo = {e["id"]: e for e in out["elements"]}
     errs = []
@@ -47,11 +56,17 @@ def together_errors(case: Case, src: dict, out: dict) -> List[str]:
             continue
         if not _visible(oo[a]):
             continue
+        if not roomy:
+            ga, gb = _seen(oo[a]), _seen(oo[b])
+            gap = max(gb.x - ga.r, ga.x - gb.r, gb.y - ga.b, ga.y - gb.b)
+            if gap > 0.5 * max(ga.h, gb.h):
+                errs.append(f"{a}/{b}: drifted {gap:.0f} px apart")
+            continue
         k = _scale(so[a], oo[a])
         (ax0, ay0), (bx0, by0) = _centre(so[a]), _centre(so[b])
         (ax1, ay1), (bx1, by1) = _centre(oo[a]), _centre(oo[b])
         ex, ey = (bx1 - ax1) - (bx0 - ax0) * k, (by1 - ay1) - (by0 - ay0) * k
-        slack = 0.15 * math.hypot(oo[a]["width"], oo[a]["height"]) + 2.0
+        slack = 0.15 * max(math.hypot(oo[i]["width"], oo[i]["height"]) for i in (a, b)) + 2.0
         if math.hypot(ex, ey) > slack:
             errs.append(f"{a}/{b}: arrangement broke (off by {math.hypot(ex, ey):.0f} px, slack {slack:.0f})")
     return errs
@@ -66,8 +81,8 @@ def evaluate(case: Case, target: str, render_check: bool = True) -> Tuple[dict, 
     else:
         errs += promise_errors(src, out, tgt)
     oo = {e["id"]: e for e in out["elements"]}
-    errs += [f"{i}: hidden" for i in case.show if not _visible(oo[i])]
-    errs += together_errors(case, src, out)
+    errs += [f"{i}: hidden" for i in case.must_show(target) if not _visible(oo[i])]
+    errs += together_errors(case, src, out, roomy=min(tgt.values()) >= ROOMY_SIDE)
     if case.check:
         errs += case.check(src, out, tgt)
     if render_check:

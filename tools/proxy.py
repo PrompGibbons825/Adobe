@@ -128,12 +128,23 @@ def score(path: str) -> dict:
     PAD = max(32, int(0.25 * max(W, H)))
 
     full = render(design)
+    # hidden elements (opacity 0) are skipped, as the judge cannot see them; but
+    # the renderer ignores text opacity, so a hidden text that still paints is a
+    # "ghost" and is scored as the visible text it is
+    ghosts = set()
+    for e in els:
+        if e["type"] == "text" and float(e.get("opacity", 1) or 0) <= 0 and str(e.get("content", "")).strip():
+            without = render(dict(design, elements=[x for x in els if x is not e]))
+            if (np.abs(full - without) > 0.1).any(axis=-1).sum() >= 12:
+                ghosts.add(e["id"])
+    els = [e for e in els if float(e.get("opacity", 1) or 0) > 0 or e["id"] in ghosts]
     masks, inks = {}, {}
     for e in els:
         a = render({"canvas": design["canvas"], "elements": [e]}, transparent=True, pad=PAD)[..., 3]
         inks[e["id"]] = a
         masks[e["id"]] = a[PAD:PAD + H, PAD:PAD + W] > 0.25
-    rep = {"file": Path(path).name, "canvas": [W, H], "texts": [], "collisions": [], "offcanvas": []}
+    rep = {"file": Path(path).name, "canvas": [W, H], "texts": [], "collisions": [], "offcanvas": [],
+           "ghosts": sorted(ghosts)}
 
     # --- off-canvas ink (cut off) -------------------------------------------------
     for e in els:

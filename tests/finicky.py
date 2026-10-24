@@ -31,6 +31,7 @@ TALL = ("skyscraper", "half-page")
 SMALL = ("med-rect", "email-header")
 SPREAD = ("ig-square", "story", "fb-link", "leaderboard", "mobile-banner", "billboard", "skyscraper",
           "med-rect", "a4")
+ROOMY_SIDE = 200  # below this (strips) only the core message has to survive
 
 
 @dataclass
@@ -41,7 +42,8 @@ class Case:
     H: int
     elements: List[dict]
     targets: Sequence[str] = SPREAD
-    show: Tuple[str, ...] = ()
+    show: Tuple[str, ...] = ()  # visible on every target
+    show_roomy: Tuple[str, ...] = ()  # visible wherever the short side is at least ROOMY_SIDE
     together: Tuple[Tuple[str, str], ...] = ()
     check: Optional[Check] = None
     background: bool = True
@@ -57,6 +59,9 @@ class Case:
     def target(self, name: str) -> dict:
         w, h = CATALOGUE[name]
         return {"width": w, "height": h}
+
+    def must_show(self, name: str) -> Tuple[str, ...]:
+        return self.show + (self.show_roomy if min(CATALOGUE[name]) >= ROOMY_SIDE else ())
 
 
 def image(id, x, y, w, h, asset="solstice_bottle.png", z=2, **kw) -> dict:
@@ -104,6 +109,18 @@ def same_size(*ids: str, tol: float = 0.12) -> Check:
     return check
 
 
+def whole_units(*units: Tuple[str, ...]) -> Check:
+    """Each unit is shown or hidden as a whole, never in part; on a roomy target
+    at least one shows."""
+    def check(src, out, tgt):
+        shown = {e["id"]: float(e.get("opacity", 1)) > 0 for e in out["elements"]}
+        errs = [f"{u}: partly hidden" for u in units if len({shown[i] for i in u}) > 1]
+        if min(tgt.values()) >= ROOMY_SIDE and not any(shown[u[0]] for u in units):
+            errs.append("every unit hidden")
+        return errs
+    return check
+
+
 def all_of(*checks: Check) -> Check:
     def check(src, out, tgt):
         return [e for c in checks for e in c(src, out, tgt)]
@@ -125,7 +142,7 @@ def cases() -> List[Case]:
                  text("url", 140, 620, 800, 50, "solstice.com/summer-collection-2026/limited", 30,
                       color="rgba(255,255,255,0.85)"),
                  *button("cta", 340, 760, 400, 90, "Bestellen", 28),
-             ], targets=SPREAD + TALL, show=("headline", "cta_label", "logo")),
+             ], targets=SPREAD + TALL, show=("headline", "cta_label"), show_roomy=("logo",)),
 
         Case("explicit_newlines",
              "designer line breaks ('\\n') are kept by the renderer's wrap; measurement must honour them "
@@ -136,7 +153,7 @@ def cases() -> List[Case]:
                  text("subhead", 140, 780, 800, 120, "Botanical sparkling infusions.\nCrafted for golden hour.", 32,
                       color="rgba(255,255,255,0.85)"),
                  *button("cta", 340, 1000, 400, 90, "Shop now", 28),
-             ], show=("headline", "cta_label", "logo")),
+             ], show=("headline", "cta_label"), show_roomy=("logo",)),
 
         Case("letter_spaced_caps",
              "letter spacing is drawn but ignored by the renderer's wrap, so a tracked line is wider "
@@ -149,7 +166,7 @@ def cases() -> List[Case]:
                       color="rgba(255,255,255,0.85)", letter_spacing=2),
                  *button("cta", 340, 760, 400, 90, "FIND A STORE", 26),
                  logo(390, 920, 300, 100),
-             ], show=("headline", "cta_label", "logo")),
+             ], show=("headline", "cta_label"), show_roomy=("logo",)),
 
         Case("accents_and_symbols",
              "non-ASCII copy: accents, dashes, currency, a symbol the brand fonts may not carry; measured "
@@ -159,7 +176,7 @@ def cases() -> List[Case]:
                  text("price", 340, 560, 400, 90, "€4,99 · £3.99 · ¥650", 44, bold=True, color=GOLD),
                  text("subhead", 140, 690, 800, 80, "Ünïcödé süßigkeiten ☀ ✦ 🍊", 30, color="rgba(255,255,255,0.85)"),
                  *button("cta", 340, 830, 400, 90, "Jetzt kaufen", 28),
-             ], show=("headline", "price", "cta_label")),
+             ], show=("headline", "cta_label"), show_roomy=("price",)),
 
         Case("blank_and_empty_text",
              "texts with no visible content (empty, spaces, a lone newline) must survive as ids without "
@@ -171,7 +188,7 @@ def cases() -> List[Case]:
                  text("spaces", 90, 650, 900, 40, "     ", 28),
                  text("newline", 90, 700, 900, 40, "\n", 28),
                  *button("cta", 340, 800, 400, 90, "Shop now", 28),
-             ], show=("headline", "cta_label", "logo")),
+             ], show=("headline", "cta_label"), show_roomy=("logo",)),
 
         Case("shadowed_headline",
              "a drop shadow made of a second copy of the headline, offset a few px underneath: the pair "
@@ -184,7 +201,7 @@ def cases() -> List[Case]:
                  text("subhead", 140, 600, 800, 80, "Every bottle, this weekend only.", 32,
                       color="rgba(255,255,255,0.85)"),
                  *button("cta", 340, 760, 400, 90, "Shop the sale", 28),
-             ], show=("headline", "headline_shadow", "cta_label"),
+             ], show=("headline", "cta_label"), show_roomy=("headline_shadow",),
              together=(("headline", "headline_shadow"),)),
 
         Case("stacked_discount",
@@ -198,7 +215,7 @@ def cases() -> List[Case]:
                  text("subhead", 140, 760, 800, 80, "On every botanical sparkler, all weekend.", 30,
                       color="rgba(255,255,255,0.85)"),
                  *button("cta", 340, 920, 400, 90, "Shop the sale", 28),
-             ], show=("big", "upto", "off", "cta_label"),
+             ], show=("big", "cta_label"), show_roomy=("upto", "off"),
              together=(("upto", "big"), ("big", "off"))),
 
         Case("price_lockup",
@@ -211,7 +228,7 @@ def cases() -> List[Case]:
                  text("cents", 800, 262, 80, 50, ".99", 40, bold=True, align="left", color=GOLD),
                  text("per", 800, 318, 160, 40, "per case", 24, align="left", color="rgba(255,255,255,0.8)"),
                  *button("cta", 640, 430, 300, 70, "Order now", 24),
-             ], show=("headline", "dollars", "cents", "cta_label"),
+             ], show=("dollars", "cta_label"), show_roomy=("headline", "cents"),
              together=(("dollars", "cents"), ("cents", "per"))),
 
         Case("rotated_everything",
@@ -226,7 +243,7 @@ def cases() -> List[Case]:
                       color="rgba(255,255,255,0.7)", rotation=-90),
                  text("headline", 90, 780, 900, 150, "Summer sale on every bottle", 62, "Solstice Serif", True),
                  *button("cta", 340, 1080, 400, 90, "Shop the sale", 28),
-             ], show=("headline", "cta_label", "logo")),
+             ], show=("headline", "cta_label"), show_roomy=("logo",)),
 
         Case("bleeding_decor",
              "translucent circles that bleed off two corners and a big blob behind the product: decoration "
@@ -239,7 +256,7 @@ def cases() -> List[Case]:
                  image("product", 340, 230, 400, 400, z=3),
                  text("headline", 90, 680, 900, 140, "Chase the Light", 76, "Solstice Serif", True),
                  *button("cta", 340, 860, 400, 90, "Shop now", 28),
-             ], show=("headline", "cta_label", "logo", "product")),
+             ], show=("headline", "cta_label"), show_roomy=("logo", "product")),
 
         Case("no_background",
              "nothing paints the canvas (the renderer leaves it white) and copy is dark: hidden copy has "
@@ -254,7 +271,7 @@ def cases() -> List[Case]:
                  text("legal", 60, 1030, 960, 30,
                       "Please drink responsibly. Botanical Sparkling Co. 2026. Void where prohibited.", 14,
                       color="rgba(43,27,46,0.6)"),
-             ], background=False, show=("headline", "cta_label", "logo")),
+             ], background=False, show=("headline", "cta_label"), show_roomy=("logo",)),
 
         Case("translucent_overlay",
              "a full-canvas dark scrim over the background photo (rgba alpha 0.45): it is part of the "
@@ -265,7 +282,7 @@ def cases() -> List[Case]:
                  image("product", 290, 250, 500, 500, z=2),
                  text("headline", 90, 820, 900, 160, "After sunset, it sparkles", 66, "Solstice Serif", True),
                  *button("cta", 340, 1080, 400, 90, "Shop now", 28),
-             ], show=("headline", "cta_label", "logo"), check=full_bleed("bg", "scrim")),
+             ], show=("headline", "cta_label"), show_roomy=("logo",), check=full_bleed("bg", "scrim")),
 
         Case("split_background",
              "two flat half-canvas panels form the background (plum left, orange right) with copy on one "
@@ -279,7 +296,7 @@ def cases() -> List[Case]:
                       color="rgba(255,255,255,0.85)"),
                  *button("cta", 60, 460, 260, 70, "Choose yours", 22, fill=GOLD, color=PLUM),
                  image("product", 700, 64, 400, 500, z=2),
-             ], background=False, show=("headline", "cta_label", "product")),
+             ], background=False, show=("headline", "cta_label"), show_roomy=("product",)),
 
         Case("two_ctas",
              "a primary and a secondary button side by side: both are buttons, they must keep the same "
@@ -290,7 +307,7 @@ def cases() -> List[Case]:
                  text("headline", 90, 650, 900, 120, "Chase the Light", 76, "Solstice Serif", True),
                  *button("cta", 150, 840, 360, 90, "Shop now", 28),
                  *button("cta2", 570, 840, 360, 90, "Learn more", 28, fill="rgba(255,255,255,0.16)"),
-             ], show=("headline", "cta_label", "logo"), check=same_size("cta_bg", "cta2_bg")),
+             ], show=("headline", "cta_label"), show_roomy=("logo",), check=same_size("cta_bg", "cta2_bg")),
 
         Case("badge_grid",
              "six alike badges in a 3x2 grid (a variable-count set): they must stay alike and in sets, "
@@ -304,7 +321,7 @@ def cases() -> List[Case]:
                    for e in button(f"badge{i}", x, y, 280, 60, lab, 20, fill=PLUM if i % 2 else ORANGE)],
                  image("product", 390, 680, 300, 300),
                  *button("cta", 340, 1100, 400, 90, "Shop now", 28),
-             ], show=("headline", "cta_label", "logo"),
+             ], show=("headline", "cta_label"), show_roomy=("logo",),
              check=same_size(*[f"badge{i}_bg" for i in range(6)])),
 
         Case("product_cards",
@@ -321,7 +338,8 @@ def cases() -> List[Case]:
                        image(f"bottle{i}", x + 70, 170, 180, 260, z=2, group_id=f"card{i}"),
                        text(f"name{i}", x + 20, 450, 280, 40, name, 26, bold=True, group_id=f"card{i}"),
                        text(f"price{i}", x + 20, 500, 280, 40, price, 26, color=GOLD, group_id=f"card{i}"))],
-             ], show=("headline", "name0", "name1", "name2"),
+             ], show=("headline",), check=whole_units(*[(f"card{i}", f"bottle{i}", f"name{i}", f"price{i}")
+                                                         for i in range(3)]),
              together=(("bottle0", "name0"), ("bottle1", "name1"), ("bottle2", "name2"))),
 
         Case("wall_of_copy",
@@ -352,7 +370,7 @@ def cases() -> List[Case]:
                  text("headline", 140, 70, 145, 80, "Chase the Light", 22, "Solstice Serif", True, align="left"),
                  *button("cta", 140, 165, 130, 34, "Shop now", 13),
              ], targets=("story", "a4", "ig-square", "billboard", "pres-16x9"),
-             show=("headline", "cta_label", "logo", "product")),
+             show=("headline", "cta_label"), show_roomy=("logo", "product")),
 
         Case("wide_source",
              "a 728x90 leaderboard rebuilt as tall and square formats: a row must turn into a column",
@@ -363,7 +381,7 @@ def cases() -> List[Case]:
                       "Solstice Serif", True, align="left"),
                  *button("cta", 570, 25, 145, 40, "Shop now", 15),
              ], targets=("ig-square", "story", "ig-portrait", "med-rect", "half-page", "skyscraper"),
-             show=("headline", "cta_label", "logo", "product")),
+             show=("headline", "cta_label"), show_roomy=("logo", "product")),
 
         Case("missing_hero_asset",
              "the large hero asset is not in the brand kit (the renderer would paint a grey box) next to "
@@ -374,7 +392,7 @@ def cases() -> List[Case]:
                  image("watermark", 880, 980, 160, 70, asset="holiday_badge_2025.png", z=5),
                  text("headline", 90, 650, 900, 120, "Chase the Light", 76, "Solstice Serif", True),
                  *button("cta", 340, 850, 400, 90, "Shop now", 28),
-             ], show=("headline", "cta_label", "logo")),
+             ], show=("headline", "cta_label"), show_roomy=("logo",)),
 
         Case("thin_rules_and_lines",
              "hairline dividers (a 2px rectangle and a 'line' shape) between copy: they must stay thin "
@@ -387,7 +405,7 @@ def cases() -> List[Case]:
                       color="rgba(255,255,255,0.85)"),
                  shape("line", 340, 680, 400, 10, GOLD, z=3, kind="line", stroke_color=GOLD, stroke_width=2),
                  *button("cta", 340, 740, 400, 90, "Shop now", 28),
-             ], show=("headline", "cta_label", "logo"), check=lambda s, o, t: _thin("rule", s, o)),
+             ], show=("headline", "cta_label"), show_roomy=("logo",), check=lambda s, o, t: _thin("rule", s, o)),
 
         Case("crowded_l3",
              "the Level 3 load in miniature: a run-on headline, three badges, a ribbon, a legal line and a "
@@ -407,7 +425,7 @@ def cases() -> List[Case]:
                  image("watermark", 850, 1250, 180, 80, asset="solstice_holiday_badge_2025.png", z=2),
                  text("legal", 60, 1310, 960, 30, "Please drink responsibly. See solstice.com/terms.", 12,
                       color="rgba(255,255,255,0.6)", z=6),
-             ], targets=STRIPS + TALL + SMALL, show=("headline", "cta_label", "logo")),
+             ], targets=STRIPS + TALL + SMALL, show=("headline", "cta_label"), show_roomy=("logo",)),
     ]
 
 

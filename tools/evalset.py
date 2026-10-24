@@ -95,7 +95,8 @@ def cmd_score(a):
             low = sum(1 for t in live if t["wcag_p10"] < 3.0)
             coll = sum(1 for c in rep["collisions"] if c[3] > 0.1)
             res.append(dict(agg, low_contrast_texts=low, visible_texts=len(live), collisions_gt10=coll,
-                            contrast_lost=lost_c, busy_gained=gained_busy, new_collisions=new_coll))
+                            contrast_lost=lost_c, busy_gained=gained_busy, new_collisions=new_coll,
+                            ghosts=len(rep.get("ghosts", []))))
         rows[tag] = res
         (EVAL / f"{tag}_{a.split}.json").write_text(json.dumps(res, indent=1))
     keys = ["score", "low_contrast", "text_on_busy", "tiny_text", "collisions", "dropped_text", "offcanvas",
@@ -108,11 +109,11 @@ def cmd_score(a):
         print(tag.ljust(8) + "".join(f"{sum(r[k] for r in res) / n:13.3f}" for k in keys))
     print("\nrelative to the source (counts over all designs in the split)")
     print("tag".ljust(8) + "visible-texts".rjust(15) + "wcag<3".rjust(9) + "contrast-lost".rjust(15)
-          + "busy-gained".rjust(13) + "new-collisions".rjust(16) + "all-collisions".rjust(16))
+          + "busy-gained".rjust(13) + "new-collisions".rjust(16) + "all-collisions".rjust(16) + "ghosts".rjust(8))
     for tag, res in rows.items():
         g = lambda k: sum(r[k] for r in res)  # noqa: E731
         print(tag.ljust(8) + f"{g('visible_texts'):15d}{g('low_contrast_texts'):9d}{g('contrast_lost'):15d}"
-              f"{g('busy_gained'):13d}{g('new_collisions'):16d}{g('collisions_gt10'):16d}")
+              f"{g('busy_gained'):13d}{g('new_collisions'):16d}{g('collisions_gt10'):16d}{g('ghosts'):8d}")
 
 
 def main():

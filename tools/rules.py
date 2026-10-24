@@ -22,12 +22,14 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from engine.smart.color import normalize, parse_rgba
+from engine.smart.analyze import normalize
+from engine.smart.color import normalize as normalize_colour, parse_rgba
 from engine.smart.geom import Box, el_box, rotated_aabb
 from engine.smart.items import Ctx
-from engine.smart.textfit import deliberate_overlaps, drawn_box, text_overlaps
+from engine.smart.textfit import drawn_box, new_text_overlaps
 
 ASSETS = Path(__file__).resolve().parents[1] / "brand_kit" / "assets"
+FONTS = ASSETS.parent / "fonts"
 TOL = 0.6  # px of slack for float rounding at the canvas edge
 
 
@@ -85,7 +87,7 @@ def _text_safety(e: dict, s: dict) -> List[str]:
     col = e.get("color")
     if not (isinstance(col, str) and col.strip().lower().startswith("rgb")):
         errs.append(f"{eid}: colour {col!r} is not rgba()")
-    elif normalize(s.get("color")) and parse_rgba(col) != parse_rgba(normalize(s.get("color"))):
+    elif normalize_colour(s.get("color")) and parse_rgba(col) != parse_rgba(normalize_colour(s.get("color"))):
         errs.append(f"{eid}: colour changed {s.get('color')!r} -> {col!r}")
     return errs
 
@@ -115,7 +117,8 @@ def promise_errors(src: dict, out: dict, tgt: dict) -> List[str]:
         db = drawn_box(e)
         if db.x < -TOL or db.y < -TOL or db.r > W + TOL or db.b > H + TOL:
             errs.append(f"{e['id']}: glyphs drawn past the canvas ({db.x:.0f},{db.y:.0f},{db.r:.0f},{db.b:.0f})")
-    for a, b, area, _ in text_overlaps(out["elements"], exempt=deliberate_overlaps(src["elements"])):
+    src_norm = [normalize(e, i) for i, e in enumerate(src["elements"])]  # as the renderer would draw it
+    for a, b, area, _ in new_text_overlaps(out["elements"], src_norm):
         errs.append(f"copy over copy: {a} x {b} ({area:.0f} px2)")
     errs += _labels_in_buttons(src, out)
     return errs
@@ -153,16 +156,16 @@ def _inside(a: Box, b: Box, tol: float) -> bool:
 
 
 def render_image(design: dict, assets: Path = ASSETS):
-    """The design through the reference renderer, as an RGB PIL image. Each call
-    renders into its own temporary file, so parallel runs cannot read each
-    other's half-written PNGs."""
+    """The design through the reference renderer (brand-kit fonts), as an RGB
+    PIL image. Each call renders into its own temporary file, so parallel runs
+    cannot read each other's half-written PNGs."""
     from PIL import Image
 
     from renderer.converter.convert import render_design_to_png
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "r.png"
-        render_design_to_png(design, assets, str(path))
+        render_design_to_png(design, assets, str(path), fonts_dir=FONTS)
         with Image.open(path) as im:
             return im.convert("RGB")
 
