@@ -21,6 +21,8 @@ from .items import INF, Ctx, Real, realize
 
 Placement = Tuple[Real, float, float]
 RHYTHM = 1.0  # a gap in a column is at most this times the smaller of the rows it separates
+SEPARATION = 0.5  # ... and never gives way below this times it (unless the source set them closer)
+CLEAR_SPACE = 0.5  # a logo keeps this times its height clear above and below
 
 
 @dataclass
@@ -149,6 +151,18 @@ class VStack(Node):
             total += l.h
             if total > max_h + 0.5:
                 return None
+        for i in range(n - 1):  # what a gap never gives up, unless the source set the rows closer
+            hs = [laids[j].h for j in (i, i + 1) if laids[j] is not None]
+            want = SEPARATION * min(hs) if hs else 0.0
+            for j in (i, i + 1):
+                c = self.children[j]
+                if laids[j] is not None and isinstance(c, Leaf) and c.item.role == "logo":
+                    want = max(want, CLEAR_SPACE * laids[j].h)
+            lift = max(least[i], min(base[i], want))
+            total += lift - least[i]
+            least[i] = lift
+        if total > max_h + 0.5:
+            return None
         gaps = []
         for i, b in enumerate(base):
             sides = [laids[j].h for j in (i, i + 1) if laids[j] is not None]
@@ -194,6 +208,56 @@ class VStack(Node):
         laid.parts = laids  # type: ignore[attr-defined]
         laid.gap_list = gaps  # type: ignore[attr-defined]
         return laid
+
+
+PANEL_PAD = 0.6  # a panel's padding never drops below this times the readable size
+PANEL_PAD_MAX = 0.06  # ... nor grows past this share of the canvas a side
+PANEL_PAD_LEAST = 0.4  # where room is short it may halve, but never below this times the readable size
+
+
+def panel_pads(pad: Tuple[float, ...], edges: Tuple[bool, ...], s: float, ctx: Ctx) -> Tuple[float, ...]:
+    """A panel's padding on a new canvas (left, top, right, bottom): the
+    source's at the layout scale, never thinner than a readable sliver nor
+    wider than PANEL_PAD_MAX of the canvas. A side where the panel met the
+    canvas edge (a band) has no padding of its own: the canvas margin is it."""
+    floor = PANEL_PAD * ctx.base_fs
+    out = []
+    for i, (p, edge) in enumerate(zip(pad, edges)):
+        span = ctx.W if i in (0, 2) else ctx.H
+        out.append(floor if edge else max(floor, min(p * s, PANEL_PAD_MAX * span)))
+    return tuple(out)
+
+
+class Padded(Node):
+    """Rows framed by a panel (a card, a band). The panel is redrawn around
+    them afterwards, so its padding has to be part of the layout: without it
+    a card either hugs its copy or runs off the canvas."""
+
+    def __init__(self, child: Node, pad: Tuple[float, ...], edges: Tuple[bool, ...]):
+        self.child = child
+        self.pad = pad
+        self.edges = edges
+        self.flex = child.flex
+
+    def items(self):
+        return self.child.items()
+
+    def measure(self, s, ctx, max_w, max_h, relax):
+        full = panel_pads(self.pad, self.edges, s, ctx)
+        least = PANEL_PAD_LEAST * ctx.base_fs
+        tight = tuple(min(p, max(least, p / 2.0)) for p in full)
+        for l, t, r, b in (full, tight):  # padding gives way (to a visible sliver) before the content
+            if max_w - l - r <= 0 or max_h - t - b <= 0:
+                continue
+            inner = self.child.measure(s, ctx, max_w - l - r, max_h - t - b, relax)
+            if inner is not None:
+                break
+        else:
+            return None
+        w, h = inner.w + l + r, inner.h + t + b
+        il, it_, ir, ib = inner.oh
+        return Laid(w, h, lambda x, y: inner.place(x + l, y + t), min_scale=inner.min_scale,
+                    oh=(max(0.0, il - l), max(0.0, it_ - t), max(0.0, ir - r), max(0.0, ib - b)))
 
 
 def _min_width(node: Node, s, ctx, max_w, max_h, relax) -> Optional[float]:

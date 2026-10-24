@@ -279,7 +279,7 @@ def analyze(source: dict, lockups: bool = True) -> Design:
         elif e["id"] in region_ids:
             pending_backdrops.append(e)
         elif t == "shape":
-            if _frames_something(e, els, bg_ids, grouped_ids):
+            if _frames_something(e, els, bg_ids, grouped_ids, canvas):
                 pending_backdrops.append(e)
             elif _is_decor(e, canvas):
                 decor.append(e)
@@ -309,7 +309,10 @@ def analyze(source: dict, lockups: bool = True) -> Design:
 def _locked(a: Item, b: Item) -> bool:
     """Two texts set as one piece of type. Separate lines of copy keep at least
     a word space apart; these overlap on purpose (a shadow, stacked display
-    type) or sit closer than that (a big figure beside its cents)."""
+    type) or sit closer than that (a big figure beside its cents, display
+    lines stacked tight in one typeface). A subhead set right under its
+    headline in another face is copy that follows it, not one piece: it
+    stays with it in a column (see compose._room) but wraps on its own."""
     A, B = a.src_box, b.src_box
     if A.inter(B) >= 0.15 * min(A.area, B.area):
         return True
@@ -318,7 +321,8 @@ def _locked(a: Item, b: Item) -> bool:
     gap_y = max(B.y - A.b, A.y - B.b)
     side_by_side = min(A.b, B.b) - max(A.y, B.y) > 0.3 * min(A.h, B.h)
     stacked = min(A.r, B.r) - max(A.x, B.x) > 0.3 * min(A.w, B.w)
-    return (side_by_side and gap_x < 0.3 * fs) or (stacked and gap_y < 0.1 * fs)
+    one_face = a.style is not None and b.style is not None and a.style.family == b.style.family
+    return (side_by_side and gap_x < 0.3 * fs) or (stacked and gap_y < 0.1 * fs and one_face)
 
 
 def _make_lockups(d: Design) -> None:
@@ -395,10 +399,14 @@ def _covered(els: List[dict], canvas: Box, n: int = 24) -> float:
     return hits / (n * n)
 
 
-def _frames_something(sh: dict, els: List[dict], bg_ids, grouped_ids) -> bool:
-    """A free shape with text on top of it that is not a small button: a panel."""
+def _frames_something(sh: dict, els: List[dict], bg_ids, grouped_ids, canvas: Box) -> bool:
+    """A free shape with text on top of it that is not a small button: a panel.
+    An ellipse that bleeds off the canvas is a corner ornament whatever sits
+    over it (redrawn around that copy it would become a stretched halo)."""
     sb = el_box(sh)
     if sb.area <= 0:
+        return False
+    if sh.get("shape_type") == "ellipse" and sb.inter(canvas) < 0.95 * sb.area:
         return False
     n = 0
     for e in els:
@@ -716,7 +724,9 @@ def _assign_roles(d: Design) -> None:
             near_bottom = it.src_box.b >= 0.86 * H0 or it.src_box.y >= 0.9 * H0
             lowest = all(it.src_box.y >= o.src_box.cy for o in others if o is not it)
             faint = it.els[0]["opacity"] * _text_alpha(it.els[0]) < 0.75
-            if p <= 0.3 * hp or (p <= 0.45 * hp and ((near_bottom and lowest) or faint)):
+            # small print by size alone only when very small; a smaller line that sits with the
+            # copy (a subhead under its headline) is legal only if it is faint or set at the very bottom
+            if p <= 0.22 * hp or (p <= 0.45 * hp and ((near_bottom and lowest) or faint)):
                 it.role = "legal"
             else:
                 it.role = "body"
@@ -766,6 +776,54 @@ def _assign_roles(d: Design) -> None:
             elif small and (it.src_box.b > 0.88 * H0) and e["z_index"] < max(
                     (x["z_index"] for x in d.elements if x.get("type") == "text"), default=0):
                 it.role = "watermark"
+
+    # ---- a brand set in type ------------------------------------------------------
+    if texts and not any(it.role == "logo" for it in d.items):
+        mark = _wordmark(d, texts)
+        if mark is not None:
+            was, mark.role = mark.role, "logo"
+            if was == "subhead":  # the next body copy takes its place
+                bodies = sorted([it for it in texts if it.role == "body"], key=lambda it: -_prominence(it))
+                if bodies:
+                    bodies[0].role = "subhead"
+
+
+def _wordmark(d: Design, texts: List[Item]) -> Optional[Item]:
+    """A design with no logo artwork often sets its brand in type: one or two
+    words, styled as a mark (capitals, tracking or bold), leading the reading
+    order (topmost; leftmost on a strip) and standing apart from the headline,
+    with something between them or a clear gap. A kicker sits right above
+    its headline, so it stays copy."""
+    head = next((t for t in texts if t.role == "headline"), None)
+    if head is None:
+        return None
+    wide = d.W / max(1.0, d.H) > 2.5
+    content = [it for it in d.items if it.role not in ("missing", "void")]
+    for t in texts:
+        if t.role not in ("body", "subhead") or t.rotation:
+            continue
+        el = t.els[0]
+        words = str(el.get("content", "")).split()
+        if not 0 < len(words) <= 2 or len(" ".join(words)) > 20:
+            continue
+        style = t.style or TextStyle.of(el)
+        marked = " ".join(words).isupper() or style.tracking >= 0.05 or style.weight in (
+            "bold", "semibold", "extrabold", "black")
+        if not marked:
+            continue
+        b, hb = t.src_box, head.src_box
+        others = [o for o in content if o is not t]
+        if wide:
+            leads = all(b.x <= o.src_box.x + 1.0 for o in others)
+            gap = hb.x - b.r
+            between = any(b.r <= o.src_box.cx <= hb.x for o in others if o is not head)
+        else:
+            leads = all(b.y <= o.src_box.y + 1.0 for o in others)
+            gap = hb.y - b.b
+            between = any(b.b <= o.src_box.cy <= hb.y for o in others if o is not head)
+        if leads and (between or gap > 1.5 * b.h):
+            return t
+    return None
 
 
 def _solid(it: Item) -> bool:

@@ -22,9 +22,9 @@ from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .analyze import Design, Item
-from .geom import Box, el_visual_box, union_all
-from .items import Ctx, Real, realize, realize_scaled
-from .layout import Flow, HStack, Laid, Leaf, Node, VStack, search_scale
+from .geom import Box, el_box, el_visual_box, union_all
+from .items import Ctx, Real, display_size, realize, realize_scaled
+from .layout import Flow, HStack, Laid, Leaf, Node, Padded, VStack, search_scale
 from .structure import dominant_align, lead_text, row_align, rows_for, text_edges
 
 Placement = Tuple[Real, float, float]
@@ -33,7 +33,11 @@ CORE_ROLES = ("headline", "cta", "logo", "hero")
 SAME_SHAPE = 1.03  # aspect ratios this close are the same format at another size
 EMPHASIS = (1.35, 1.7)  # display emphasis tried for a short headline when the design reflows
 DISPLAY_WORDS = 8  # a headline this short can be set as display type; a longer one only gets the first step
+BALANCE = 0.5  # how far a reflowed column's top and bottom margins move towards even
 BOND = 0.3  # rows closer than this times the smaller one's height read as one unit and spread as one
+MARGIN_LONG = 0.05  # the least margin along a canvas's length, as a share of it
+COLUMN_ROOM = 1.35  # how much further than sqrt(area) a column may grow on a taller canvas
+ROW_GAP = 0.25  # a banner row's gaps widen to fill it, up to this share of the canvas width each
 WIDE_MEASURE = 1.8  # on a much wider canvas, copy is also tried this much wider than its source measure
 WIDER = 1.5  # ... when the target's aspect ratio is this many times the source's
 
@@ -60,7 +64,9 @@ class Plan:
 
 
 def margins(d: Design, ctx: Ctx) -> Tuple[float, float]:
-    """Safe-area margins, following the source's own breathing room."""
+    """Safe-area margins, following the source's own breathing room, and never
+    thinner than a banner's: about 5% of the long side (a 728x90 keeps ~27 px
+    a side), though no more than 0.3 of the short side."""
     body = [it for it in d.items if it.corner is None and it.role != "missing"]
     fr = 0.06
     if body:
@@ -70,8 +76,8 @@ def margins(d: Design, ctx: Ctx) -> Tuple[float, float]:
     fr = min(0.075, max(0.045, fr))
     short = min(ctx.W, ctx.H)
     floor = min(6.0, max(3.0, 0.08 * short))  # tiny banners cannot spare 6px a side
-    my = max(floor, fr * short)
-    mx = max(floor, fr * short, 0.012 * ctx.W)
+    my = max(floor, fr * short, min(MARGIN_LONG * 0.875 * ctx.H, 0.3 * ctx.W))
+    mx = max(floor, fr * short, min(MARGIN_LONG * ctx.W, 0.3 * ctx.H))
     return mx, my
 
 
@@ -84,7 +90,12 @@ def scale_bounds(d: Design, ctx: Ctx, kind: str = "stack") -> Tuple[float, float
     bring a short headline up to the display size typical for the format
     (~0.28 H on strips, ~0.16 H on wide banners, ~0.13 H landscape), and a
     design moved to a much roomier canvas may grow towards a display headline,
-    so it does not look like a small design lost in space."""
+    so it does not look like a small design lost in space.
+
+    A column moved to a canvas taller than its source gains height to grow
+    into, as Adobe's reference story does (the post set about 1.6x larger, its
+    headline broken in two): up to COLUMN_ROOM times further, the more the
+    shape changed. On a wider canvas one column shares the short side."""
     import math
 
     rw, rh = ctx.W / d.W, ctx.H / d.H
@@ -92,7 +103,10 @@ def scale_bounds(d: Design, ctx: Ctx, kind: str = "stack") -> Tuple[float, float
     r = ctx.W / ctx.H
     cap = math.sqrt(rw * rh)
     if kind == "stack":
-        cap = min(cap, lo_r ** 0.6 * hi_r ** 0.4)  # one column shares the short side
+        if rh > rw:
+            cap *= min(COLUMN_ROOM, 1.0 + 0.5 * math.log(rh / rw))
+        else:
+            cap = min(cap, lo_r ** 0.6 * hi_r ** 0.4)
     if r >= 6.0 or r <= 1 / 6.0:
         cap *= 1.4
     head = next((i for i in d.items if i.role == "headline"), None)
@@ -105,6 +119,11 @@ def scale_bounds(d: Design, ctx: Ctx, kind: str = "stack") -> Tuple[float, float
         if kind in ("row", "split") and r >= 1.4:
             frac = 0.28 if r >= 5.0 else (0.16 if r >= 2.4 else 0.13)
             cap = max(cap, min(frac * ctx.H * short / head.fs0, 2.0 * cap))
+    if head is not None and head.main_fs() > 0:
+        # the design grows only until its headline reaches the canvas's display size (or past it,
+        # as far past as the source set it): nothing outgrows the headline, the hierarchy holds
+        rank = max(1.0, head.main_fs() / display_size(d.W, d.H))
+        cap = min(cap, rank * ctx.display_max / head.main_fs())
     return 0.01, max(0.02, cap)
 
 
@@ -160,7 +179,47 @@ def column(d: Design, rows: List[List[Item]], hero_fill: bool = False, force_ali
                 g = typical if typical is not None else 0.5 * ref
                 g = min(max(g, 0.3 * ref), 1.0 * ref)
             gaps.append(g * gap_scale)
+    for a, b, bd in reversed(_panel_runs(d, rows)):  # a panel's rows become one padded block
+        inner = VStack(nodes[a:b + 1], gaps=gaps[a:b], align=aligns[a:b + 1])
+        nodes[a:b + 1] = [Padded(inner, bd.pad, bd.edges)]
+        gaps[a:b] = []
+        aligns[a:b + 1] = [aligns[a]]
+        boxes[a:b + 1] = [el_box(bd.el)]
     return VStack(nodes, gaps=gaps, align=aligns), boxes
+
+
+def _padded_runs(d: Design, parts: List[Node], join) -> Optional[List[Node]]:
+    """Side by side parts that hold exactly one panel's shown members become
+    one padded block (``join`` sets them in a row), as a column's do. None if
+    a panel's members end up in separate parts (the logo stacked onto its
+    headline, its button beside): a panel drawn around pieces that do not
+    sit together reads as a mistake."""
+    runs = _panel_runs(d, [p.items() for p in parts])
+    for a, b, bd in reversed(runs):
+        parts[a:b + 1] = [Padded(join(parts[a:b + 1]), bd.pad, bd.edges)]
+    for bd in d.backdrops:
+        mine = {id(m) for m in bd.members}
+        if sum(1 for p in parts if any(id(it) in mine for it in p.items())) > 1:
+            return None
+    return parts
+
+
+def _panel_runs(d: Design, rows: List[List[Item]]) -> List[Tuple[int, int, object]]:
+    """Runs of consecutive rows that hold exactly one panel's shown members
+    (all of them, nothing else), as (first, last, backdrop)."""
+    out = []
+    shown = {id(it) for row in rows for it in row}
+    for bd in d.backdrops:
+        mine = {id(m) for m in bd.members} & shown
+        idx = [i for i, row in enumerate(rows) if all(id(it) in mine for it in row)]
+        if not idx or idx != list(range(idx[0], idx[-1] + 1)):
+            continue
+        if {id(it) for i in idx for it in rows[i]} != mine:
+            continue
+        if any(a <= idx[-1] and idx[0] <= b for a, b, _ in out):
+            continue
+        out.append((idx[0], idx[-1], bd))
+    return sorted(out, key=lambda r: r[0])
 
 
 def effective_zone(laid: Laid, ctx: Ctx, zone: Box) -> Box:
@@ -203,11 +262,12 @@ def solve(root: Node, ctx: Ctx, zone: Box, lo: float, hi: float) -> Tuple[Option
 def _room(a: Box, b: Box) -> float:
     """The space the source put between two consecutive rows of a column: the
     gap between them, whichever way it ran (a banner's gutters become a
-    column's breathing room, though a gutter counts for no more than the
-    taller row: past that it is the strip's spare width, not spacing). Rows
-    set tight (a subhead tucked under its headline) are bonded and get none."""
+    column's breathing room, though, as with any gap in the rhythm, a gutter
+    counts for no more than the smaller of its two rows: past that it is the
+    strip's spare width, not spacing). Rows set tight (a subhead tucked under
+    its headline) are bonded and get none."""
     side_by_side = b.y < a.b - 0.5 and a.y < b.b - 0.5
-    g = min(max(0.0, b.x - a.r, a.x - b.r), max(a.h, b.h)) if side_by_side else b.y - a.b
+    g = min(max(0.0, b.x - a.r, a.x - b.r), min(a.h, b.h)) if side_by_side else b.y - a.b
     return g if g >= BOND * min(a.h, b.h) else 0.0
 
 
@@ -216,9 +276,10 @@ def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design,
     """Rows top to bottom with their measured gaps; the height left over is
     shared between the top margin, each gap and the bottom margin in
     proportion to the room the source left there (``_room``; the margins are
-    the content's own). The source's spacing pattern survives (a design that
-    breathes at the bottom still does, rows that sat close stay close) while
-    gaps follow the content, not the canvas.
+    the content's own, moved half way to even, BALANCE). The source's spacing
+    pattern survives (a design that breathes at the bottom still does, a
+    little less; rows that sat close stay close) while gaps follow the
+    content, not the canvas.
 
     Across, the column is one block whose centre sits where the source's
     content was centred, relative to the canvas width (a balanced design is
@@ -226,10 +287,15 @@ def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design,
     unless ``side`` pins it. Rows align inside the block."""
     parts: List[Laid] = laid.parts  # type: ignore[attr-defined]
     gaps: List[float] = laid.gap_list  # type: ignore[attr-defined]
-    room = [min(b.y for b in boxes)] + [_room(a, b) for a, b in zip(boxes, boxes[1:])] + \
-        [d.H - max(b.b for b in boxes)]
+    top, bottom = min(b.y for b in boxes), d.H - max(b.b for b in boxes)
+    mid = (top + bottom) / 2.0  # a reflowed column leans less than its source: half way to centred
+    top, bottom = top + BALANCE * (mid - top), bottom + BALANCE * (mid - bottom)
+    room = [top] + [_room(a, b) for a, b in zip(boxes, boxes[1:])] + [bottom]
     slack = max(0.0, zone.h - sum(p.h for p in parts) - sum(gaps))
-    share = [slack * r / sum(room) for r in room] if sum(room) > 0 else [slack / 2.0] + [0.0] * (len(parts) - 1) + [slack / 2.0]
+    if sum(room) > 0:
+        share = [slack * r / sum(room) for r in room]
+    else:  # nothing to go by: centre the column
+        share = [slack / 2.0] + [0.0] * (len(parts) - 1) + [slack / 2.0]
     bw = max(p.w for p in parts)
     if side in ("start", "end"):
         bx = zone.x if side == "start" else zone.r - bw
@@ -245,13 +311,20 @@ def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design,
     return out
 
 
-def place_row(laid: Laid, ctx: Ctx, zone: Box, grow: float = 2.0) -> List[Placement]:
-    """Centre a row in the zone, letting the gaps breathe before the margins do."""
+def place_row(laid: Laid, ctx: Ctx, zone: Box) -> List[Placement]:
+    """A row of three or more parts is set the way a banner is: spare width
+    goes into the gaps, so the first part holds the left margin and the last
+    the right (the brand at one end, the call to action at the other), no gap
+    opening past a quarter of the canvas. Two parts read as one group: their
+    gap breathes a little (up to three times its size) and the pair is centred."""
     parts: List[Laid] = laid.parts  # type: ignore[attr-defined]
     gaps: List[float] = laid.gap_list  # type: ignore[attr-defined]
     extra = max(0.0, zone.w - laid.w)
     n = len(gaps)
-    add = min(extra / (n + 1.0), max(gaps) * grow) if n else 0.0
+    if n >= 2:
+        add = min(extra / n, max(0.0, ROW_GAP * ctx.W - max(gaps)))
+    else:
+        add = min(extra / (n + 1.0), 2.0 * max(gaps)) if n else 0.0
     x = zone.x + (zone.w - (laid.w + add * n)) / 2.0
     y = zone.y + (zone.h - laid.h) / 2.0
     out = []
@@ -453,7 +526,7 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
     logo = next((i for i in vis if i.role == "logo"), None)
     hero = next((i for i in vis if i.role == "hero"), None)
     ctas = [i for i in vis if i.role == "cta"]
-    texts = [i for i in vis if i.is_copy]
+    texts = [i for i in vis if i.is_copy and i is not logo]
     badges = [i for i in vis if i.role in ("badge", "panel", "group") and not i.corner and not i.is_copy]
     floaters = [i for i in vis if i.corner and i.role != "logo"]
     others = [i for i in vis if i not in texts and i not in ctas and i not in badges and i not in floaters
@@ -476,11 +549,19 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
         col, _ = column(d, rows, force_align="center" if centred else "start", gap_scale=0.6)
         kids.append(col)
     gap = max(1.2 * ctx.base_fs, 0.022 * ctx.W)
+
+    def hstack(parts: List[Node]) -> HStack:
+        h = HStack(parts)
+        h.gap_px = lambda i, s, ctx: gap  # type: ignore[assignment]
+        return h
+
     s = laid = None
     relax = 1.0
     for nowrap in (True, False):  # a one-line CTA reads as a button; wrap only if forced
-        root = HStack(kids + [Leaf(c, nowrap=nowrap) for c in ctas])
-        root.gap_px = lambda i, s, ctx: gap  # type: ignore[assignment]
+        parts = _padded_runs(d, kids + [Leaf(c, nowrap=nowrap) for c in ctas], hstack)
+        if parts is None:
+            return None
+        root = hstack(parts)
         s, laid, relax = solve(root, ctx, zone, lo, hi)
         if laid is not None:
             break

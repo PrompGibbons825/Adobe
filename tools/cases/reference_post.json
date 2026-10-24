@@ -1,0 +1,110 @@
+{
+  "task_id": "reference_post",
+  "source": {
+    "canvas": {
+      "width": 1080,
+      "height": 1080
+    },
+    "elements": [
+      {
+        "id": "bg",
+        "type": "shape",
+        "x": 0,
+        "y": 0,
+        "width": 1080,
+        "height": 1080,
+        "z_index": 0,
+        "shape_type": "rectangle",
+        "fill_color": "rgba(248,238,222,1)"
+      },
+      {
+        "id": "wordmark",
+        "type": "text",
+        "x": 90,
+        "y": 98,
+        "width": 900,
+        "height": 80,
+        "z_index": 4,
+        "content": "SOLSTICE",
+        "font_family": "Solstice Serif",
+        "font_size": 67,
+        "color": "rgba(43,27,46,1)",
+        "text_align": "center",
+        "font_weight": "bold"
+      },
+      {
+        "id": "product",
+        "type": "image",
+        "x": 286,
+        "y": 144,
+        "width": 507,
+        "height": 507,
+        "z_index": 2,
+        "asset_id": "solstice_bottle.png",
+        "fit": "contain"
+      },
+      {
+        "id": "headline",
+        "type": "text",
+        "x": 90,
+        "y": 612,
+        "width": 900,
+        "height": 132,
+        "z_index": 4,
+        "content": "Chase the Light",
+        "font_family": "Solstice Serif",
+        "font_size": 110,
+        "color": "rgba(43,27,46,1)",
+        "text_align": "center",
+        "font_weight": "bold"
+      },
+      {
+        "id": "subhead",
+        "type": "text",
+        "x": 90,
+        "y": 772,
+        "width": 900,
+        "height": 42,
+        "z_index": 4,
+        "content": "Botanical sparkling infusions",
+        "font_family": "Solstice Sans",
+        "font_size": 35,
+        "color": "rgba(43,27,46,0.75)",
+        "text_align": "center"
+      },
+      {
+        "id": "cta_bg",
+        "type": "shape",
+        "x": 352,
+        "y": 887,
+        "width": 374,
+        "height": 90,
+        "z_index": 3,
+        "shape_type": "rectangle",
+        "fill_color": "rgba(232,106,58,1)",
+        "corner_radius": 45.0,
+        "group_id": "cta"
+      },
+      {
+        "id": "cta_label",
+        "type": "text",
+        "x": 352,
+        "y": 909.6,
+        "width": 374,
+        "height": 44.8,
+        "z_index": 4,
+        "content": "Shop the Line",
+        "font_family": "Solstice Sans",
+        "font_size": 32,
+        "color": "rgba(255,255,255,1)",
+        "text_align": "center",
+        "font_weight": "bold",
+        "group_id": "cta"
+      }
+    ]
+  },
+  "target_canvas": {
+    "width": 1080,
+    "height": 1920
+  }
+}

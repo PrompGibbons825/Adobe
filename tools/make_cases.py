@@ -133,9 +133,28 @@ def cases():
     ], target=(970, 250))
 
 
+def reference_post():
+    """The Instagram post from the brief's "Reference output - one design, four
+    canvases" (page 3), rebuilt from the kit at the measured positions and type
+    widths, so the engine's resizes can be laid beside Adobe's own (story,
+    poster, leaderboard). A check, never a tuning target."""
+    W = H = 1080
+    cream = {"id": "bg", "type": "shape", "x": 0, "y": 0, "width": W, "height": H, "z_index": 0,
+             "shape_type": "rectangle", "fill_color": "rgba(248,238,222,1)"}
+    return "reference_post", {"task_id": "reference_post", "source": {"canvas": {"width": W, "height": H}, "elements": [
+        cream,
+        text("wordmark", 90, 98, 900, 80, "SOLSTICE", 67, "Solstice Serif", True, color=PLUM),
+        {"id": "product", "type": "image", "x": 286, "y": 144, "width": 507, "height": 507, "z_index": 2,
+         "asset_id": "solstice_bottle.png", "fit": "contain"},
+        text("headline", 90, 612, 900, 132, "Chase the Light", 110, "Solstice Serif", True, color=PLUM),
+        text("subhead", 90, 772, 900, 42, "Botanical sparkling infusions", 35, color="rgba(43,27,46,0.75)"),
+        *button("cta", 352, 887, 374, 90, "Shop the Line", 32),
+    ]}, "target_canvas": {"width": 1080, "height": 1920}}
+
+
 def main():
     OUT.mkdir(exist_ok=True)
-    for name, t in cases():
+    for name, t in [*cases(), reference_post()]:
         (OUT / f"{name}.json").write_text(json.dumps(t, indent=2))
         print("wrote", name)
 

@@ -10,6 +10,7 @@ from .color import normalize as normalize_colour
 from .compose import Plan, generate
 from .geom import Box, el_box, rotated_aabb
 from .items import Ctx, forget_realized
+from .layout import PANEL_PAD, panel_pads
 from .score import prune_relaxed, score_plans
 from .textfit import TextStyle, letter_spacing
 
@@ -77,7 +78,8 @@ def _diverse(plans, top: int, per_kind: int = 2):
     looks at, so variants of one plan cannot crowd out a different one."""
     seen, unique = set(), []
     for p in plans:
-        key = tuple(sorted((r.item.key, round(x), round(y), round(r.w), round(r.h)) for r, x, y in p.placed + p.floaters))
+        key = tuple(sorted((r.item.key, round(x), round(y), round(r.w), round(r.h))
+                           for r, x, y in p.placed + p.floaters))
         if key not in seen:
             seen.add(key)
             unique.append(p)
@@ -171,10 +173,9 @@ def _backdrop(bd, plan: Plan, d: Design, ctx: Ctx) -> dict:
     u = mine[0][1]
     for _, b in mine[1:]:
         u = u.union(b)
-    scales = sorted(r.scale for r, _ in mine)
-    sc = scales[len(scales) // 2]
-    floor = 0.6 * ctx.base_fs
-    pl, pt, pr, pb = (max(floor, p * sc) for p in bd.pad)
+    sc = plan.s
+    floor = PANEL_PAD * ctx.base_fs
+    pl, pt, pr, pb = panel_pads(bd.pad, bd.edges, sc, ctx)  # as the layout reserved it (layout.Padded)
     box = Box(u.x - pl, u.y - pt, u.w + pl + pr, u.h + pt + pb)
     obstacles = [b for _, b in others]
 

@@ -25,7 +25,7 @@ READING_LINE = 70  # characters: copy set to a longer line than its source's sto
 
 # Legibility floors, as multiples of the canvas's base readable size.
 FLOOR_MULT = {
-    "headline": 1.45, "subhead": 1.0, "body": 1.0, "cta": 1.0, "badge": 0.9,
+    "headline": 1.45, "logo": 1.2, "subhead": 1.0, "body": 1.0, "cta": 1.0, "badge": 0.9,
     "ribbon": 0.9, "group": 0.9, "legal": 0.8, "text": 1.0,
 }
 
@@ -41,10 +41,8 @@ class Ctx:
 
     @property
     def display_max(self) -> float:
-        """The largest a display headline is set on this canvas, in px: 15% of
-        the short side on posts and stories, up to 42% of a strip's height."""
-        e = max(self.W, self.H) / max(1.0, min(self.W, self.H))
-        return min(self.W, self.H) * (0.15 + 0.27 * min(1.0, max(0.0, (e - 2.0) / 4.0)))
+        """The largest a display headline is set on this canvas, in px."""
+        return display_size(self.W, self.H)
 
     @property
     def base_fs(self) -> float:
@@ -59,6 +57,13 @@ class Ctx:
 
     def floor(self, role: str, relax: float = 1.0) -> float:
         return max(float(self.judge_floor), FLOOR_MULT.get(role, 1.0) * self.base_fs * relax)
+
+
+def display_size(W: float, H: float) -> float:
+    """Display type for a canvas, in px: 15% of the short side on posts and
+    stories, rising to 42% of a strip's height."""
+    e = max(W, H) / max(1.0, min(W, H))
+    return min(W, H) * (0.15 + 0.27 * min(1.0, max(0.0, (e - 2.0) / 4.0)))
 
 
 def font_for(fs0: float, s: float, role: str, ctx: Ctx, relax: float = 1.0) -> int:
@@ -354,10 +359,14 @@ def _realize_button(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, re
     h_cap = max_h / max(0.2, cos_t) if rot else max_h
     if h > h_cap:  # short canvas: a slimmer button, never tighter than the text
         h = max(blk.height + 0.3 * fs, h_cap)
+    r0 = float(shape.get("corner_radius", 0) or 0)
+    round_ = abs(cb.w / max(1e-6, cb.h) - 1.0) < 0.1 and (
+        shape.get("shape_type") == "ellipse" or r0 >= 0.45 * min(cb.w, cb.h))
+    if round_:  # a circle (a sticker, a round badge) stays a circle
+        w = h = max(w, h)
     fw, fh = (w, h) if not rot else (w * cos_t + h * sin_t, w * sin_t + h * cos_t)
     if fw > max_w + 0.5 or fh > max_h + 0.5:
         return None
-    r0 = float(shape.get("corner_radius", 0) or 0)
     radius = h / 2.0 if r0 >= 0.45 * cb.h else min(h / 2.0, r0 * g)
     stroke = shape.get("stroke_width")
 
@@ -532,7 +541,7 @@ def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, r
     return Real(item=it, w=u.w, h=u.h, scale=g, fonts=fonts, blocks=blocks, emit_fn=emit)
 
 
-def _composite_at(it: Item, t: float, ctx: Ctx, relax: float, sticker_cap: float = INF):
+def _composite_at(it: Item, t: float, ctx: Ctx, relax: float, type_cap: float = INF):
     host = it.host
     rh = realize_image(host, t, ctx)
     if rh is None:
@@ -549,11 +558,17 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float, sticker_cap: float
                 dropped += sat.els
                 continue
             # copy on art keeps its place and measure, so captions do not collide
-            rs, ox, oy = _scaled_text(sat, k, ctx)
+            rs, ox, oy = _scaled_text(sat, k, ctx, type_cap)
             eb = el_box(sat.els[0])
             parts.append((rs, (eb.x - hb.x) * k + ox, (eb.y - hb.y) * k + oy))
             continue
-        rs = realize(sat, t if sat.kind == "image" else min(t, sticker_cap), ctx, relax=relax)
+        sticker = sat.container is not None and not sat.is_copy  # a badge or button on the art, not copy
+        ts = t if sat.kind == "image" else min(t, type_cap)  # copy and stickers keep to the type scale
+        if sticker and not sat.core and sat.role not in ("headline", "cta") and \
+                ctx.judge_floor > CAPTION_GROWTH * sat.main_fs() * ts:
+            dropped += sat.els  # a sticker whose label must be blown up to read no longer belongs on the art
+            continue
+        rs = realize(sat, ts, ctx, relax=relax)
         if rs is None:
             return None
         fx = (sat.src_box.cx - hb.x) / max(1e-6, hb.w)
@@ -578,21 +593,27 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float, sticker_cap: float
     return parts, x0, y0, x1 - x0, y1 - y0, rh, dropped
 
 
-def _scaled_text(it: Item, k: float, ctx: Ctx) -> Tuple[Real, float, float]:
-    """A caption scaled with the art it sits on: same place, same line breaks,
-    font rounded down but never below small-print legibility. Returns the
-    realized caption and where its footprint starts relative to the scaled
-    source box (glyphs can reach past the box: letter spacing, rotation)."""
+def _scaled_text(it: Item, k: float, ctx: Ctx, type_k: float = INF) -> Tuple[Real, float, float]:
+    """A caption on the art it sits on: in the same place (``k`` px per source
+    px), with the same line breaks, its type at the art's scale but never past
+    the layout's type scale ``type_k`` (so it never outgrows the copy around
+    it) and never below small-print legibility. Returns the realized caption
+    and where its footprint starts relative to the scaled source box (glyphs
+    can reach past the box: letter spacing, rotation)."""
     el = it.els[0]
     content, style = str(el.get("content", "")), it.style or TextStyle.of(el)
     fs0 = max(1.0, it.fs0)
-    fs = max(int(fs0 * k), ctx.judge_floor)
+    fs = max(int(fs0 * min(k, type_k)), ctx.judge_floor)
     eb = el_box(el)
     width = textfit.width_keeping_breaks(content, style, fs0, max(1.0, eb.w), fs)
     blk = textfit.measure(content, style, fs, width, exact=True)
     rot = it.rotation
-    # the box keeps its scaled top-left, or its centre if it is turned (the renderer's pivot)
-    bx, by = ((eb.w * k - width) / 2.0, (eb.h * k - blk.height) / 2.0) if rot else (0.0, 0.0)
+    # the box keeps its scaled top-left (shifted to keep its alignment edge when the type is set
+    # smaller than the art), or its centre if it is turned (the renderer's pivot)
+    if rot:
+        bx, by = (eb.w * k - width) / 2.0, (eb.h * k - blk.height) / 2.0
+    else:
+        bx, by = _align_shift(el, eb.w * k, width), 0.0
     fp = text_footprint(Box(bx, by, width, blk.height), blk, el.get("text_align", "left"), rot)
 
     def emit(x: float, y: float) -> List[dict]:
@@ -607,19 +628,20 @@ def _scaled_text(it: Item, k: float, ctx: Ctx) -> Tuple[Real, float, float]:
 def realize_composite(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF,
                       relax: float = 1.0, k: float = 1.0) -> Optional[Real]:
     """An image with things stuck to it (or a row of shots): scaled as one piece.
-    A sticker keeps to the design's scale ``s`` when the art grows past it to
-    fill its slot, so a badge never outgrows the copy around it."""
+    Stickers and copy on the art keep to the design's scale ``s`` when the art
+    grows past it to fill its slot, so a badge or a caption never outgrows the
+    copy around it; they keep their place on the art."""
     def fits(res):
         return res is not None and res[3] <= max_w + 0.5 and res[4] <= max_h + 0.5 and \
             res[3] <= ctx.W - 2 and res[4] <= ctx.H - 2
 
     t = s * k
-    res = _composite_at(it, t, ctx, relax, s)
+    res = _composite_at(it, t, ctx, relax, type_cap=s)
     if not fits(res):
         lo, hi, best = 0.0, t, None
         for _ in range(18):
             mid = (lo + hi) / 2.0
-            r = _composite_at(it, mid, ctx, relax, s) if mid > 0 else None
+            r = _composite_at(it, mid, ctx, relax, type_cap=s) if mid > 0 else None
             if fits(r):
                 lo, best = mid, r
             else:
@@ -690,6 +712,13 @@ def realize_scaled(it: Item, k: float, ctx: Ctx) -> Real:
 DISPLAY_LINES = 3  # display type sets a short headline in at most this many lines
 
 
+def display_lines(words: int) -> int:
+    """How many lines display type sets a headline of ``words`` words in:
+    about two words a line, two lines for even a short one, never more than
+    DISPLAY_LINES."""
+    return min(DISPLAY_LINES, words, max(2, math.ceil(words / 2)))
+
+
 def _display(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float, mode: str) -> Optional[Real]:
     """The headline as display type: up to ``ctx.emphasis`` times the design's
     scale, never past the canvas's display size, and stepped down until it
@@ -703,7 +732,7 @@ def _display(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: fl
             realize_group(it, t, ctx, max_w, max_h, relax=relax)
 
     words = len(" ".join(str(e.get("content", "")) for e in it.els if e.get("type") == "text").split())
-    lines = max(it.src_lines, min(DISPLAY_LINES, words, max(2, math.ceil(words / 2))))
+    lines = max(it.src_lines, display_lines(words))
     if words > 2 * DISPLAY_LINES:
         plain = at(s)
         if plain is None:
@@ -730,10 +759,11 @@ def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF
     """``it`` sized at scale ``s`` within max_w x max_h, or None. Memoised: the
     candidates of one design ask for the same items at the same sizes many
     times (a Real is never changed once made). Emphasis only reaches the
-    headline and the measure only plain text, so only they key on it."""
+    headline (alone, or carried on art) and the measure only plain text, so
+    only they key on it."""
+    heads = it.role == "headline" or any(sat.role == "headline" for sat in it.sats)
     key = (id(it), s, max_w, max_h, relax, k, mode, nowrap, ctx.W, ctx.H, ctx.W0, ctx.H0,
-           ctx.emphasis if it.role == "headline" and it.is_copy else 1.0,
-           ctx.measure if it.kind == "text" else 1.0)
+           ctx.emphasis if heads else 1.0, ctx.measure if it.kind == "text" else 1.0)
     if key not in _REALIZED:
         _REALIZED[key] = _realize(it, s, ctx, max_w, max_h, relax, k, mode, nowrap)
     return _REALIZED[key]

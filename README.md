@@ -46,12 +46,12 @@ The input carries only ids, types and geometry, so roles are inferred:
 |---|---|
 | background | a full-canvas image or shape under all copy; or, for a canvas split into flat panels, the panel under the headline |
 | decoration | free shapes with no copy: translucent, elliptical, or bleeding off the canvas |
-| headline / subhead / body / legal | prominence (size × weight), position, opacity, length |
+| headline / subhead / body / legal | prominence (size × weight), position, opacity, length; a small line is legal only if very small, faint or set at the very bottom |
 | CTA / badge / ribbon | a filled shape carrying a short label (explicit `group_id` or detected); the largest is the CTA, an alike button beside it is a CTA too, a rotated one is a ribbon |
-| logo / hero / watermark | image geometry and stacking (the asset name is only a weak hint) |
-| panel | a shape or flat image that frames copy (a dark band, a card); it is redrawn around wherever its content lands |
-| composite | a photo with captions or stickers on it, or a row of product shots: one piece. A sticker is a round button-like group, or one stuck on a picture; a real button outranks it for CTA, and it keeps to the design's scale when its picture grows |
-| lockup | texts set as one piece of type: a drop shadow, stacked display type ("UP TO / 50% / OFF"), a price and its cents. They overlap on purpose or sit closer than a word space, and keep their arrangement |
+| logo / hero / watermark | image geometry and stacking (the asset name is only a weak hint); a flat block carrying copy is a panel, not a logo. With no logo artwork, a short styled text (capitals, tracking or bold) that leads the reading order and stands apart from the headline is the brand set in type |
+| panel | a shape or flat image that frames copy (a dark band, a card); its padding is reserved in the layout (its members are laid out as one padded block) and it is redrawn around them; a layout that would split its members apart is not offered |
+| composite | a photo with captions or stickers on it, or a row of product shots: one piece. A sticker is a round button-like group, or one stuck on a picture; a real button outranks it for CTA. Stickers and copy on the art keep their place on it but keep to the design's type scale when the picture grows, so a caption never outgrows the copy around it |
+| lockup | texts set as one piece of type: a drop shadow, stacked display type ("UP TO / 50% / OFF"), a price and its cents. They overlap on purpose, or sit closer than a word space (stacked lines only in one typeface: a subhead right under its headline is copy that follows it), and keep their arrangement |
 | corner items | small badges, ribbons and watermarks pinned to a canvas corner, and copy turned on its side |
 | missing asset | a small image whose file is not in the brand kit (never drawn as a grey box) |
 
@@ -77,9 +77,12 @@ For images, the alpha channel gives where the visible pixels sit.
 | adapt | nearly the same aspect | the source arrangement, edges kept as edges |
 | stack | portrait, square, mild landscape | one column in reading order, rows near their source-relative height |
 | split | square to wide | hero on one side, copy stacked on the other |
-| row | banners and strips | logo, hero, copy, CTA on one line; the hero may fill the strip's height |
+| row | banners and strips | logo, hero, copy, CTA on one line; three or more parts are set like a banner (the brand holds one end, the CTA the other), two stay a centred group; the hero may fill the strip's height |
 
-Each is solved by a small flexbox-like engine for the largest scale that fits,
+Each is solved by a small flexbox-like engine for the largest scale that fits
+(within a range: type grows by about √area, a column moved to a taller canvas a
+little further, and no design grows past the point where its headline reaches the
+canvas's display size, so nothing outgrows the headline),
 then retried with low-importance items dropped: legal, watermark, ribbon, a set
 of badges, the subhead; a row of product cards gives way one card at a time.
 
@@ -95,22 +98,36 @@ offered a **longer line** (1.8× its source measure, never past a 70-character
 reading line), so a column of copy can trade lines for size. Columns follow a
 typographic **rhythm**:
 - a gap is at most the smaller of the two rows it separates;
-- gaps give way before a hero shrinks;
+- gaps give way before a hero shrinks, but never below half the smaller row
+  (unless the source set them closer), and a logo keeps clear space of half
+  its height;
 - leftover height is shared between the margins and gaps in proportion to the
-  room the source left there; rows set tight (a subhead tucked under its
-  headline) are bonded and take none of it;
+  room the source left there (its top and bottom margins moved half way to
+  even, so a design that left its bottom third empty no longer does so on a
+  story); rows set tight (a subhead tucked under its headline) are bonded and
+  take none of it;
 - across, the column is one block centred where the source's content was
   centred, with each row's text alignment kept inside it.
+Margins follow the source's breathing room but are never thinner than a
+banner's (about 5% of the canvas's length, at most 0.3 of its short side).
 Headline and CTA are never dropped. Copy never goes below a legibility floor
 (cap height of about 7 px when the canvas is viewed at 1024 px). When a label
-is held up at the floor, its button gets a tighter pill rather than a bigger one.
+is held up at the floor, its button gets a tighter pill rather than a bigger one;
+a round button or sticker stays round, and a sticker (a button-like group on a
+picture, not a text lockup) whose label would have to be blown up past twice its
+art's scale to stay legible is left off the art. An ellipse that bleeds off the
+canvas is a corner ornament, never a panel.
 
 **4. Score like the rubric** (`score.py`, `pixels.py`)
 
 Visible importance, copy size against the best any candidate achieved, small or
 crowded type, collisions, coverage, balance, hierarchy (a headline that stands out
 up to 1.6× more than in the source earns credit; flattening or overshooting costs
-it), a prior for the archetype that suits the format, and a charge for secondary
+it; copy set level with copy it was 1.5× smaller than, as the legibility floor does
+on tiny formats, costs more than leaving it out), copy density (copy covering
+more than the larger of a quarter of the canvas and 1.5× the source's share, off
+strips, reads as a wall of text), headline line breaks (more lines than display
+type takes, about two words a line, counts as short lines), a prior for the archetype that suits the format, and a charge for secondary
 items that take far more of the canvas than they had in the source. The best eight are then re-ranked by the pixels under
 their copy (contrast and texture, rendered through the real renderer), relative to
 the source. Those eight are shared out first: identical layouts count once and no
@@ -148,7 +165,9 @@ fit-and-centre layout, so a run never crashes.
   part and kept inside, because "nothing off-canvas" is a structural check. A
   rotated element counts both its box and its turned box.
 - Nothing is tuned to the three samples. Development used them, eight more source
-  designs (`tools/make_cases.py`), 24 synthetic finicky designs (`tests/`), 64 real
+  designs (`tools/make_cases.py`), a rebuild of the brief's reference post
+  (`tools/cases/reference_post.json`, to lay the engine's story, poster and
+  leaderboard beside Adobe's own), 24 synthetic finicky designs (`tests/`), 64 real
   Crello templates that designers re-made at other sizes, designs generated from a
   small design grammar (`tools/designs.py`), and about 20 real platform formats
   from 320×50 to A4.

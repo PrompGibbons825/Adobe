@@ -20,11 +20,14 @@ from typing import Dict, List
 from .analyze import Design
 from .compose import Plan
 from .geom import Box
-from .items import Ctx
+from .items import Ctx, display_lines
 
 ALPHA = 1.1
 LINE_CAP = {"headline": 4, "subhead": 5, "body": 6, "legal": 3}
 INVERSION = 25.0  # for each text now smaller than one it was 25% larger than in the source
+DENSITY = 120.0  # per unit of crowding past a comfortable copy density (see _crowding)
+SMALL_UNIT = 400  # px: canvases with a shorter short side are ad units, read at a glance
+COLLAPSE = 1.5  # times its importance, for copy set level with copy it was 1.5x smaller than
 HIERARCHY = 12.0  # for a headline that stands out 1.6x more than in the source (or less, negative)
 INFLATION = 2.0  # per unit of importance and of log-excess share (see _inflation)
 SHARE_SLACK = math.log(2.5)  # a secondary item may grow to 2.5x its share of the canvas freely
@@ -101,7 +104,8 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
             cap = LINE_CAP.get(it.role, 1)
             if blk.n_lines > cap:
                 lines_pen += it.importance * 0.05 * (blk.n_lines - cap)
-            display = it.role == "headline" and blk.n_lines <= 3  # display type sets a few words a line
+            words = len(" ".join(blk.lines).split())
+            display = it.role == "headline" and blk.n_lines <= max(it.src_lines, display_lines(words))
             if blk.n_lines > 1 and not display:
                 chars = sum(len(l) for l in blk.lines) / blk.n_lines
                 if chars < 14:
@@ -126,11 +130,13 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
     cov = area / max(1.0, ctx.W * ctx.H)
     want = min(0.55, src_cov)
     b["coverage"] = -40.0 * max(0.0, want * 0.7 - cov) / max(1e-6, want)
+    b["density"] = -DENSITY * _crowding(boxes, d, ctx)
     if area > 0:
         mx = sum(bx.cx * bx.area for _, bx in boxes) / area
         my = sum(bx.cy * bx.area for _, bx in boxes) / area
         b["balance"] = -25.0 * abs(mx - ctx.W / 2.0) / ctx.W - 12.0 * abs(my - ctx.H / 2.0) / ctx.H
-    b["hierarchy"] = HIERARCHY * _hierarchy(placed, d) - INVERSION * _inversions(placed, d)
+    b["hierarchy"] = HIERARCHY * _hierarchy(placed, d) - INVERSION * _inversions(placed, d) \
+        - COLLAPSE * _collapsed(placed, d)
     b["prior"] = _prior(p.name.split("@")[0], ctx.W / ctx.H, d.W / d.H)
     return sum(b.values()), b
 
@@ -141,6 +147,36 @@ def _inversions(placed, d: Design) -> int:
     out = {tid: fs for r, _, _ in placed for tid, fs in r.fonts.items()}
     src = {tid: float(d.by_id[tid].get("font_size") or 0) for tid in out if tid in d.by_id}
     return sum(1 for a in out for b in out if src[a] >= 1.25 * src[b] and out[a] < out[b] - 1)
+
+
+def _crowding(boxes, d: Design, ctx: Ctx) -> float:
+    """How far past a comfortable density the copy is packed: the share of
+    the canvas it covers over the larger of a quarter and 1.5x the source's
+    own share, less one. A small ad unit (read at a glance) that keeps every
+    line of a long design reads as a wall of text; a designer drops the
+    details. Large canvases have the room for big type, and strips are dense
+    by nature: both are left alone."""
+    r = ctx.W / max(1.0, ctx.H)
+    if r >= 3.0 or r <= 1 / 3.0 or min(ctx.W, ctx.H) >= SMALL_UNIT:
+        return 0.0
+    src = sum(it.src_box.area for it in d.items if it.is_copy) / max(1.0, d.W * d.H)
+    copy = sum(bx.area for it, bx in boxes if it.is_copy) / max(1.0, ctx.W * ctx.H)
+    return max(0.0, copy / max(0.25, 1.5 * src) - 1.0)
+
+
+def _collapsed(placed, d: Design) -> float:
+    """Importance of the copy set level with (within 10% of) copy it was at
+    least 1.5x smaller than, as the legibility floor does on tiny formats: a
+    subhead the size of its headline no longer reads as a subhead, only as
+    clutter, and a designer leaves it out."""
+    out, item = {}, {}
+    for r, _, _ in placed:
+        for tid, fs in r.fonts.items():
+            out[tid], item[tid] = fs, r.item
+    src = {tid: float(d.by_id[tid].get("font_size") or 0) for tid in out if tid in d.by_id}
+    level = {id(item[b]): item[b].importance for a in src for b in src
+             if item[a] is not item[b] and src[a] >= 1.5 * src[b] and out[b] * 1.1 >= out[a]}
+    return float(sum(level.values()))
 
 
 def _hierarchy(placed, d: Design) -> float:

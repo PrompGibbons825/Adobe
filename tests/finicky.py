@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from engine.smart.geom import el_visual_box
+from engine.smart.geom import el_box, el_visual_box
 from engine.smart.textfit import drawn_box
 from tools.make_cases import GOLD, ORANGE, PLUM, WHITE, button, text
 from tools.sheet import CATALOGUE
@@ -155,6 +155,78 @@ def stays_under(top: str, under: str) -> Check:
         if not (-2.0 <= gap <= 1.5 * float(b["font_size"])) or share < 0.5 * min(A.w, B.w):
             return [f"{under} no longer reads after {top} (gap {gap:.0f} px, shared width {share:.0f} px)"]
         return []
+    return check
+
+
+def leads_strips(first: str, head: str = "headline") -> Check:
+    """On a strip, ``first`` leads: it opens the row (nothing visible starts left
+    of it) or heads the copy, set right above ``head``."""
+    def check(src, out, tgt):
+        if tgt["width"] / tgt["height"] < 3.0:
+            return []
+        canvas = tgt["width"] * tgt["height"]
+        shown = [e for e in out["elements"] if float(e.get("opacity", 1)) > 0 and float(e.get("font_size", 2) or 2) > 1
+                 and e["width"] * e["height"] < 0.85 * canvas]  # a background opens nothing
+        boxes = {e["id"]: (drawn_box(e) if e["type"] == "text" else el_visual_box(e)) for e in shown}
+        if first not in boxes:
+            return [f"{first} hidden on a strip"]
+        lead = min(boxes, key=lambda k: boxes[k].x)
+        f, h = boxes[first], boxes.get(head)
+        heads_copy = h is not None and f.b <= h.y + 1.0 and min(f.r, h.r) - max(f.x, h.x) > 0
+        return [] if lead == first or heads_copy else [f"{lead} opens the row and {first} does not head the copy"]
+    return check
+
+
+def sticks_to(sticker: str, art: str) -> Check:
+    """A shown sticker sits on its art (its centre within the art's box, give
+    or take a quarter); it may be left out where it could not be read."""
+    def check(src, out, tgt):
+        oo = {e["id"]: e for e in out["elements"]}
+        s_, a = oo[sticker], oo[art]
+        if float(s_.get("opacity", 1)) <= 0 or float(s_.get("font_size", 2) or 2) <= 1:
+            return []
+        if float(a.get("opacity", 1)) <= 0:
+            return [f"{sticker} shown without {art}"]
+        b = drawn_box(s_)
+        box = el_box(a)
+        mx, my = 0.25 * box.w, 0.25 * box.h
+        if not (box.x - mx <= b.cx <= box.r + mx and box.y - my <= b.cy <= box.b + my):
+            return [f"{sticker} came off {art}"]
+        return []
+    return check
+
+
+def stays_round(shape_id: str, tol: float = 0.05) -> Check:
+    """A circle (a sticker, a round badge) is still a circle wherever it shows."""
+    def check(src, out, tgt):
+        e = next(e for e in out["elements"] if e["id"] == shape_id)
+        if float(e.get("opacity", 1)) <= 0:
+            return []
+        r = e["width"] / max(1e-6, e["height"])
+        return [] if abs(r - 1.0) <= tol else [f"{shape_id} is no longer round ({e['width']:.0f}x{e['height']:.0f})"]
+    return check
+
+
+def framed(panel: str, members: Tuple[str, ...], least: float = 4.0) -> Check:
+    """A card keeps padding around what it frames, and one that stood free of
+    the canvas edges in the source still does (no run-off, no clipped corners)."""
+    def check(src, out, tgt):
+        oo = {e["id"]: e for e in out["elements"]}
+        p_ = oo[panel]
+        if float(p_.get("opacity", 1)) <= 0:
+            return []
+        pb = el_box(p_)
+        errs = []
+        for m in members:
+            e = oo[m]
+            if float(e.get("opacity", 1)) <= 0 or float(e.get("font_size", 2) or 2) <= 1:
+                continue
+            b = drawn_box(e) if e["type"] == "text" else el_box(e)
+            if min(b.x - pb.x, b.y - pb.y, pb.r - b.r, pb.b - b.b) < least:
+                errs.append(f"{m} sits within {least:.0f} px of the {panel}'s edge")
+        if pb.x <= 0.5 or pb.y <= 0.5 or pb.r >= tgt["width"] - 0.5 or pb.b >= tgt["height"] - 0.5:
+            errs.append(f"{panel} runs into the canvas edge")
+        return errs
     return check
 
 
@@ -455,7 +527,7 @@ def cases() -> List[Case]:
                  *[dict(e, z_index=7 + i) for i, e in enumerate(
                      button("sticker", 1100, 90, 170, 170, "FREE", 40, fill=GOLD, color=PLUM, radius=85))],
              ], show=("headline", "cta_label"), show_roomy=("product",),
-             together=(("product", "sticker_label"),)),
+             check=all_of(sticks_to("sticker_label", "product"), stays_round("sticker_bg"))),
 
         Case("left_aligned_strip",
              "a banner set flush left (logo | headline over its subhead | button): as a column its "
@@ -472,6 +544,48 @@ def cases() -> List[Case]:
                          "half-page"),
              show=("headline", "cta_label"), show_roomy=("subhead",),
              check=all_of(balanced(), stays_under("headline", "subhead"))),
+
+        Case("type_wordmark",
+             "the brand set in type (no logo artwork) above the product, as in the brief's reference post: "
+             "it is the logo, so it stays on every format and opens the row on a strip; the subhead under "
+             "the headline is copy, not small print",
+             1080, 1080, [
+                 shape("cream", 0, 0, 1080, 1080, "rgba(248,238,222,1)", z=0),
+                 text("wordmark", 90, 98, 900, 80, "SOLSTICE", 67, "Solstice Serif", True, color=PLUM),
+                 image("product", 286, 144, 507, 507),
+                 text("headline", 90, 612, 900, 132, "Chase the Light", 110, "Solstice Serif", True, color=PLUM),
+                 text("subhead", 90, 772, 900, 42, "Botanical sparkling infusions", 35,
+                      color="rgba(43,27,46,0.75)"),
+                 *button("cta", 352, 887, 374, 90, "Shop the Line", 32),
+             ], targets=SPREAD + ("large-leader", "li-banner"), show=("headline", "cta_label", "wordmark"),
+             show_roomy=("subhead",), check=leads_strips("wordmark"), background=False),
+
+        Case("card_on_canvas",
+             "copy on a free-standing rounded card on a light canvas: the card is redrawn around its copy "
+             "on every format, keeping its padding, never shrink-wrapped and never run off the canvas",
+             1280, 720, [
+                 shape("cream", 0, 0, 1280, 720, "rgba(248,238,222,1)", z=0),
+                 text("wordmark", 340, 40, 600, 40, "SOLSTICE", 26, "Solstice Serif", True, color=PLUM,
+                      letter_spacing=4),
+                 shape("card", 220, 150, 840, 300, "rgba(255,255,255,0.95)", z=1, corner_radius=22),
+                 text("headline", 300, 190, 680, 90, "Sun Festival", 64, "Solstice Serif", True, color=PLUM),
+                 *button("cta", 545, 320, 190, 56, "Learn more", 20),
+             ], targets=SPREAD + ("fb-link", "billboard", "half-page"), show=("headline", "cta_label"),
+             check=framed("card", ("headline", "cta_label")), background=False),
+
+        Case("lockup_on_photo",
+             "a date set as a two-line lockup ('Jan 9' over '5 PM - 6.30 PM') on the corner of a product "
+             "photo, beside a headline: the lockup is copy, not a sticker, so it stays on the art wherever "
+             "it can be read, and it keeps to the design's type scale when the photo grows",
+             1920, 1080, [
+                 image("product", 1120, 160, 760, 760),
+                 text("date", 1150, 200, 260, 44, "Jan 9", 36, "Solstice Serif", True, z=5, align="left"),
+                 text("time", 1150, 244, 260, 30, "5 PM - 6.30 PM", 24, "Solstice Serif", z=5, align="left"),
+                 text("headline", 120, 360, 900, 140, "Botanical Tasting", 104, "Solstice Serif", True,
+                      align="left"),
+                 *button("cta", 120, 560, 360, 96, "Book a seat", 34),
+             ], targets=("leaderboard", "billboard", "fb-link", "ig-square", "story"),
+             show=("headline", "cta_label"), show_roomy=("date", "time")),
 
         Case("crowded_l3",
              "the Level 3 load in miniature: a run-on headline, three badges, a ribbon, a legal line and a "
