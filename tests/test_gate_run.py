@@ -811,3 +811,64 @@ class Run(TempEnv):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IsolatedRender(unittest.TestCase):
+    """The render step runs each task in its own process under a memory cap and a timeout, and
+    resumes from what it already wrote (a runaway task is a crash for that task only)."""
+
+    HOG = '''
+import time
+
+def resize(source, target_canvas):
+    tag = source.get("tag")
+    if tag == "hog":
+        keep = []
+        while True:
+            keep.append(bytearray(32 << 20))
+            time.sleep(0.01)
+    if tag == "slow":
+        time.sleep(60)
+    if tag == "boom":
+        raise ValueError("boom")
+    return {"canvas": dict(target_canvas), "elements": []}
+'''
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.root = _engine(self.tmp / "eng", self.HOG)
+
+    def _job(self, name, tag=None):
+        src = {"canvas": {"width": 10, "height": 10}, "elements": []}
+        if tag:
+            src["tag"] = tag
+        return {"name": name, "source": src, "target": {"width": 20, "height": 20}}
+
+    def test_caps_kill_only_the_offending_task(self):
+        from tools.gate.engine_run import run_jobs_isolated
+
+        jobs = [self._job("ok"), self._job("hog", "hog"), self._job("slow", "slow"), self._job("boom", "boom")]
+        r = run_jobs_isolated(self.root, jobs, mem_mb=300, timeout=5, workers=2)
+        self.assertEqual({k: v["status"] for k, v in r.items()},
+                         {"ok": "ok", "hog": "oom", "slow": "timeout", "boom": "error"})
+        self.assertIsNotNone(r["ok"]["out"])
+        self.assertTrue(all(r[k]["out"] is None for k in ("hog", "slow", "boom")))
+        self.assertGreaterEqual(r["hog"]["rss_mb"], 300)
+
+    def test_render_role_resumes_from_its_status_log(self):
+        s = {"version": "x-v1", "kit": None,
+             "tasks": [{"task_id": f"t{i}", "source": {"canvas": {"width": 10, "height": 10}, "elements": []},
+                        "target_canvas": {"width": 20, "height": 20}} for i in range(3)]}
+        rd = self.tmp / "out"
+        rd.mkdir()
+        (rd / "t0.json").write_text(json.dumps({"canvas": {"width": 1, "height": 1}, "elements": []}))
+        (rd / "status.jsonl").write_text(json.dumps({"name": "t0", "status": "ok", "secs": 0, "rss_mb": 1})
+                                         + "\n" + json.dumps({"name": "t1", "status": "oom", "secs": 0, "rss_mb": 9})
+                                         + "\n{torn")
+        with mock.patch.object(R, "_say"):
+            outs = R._render_role(self.root, s, rd)
+        self.assertEqual(outs["t0"]["canvas"]["width"], 1)  # kept, not re-run
+        self.assertIsNone(outs["t1"])  # a recorded crash stays a crash
+        self.assertEqual(outs["t2"]["canvas"]["width"], 20)  # the one left was run
+        self.assertTrue((rd / "t2.json").exists())

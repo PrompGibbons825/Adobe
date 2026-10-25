@@ -55,7 +55,7 @@ from typing import Callable, Dict, List, Optional
 from tools.gate import prereg as P
 from tools.gate import sealed, stats
 from tools.gate.baselines import nudge, write_builtin
-from tools.gate.engine_run import GATE_ROOT, canonical, run_jobs
+from tools.gate.engine_run import GATE_ROOT, canonical, run_jobs, run_jobs_isolated
 from tools.gate.tiers import tier_of
 
 OUT_ROOT = GATE_ROOT / "output" / "gate"
@@ -103,6 +103,44 @@ def load_set(version: str) -> dict:
             "tasks": tasks}
 
 
+def _render_role(root: Path, s: dict, rd: Path) -> Dict[str, Optional[dict]]:
+    """Every task of set ``s`` through engine ``root``, one subprocess per task (memory is
+    returned after each one, and a task that blows its cap or timeout is a crash for that task
+    only). Resumable: each output is written to ``rd/<task>.json`` as it finishes and its status
+    appended to ``rd/status.jsonl``; tasks already in the status log are not run again. The
+    status log holds names, status, secs and peak RSS only (no content)."""
+    log = rd / "status.jsonl"
+    done: Dict[str, dict] = {}
+    if log.exists():
+        for line in log.read_text().splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue  # a line torn by a kill
+            p = rd / f"{r['name']}.json"
+            done[r["name"]] = dict(r, out=json.loads(p.read_text()) if p.exists() else None)
+    jobs = [{"name": t["task_id"], "source": t["source"], "target": t["target_canvas"]} for t in s["tasks"]]
+    left = sum(1 for j in jobs if j["name"] not in done)
+    if done:
+        _say(f"  {s['version']} {rd.name}: resuming, {len(done)} done, {left} left")
+
+    def keep(name: str, rec: dict) -> None:
+        if rec["out"] is not None:
+            (rd / f"{name}.json").write_text(json.dumps(rec["out"]))
+        with log.open("a") as f:
+            f.write(json.dumps({"name": name, "status": rec.get("status"), "secs": rec.get("secs"),
+                                "rss_mb": rec.get("rss_mb")}) + "\n")
+        if rec.get("status") != "ok":
+            _say(f"  {s['version']} {rd.name}: a task ended {rec.get('status')} "
+                 f"(peak {rec.get('rss_mb')} MB, {rec.get('secs')} s); counted as a crash")
+
+    r = run_jobs_isolated(root, jobs, kit=s["kit"], done=done, on_result=keep)
+    st = [v.get("status") for v in r.values()]
+    _say(f"  {s['version']} {rd.name}: {st.count('ok')}/{len(st)} ok, peak "
+         f"{max((v.get('rss_mb') or 0) for v in r.values()) if r else 0} MB")
+    return {k: v["out"] for k, v in r.items()}
+
+
 def render_set(s: dict, roots: Dict[str, Path], private: Path, transform: Optional[str]) -> Dict[str, dict]:
     """{task_id: {"base": out|None, "cand": out|None}}, cached under private/out/<version>/."""
     d = private / "out" / s["version"]
@@ -116,9 +154,7 @@ def render_set(s: dict, roots: Dict[str, Path], private: Path, transform: Option
                 outs = {t["task_id"]: (nudge(res[t["task_id"]]["base"]) if res[t["task_id"]]["base"] else None)
                         for t in s["tasks"]}
             else:
-                jobs = [{"name": t["task_id"], "source": t["source"], "target": t["target_canvas"]} for t in s["tasks"]]
-                r = run_jobs(roots[role], jobs, kit=s["kit"])
-                outs = {k: v["out"] for k, v in r.items()}
+                outs = _render_role(roots[role], s, rd)
             for k, o in outs.items():
                 if o is not None:
                     (rd / f"{k}.json").write_text(json.dumps(o))
