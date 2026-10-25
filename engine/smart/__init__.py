@@ -133,12 +133,14 @@ def _bury(plans, d: Design, ctx: Ctx) -> None:
             o = _backdrop(bd, p, d, ctx)
             if float(o.get("opacity", 1) or 0) <= 0:
                 continue
-            pb, z = el_box(o), int(bd.el.get("z_index", 0) or 0)
+            pb, z, sb = el_box(o), int(bd.el.get("z_index", 0) or 0), el_box(bd.el)
             mine = {id(m) for m in bd.members}
             for r, x, y in p.placed + p.floaters:
                 it = r.item
                 if id(it) in mine or it.kind not in ("image", "composite") or r.w * r.h <= 0:
                     continue
+                if sb.inter(it.src_box) >= 0.5 * max(1.0, it.src_box.area):
+                    continue  # the source had it under the panel too
                 if min(int(e.get("z_index", 0) or 0) for e in it.els) < z and \
                         pb.inter(Box(x, y, r.w, r.h)) > 0.5 * r.w * r.h:
                     pen += 2.0 * it.importance
