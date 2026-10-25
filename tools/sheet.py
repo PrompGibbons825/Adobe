@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -22,7 +23,8 @@ from engine.resize import resize  # noqa: E402
 from engine.smart import emit, finalize, plan_design  # noqa: E402
 from tools.rules import render_image  # noqa: E402
 
-ASSETS = Path(__file__).resolve().parents[1] / "brand_kit" / "assets"
+ASSETS = (Path(os.environ["CHAMELEON_BRAND_KIT"]) / "assets" if os.environ.get("CHAMELEON_BRAND_KIT")
+          else Path(__file__).resolve().parents[1] / "brand_kit" / "assets")
 
 CATALOGUE = {
     "ig-square": (1080, 1080), "ig-portrait": (1080, 1350), "story": (1080, 1920),

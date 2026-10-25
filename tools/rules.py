@@ -21,6 +21,7 @@ output with and without its hidden texts and reports any that still paint.
 from __future__ import annotations
 
 import math
+import os
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -32,8 +33,10 @@ from engine.smart.items import Ctx
 from engine.smart.textfit import drawn_box, new_text_overlaps
 from tools import bleed
 
-ASSETS = Path(__file__).resolve().parents[1] / "brand_kit" / "assets"
-FONTS = ASSETS.parent / "fonts"
+FONTS = Path(__file__).resolve().parents[1] / "brand_kit" / "fonts"
+# A dev kit (CHAMELEON_BRAND_KIT, e.g. the Crello cases) supplies images; fonts stay the brand kit's.
+ASSETS = (Path(os.environ["CHAMELEON_BRAND_KIT"]) / "assets" if os.environ.get("CHAMELEON_BRAND_KIT")
+          else FONTS.parent / "assets")
 TOL = 0.6  # px of slack for float rounding at the canvas edge
 
 
