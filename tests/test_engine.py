@@ -201,6 +201,139 @@ class Samples(unittest.TestCase):
                 self.assertEqual(hard_rule_errors(src, out, tgt) + promise_errors(src, out, tgt), [])
 
 
+# (sample, format, element) still hidden by the gate's definition, measured 2026-10-25 (S1, r11).
+# Expected failures: a pair that starts passing should be struck from here; a pair not listed
+# fails the test. Two kinds are not hiding at all and stay until the gate's measure changes
+# (loop/setup-issues.md): a full-canvas background, or a decorative shape, "covered" by the box
+# of a transparent product PNG (the cover test ignores image alpha).
+KNOWN_HIDDEN = {
+    ('band_panel', 'fb-link', 'bg'),
+    ('band_panel', 'pres-16x9', 'bg'),
+    ('band_panel', 'story', 'bg'),
+    ('band_panel', 'yt-thumb', 'bg'),
+    ('chameleon_sample_level2_core', 'a4', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'billboard', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'email-header', 'deco_circle_2'),
+    ('chameleon_sample_level2_core', 'fb-cover', 'bg'),
+    ('chameleon_sample_level2_core', 'fb-cover', 'deco_circle_2'),
+    ('chameleon_sample_level2_core', 'fb-link', 'bg'),
+    ('chameleon_sample_level2_core', 'fb-link', 'deco_circle_2'),
+    ('chameleon_sample_level2_core', 'half-page', 'bg'),
+    ('chameleon_sample_level2_core', 'half-page', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'ig-landscape', 'bg'),
+    ('chameleon_sample_level2_core', 'ig-landscape', 'deco_circle_2'),
+    ('chameleon_sample_level2_core', 'large-leader', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'leaderboard', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'li-banner', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'med-rect', 'bg'),
+    ('chameleon_sample_level2_core', 'med-rect', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'mobile-banner', 'badge_bg'),
+    ('chameleon_sample_level2_core', 'mobile-banner', 'badge_label'),
+    ('chameleon_sample_level2_core', 'mobile-banner', 'bg'),
+    ('chameleon_sample_level2_core', 'mobile-banner', 'deco_circle_2'),
+    ('chameleon_sample_level2_core', 'mobile-banner', 'product'),
+    ('chameleon_sample_level2_core', 'mobile-banner', 'subhead'),
+    ('chameleon_sample_level2_core', 'pinterest', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'pres-16x9', 'bg'),
+    ('chameleon_sample_level2_core', 'pres-16x9', 'deco_circle_2'),
+    ('chameleon_sample_level2_core', 'skyscraper', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'story', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'x-header', 'deco_circle_1'),
+    ('chameleon_sample_level2_core', 'yt-thumb', 'bg'),
+    ('chameleon_sample_level2_core', 'yt-thumb', 'deco_circle_2'),
+    ('chameleon_sample_level3_advanced', 'email-header', 'bg'),
+    ('chameleon_sample_level3_advanced', 'email-header', 'legal_text'),
+    ('chameleon_sample_level3_advanced', 'large-leader', 'legal_text'),
+    ('chameleon_sample_level3_advanced', 'leaderboard', 'badge1_bg'),
+    ('chameleon_sample_level3_advanced', 'leaderboard', 'badge1_label'),
+    ('chameleon_sample_level3_advanced', 'leaderboard', 'badge2_bg'),
+    ('chameleon_sample_level3_advanced', 'leaderboard', 'badge2_label'),
+    ('chameleon_sample_level3_advanced', 'leaderboard', 'badge3_bg'),
+    ('chameleon_sample_level3_advanced', 'leaderboard', 'badge3_label'),
+    ('chameleon_sample_level3_advanced', 'leaderboard', 'legal_text'),
+    ('chameleon_sample_level3_advanced', 'med-rect', 'badge1_bg'),
+    ('chameleon_sample_level3_advanced', 'med-rect', 'badge1_label'),
+    ('chameleon_sample_level3_advanced', 'med-rect', 'badge2_bg'),
+    ('chameleon_sample_level3_advanced', 'med-rect', 'badge2_label'),
+    ('chameleon_sample_level3_advanced', 'med-rect', 'badge3_bg'),
+    ('chameleon_sample_level3_advanced', 'med-rect', 'badge3_label'),
+    ('chameleon_sample_level3_advanced', 'med-rect', 'legal_text'),
+    ('chameleon_sample_level3_advanced', 'med-rect', 'ribbon_bg'),
+    ('chameleon_sample_level3_advanced', 'med-rect', 'ribbon_label'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'badge1_bg'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'badge1_label'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'badge2_bg'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'badge2_label'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'badge3_bg'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'badge3_label'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'cta_bg'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'cta_label'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'legal_text'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'logo'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'ribbon_bg'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'ribbon_label'),
+    ('chameleon_sample_level3_advanced', 'mobile-banner', 'subhead'),
+    ('chameleon_sample_level3_advanced', 'pres-16x9', 'bg'),
+    ('chameleon_sample_level3_advanced', 'yt-thumb', 'bg'),
+    ('landscape_split', 'pres-16x9', 'bg'),
+    ('landscape_split', 'yt-thumb', 'bg'),
+    ('left_aligned_corner_logo', 'fb-link', 'bg'),
+    ('left_aligned_corner_logo', 'pres-16x9', 'bg'),
+    ('left_aligned_corner_logo', 'yt-thumb', 'bg'),
+    ('reference_post', 'fb-link', 'bg'),
+    ('reference_post', 'pres-16x9', 'bg'),
+    ('reference_post', 'story', 'bg'),
+    ('reference_post', 'yt-thumb', 'bg'),
+    ('story_hero_top', 'fb-link', 'bg'),
+    ('story_hero_top', 'pres-16x9', 'bg'),
+    ('story_hero_top', 'yt-thumb', 'bg'),
+}
+
+
+class NothingHidden(unittest.TestCase):
+    """S1 (loop/STEERING.md): every source element stays visible (tools/gate/visible.py): the
+    brief's samples at every catalogue format, the kit cases at the tier-1 formats (S2). An image
+    whose asset is not in the kit is exempt: showing it would paint the renderer's "missing
+    asset" placeholder."""
+
+    TIER1 = ("ig-square", "ig-portrait", "story", "yt-thumb", "pres-16x9", "fb-link")
+
+    def test_every_sample_on_every_format(self):
+        from multiprocessing import Pool
+
+        from tools.sheet import CATALOGUE
+
+        jobs = [(name, fmt, src) for name, src in _sources() for fmt in CATALOGUE
+                if name.startswith("chameleon_sample") or fmt in self.TIER1]
+        with Pool(3) as pool:
+            found = pool.map(_hidden_job, jobs)
+        new, fixed = [], {k for k in KNOWN_HIDDEN if any(k[:2] == j[:2] for j in jobs)}
+        for (name, fmt, _), hidden in zip(jobs, found):
+            for el, why in hidden:
+                fixed.discard((name, fmt, el))
+                if (name, fmt, el) not in KNOWN_HIDDEN:
+                    new.append(f"{name}@{fmt}: {why}")
+        self.assertEqual(new, [])
+        if fixed:
+            print(f"\nNothingHidden: now visible, strike from KNOWN_HIDDEN: {sorted(fixed)}")
+
+
+def _hidden_job(job):
+    from engine.resize import resize
+    from tools.gate.visible import hidden_elements
+    from tools.sheet import CATALOGUE
+
+    name, fmt, src = job
+    w, h = CATALOGUE[fmt]
+    tgt = {"width": w, "height": h}
+    void = {e["id"] for e in src["elements"] if e.get("type") == "image" and not _in_kit(e.get("asset_id"))}
+    out = []
+    for why in hidden_elements(src, resize(src, tgt), tgt):
+        el = why.split(":")[0]
+        if el not in void:
+            out.append((el, why))
+    return out
+
 
 class WorkBudget(unittest.TestCase):
     """The resize's work budget (engine/smart/layout.Budget, r10): the economy layout and the

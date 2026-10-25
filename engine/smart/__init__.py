@@ -10,8 +10,8 @@ from .color import normalize as normalize_colour
 from .compose import Plan, display_room, generate
 from .geom import Box, el_box, rotated_aabb
 from .items import BUDGET, Ctx, forget_realized
-from .layout import PANEL_PAD, panel_pads
-from .score import prune_relaxed, score_plans
+from .layout import PANEL_PAD, BudgetExceeded, panel_pads
+from .score import keep_everything_first, prune_relaxed, score_plans
 from .textfit import TextStyle, letter_spacing
 
 RERANK = 8  # how many of the best candidates the pixel critic looks at
@@ -34,19 +34,30 @@ def plan_design(source: dict, target: dict):
         d = analyze(source, lockups=lockups)
         W, H = float(target["width"]), float(target["height"])
         ctx = Ctx(W=W, H=H, W0=d.W, H0=d.H, display_room=display_room(d, W, H))
-        BUDGET.armed = True  # the budget cuts the candidate search short, never what follows it
-        try:
-            plans = prune_relaxed(generate(d, ctx))
-        finally:
-            BUDGET.armed = False
-        if plans:
-            score_plans(plans, d, ctx)
-            plans.sort(key=lambda p: -p.score)
-            plans[:] = _diverse(plans, RERANK)
-            _pixel_rerank(plans, d, ctx, RERANK)
-            if _promote_passing(plans, source, d, ctx):
-                return d, ctx, plans
-            reason = "every candidate draws copy over copy or past the canvas"
+        # S1: the search first stops at plans that keep every element; only if none of those
+        # passes the hard checks is it run to the end, where plans may leave something out
+        for settle in (True, False):
+            BUDGET.armed = True  # the budget cuts the candidate search short, never what follows it
+            try:
+                plans = prune_relaxed(generate(d, ctx, settle=settle))
+            except BudgetExceeded:
+                if settle:
+                    raise
+                break  # nothing more within the budget: as if the full search found nothing new
+            finally:
+                BUDGET.armed = False
+            if plans:
+                score_plans(plans, d, ctx)
+                plans.sort(key=lambda p: -p.score)
+                keep_everything_first(plans)
+                plans[:] = _diverse(plans, RERANK)
+                _pixel_rerank(plans, d, ctx, RERANK)
+                keep_everything_first(plans)
+                if _promote_passing(plans, source, d, ctx):
+                    return d, ctx, plans
+                reason = "every candidate draws copy over copy or past the canvas"
+            if not plans or all(p.lost() for p in plans):
+                break  # the full search already ran (or the budget is spent)
         if not any(it.lockup for it in d.items):
             break
     raise RuntimeError(reason)
