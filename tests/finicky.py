@@ -396,7 +396,7 @@ def all_of(*checks: Check) -> Check:
 
 
 def cases() -> List[Case]:
-    return _base_cases() + round5_cases() + round7_cases() + round10_cases()
+    return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_b_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -1075,6 +1075,78 @@ def round10_cases() -> List[Case]:
                  *button("cta", 560, 700, 280, 76, "Shop now", 28),
              ], targets=("med-rect", "leaderboard", "skyscraper", "ig-square"),
              show=("headline", "cta_label"), check=nothing_hidden()),
+    ]
+
+
+# A real photo with a face (Crello, CDLA-Permissive-2.0; see tests/assets/SOURCES.txt), found
+# through the brand kit's assets directory so the engine and the renderer both read it.
+FACE_PHOTO = "../../tests/assets/face_photo_wide.jpg"
+FACE_PHOTO_SIZE = (512, 268)
+FACE_BOX = (0.62, 0.04, 0.80, 0.46)  # the face, as fractions of the photo (YuNet's box)
+
+
+def face_kept(pid: str, face=FACE_BOX, size=FACE_PHOTO_SIZE, cut: float = 0.08) -> Check:
+    """A background photo's face stays on the canvas (at most ``cut`` of its width or height
+    off it) and no visible copy is drawn over it."""
+    def check(src, out, tgt):
+        e = next((x for x in out["elements"] if x["id"] == pid), None)
+        if e is None or float(e.get("opacity", 1)) <= 0:
+            return [f"{pid}: photo hidden"]
+        iw, ih = size
+        if e.get("fit") == "cover":
+            s = max(e["width"] / iw, e["height"] / ih)
+        elif e.get("fit") == "contain":
+            s = min(e["width"] / iw, e["height"] / ih)
+        else:
+            return []
+        dw, dh = iw * s, ih * s
+        dx, dy = e["x"] + (e["width"] - dw) / 2.0, e["y"] + (e["height"] - dh) / 2.0
+        if e.get("fit") == "cover":  # the renderer crops to the box first
+            bx0, by0, bx1, by1 = _box(e)
+        else:
+            bx0, by0, bx1, by1 = dx, dy, dx + dw, dy + dh
+        fx0, fy0 = dx + face[0] * dw, dy + face[1] * dh
+        fx1, fy1 = dx + face[2] * dw, dy + face[3] * dh
+        vx0, vy0 = max(fx0, bx0, 0.0), max(fy0, by0, 0.0)
+        vx1, vy1 = min(fx1, bx1, tgt["width"]), min(fy1, by1, tgt["height"])
+        errs = []
+        if vx1 - vx0 < (1 - cut) * (fx1 - fx0) or vy1 - vy0 < (1 - cut) * (fy1 - fy0):
+            errs.append(f"{pid}: face cut by the crop ({fx0:.0f},{fy0:.0f},{fx1:.0f},{fy1:.0f})")
+        area = max(1.0, (fx1 - fx0) * (fy1 - fy0))
+        for t in out["elements"]:
+            if t.get("type") != "text" or float(t.get("opacity", 1)) <= 0 or not str(t.get("content", "")).strip():
+                continue
+            db = drawn_box(t)
+            ix = max(0.0, min(db.r, fx1) - max(db.x, fx0))
+            iy = max(0.0, min(db.b, fy1) - max(db.y, fy0))
+            if ix * iy > 0.05 * area:
+                errs.append(f"{t['id']}: copy over the face")
+        return errs
+    return check
+
+
+def sprint_b_cases() -> List[Case]:
+    """Subject-aware photos (S5): a canvas-covering photo is cropped by bleed so its subject
+    survives, and copy keeps off a face."""
+    W, H = 1200, 628
+    photo = {"id": "photo", "type": "image", "x": 0, "y": 0, "width": W, "height": H, "z_index": 0,
+             "asset_id": FACE_PHOTO, "fit": "cover"}
+    return [
+        Case("face_photo_background",
+             "a wide photo of a person covers the canvas, copy on the plain wall beside her: on a "
+             "square or a story the centre crop cuts her face; the crop must keep it whole and the "
+             "copy must not land on it",
+             W, H,
+             [photo,
+              text("kicker", 110, 200, 400, 34, "HIRING BEST", 30, bold=True, align="left"),
+              text("headline", 105, 260, 460, 64, "CANDIDATES", 57, bold=True, align="left"),
+              text("body", 110, 360, 300, 40, "since 1980", 30, align="left")],
+             targets=("ig-square", "ig-portrait", "story", "yt-thumb", "fb-link"),
+             show=("headline",), background=False, check=face_kept("photo"),
+             # the face is kept whole on both, but the copy column is wider than the wall beside
+             # her: on the portrait the small line lands on her sweater (low contrast), on the
+             # story (her head fills the width) the copy can only go over her or the paper
+             xfail=("ig-portrait", "story")),
     ]
 
 

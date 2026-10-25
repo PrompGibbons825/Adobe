@@ -1,0 +1,2 @@
+face_photo_wide.jpg: a photo from the Crello dataset (huggingface.co/datasets/cyberagent/crello,
+CDLA-Permissive-2.0), downscaled to 512 px. Used only by tests/finicky.py (face_photo_background).

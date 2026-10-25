@@ -13,6 +13,7 @@ from .items import BUDGET, Ctx, forget_realized
 from .layout import PANEL_PAD, BudgetExceeded, panel_pads
 from .score import keep_everything_first, prune_relaxed, score_plans
 from .textfit import TextStyle, letter_spacing
+from . import vision
 
 RERANK = 8  # how many of the best candidates the pixel critic looks at
 
@@ -48,6 +49,7 @@ def plan_design(source: dict, target: dict):
                 BUDGET.armed = False
             if plans:
                 score_plans(plans, d, ctx)
+                vision.rank(plans, d, ctx, _decor_rects(d, ctx))  # copy off the faces and subject of a photo
                 plans.sort(key=lambda p: -p.score)
                 keep_everything_first(plans)
                 plans[:] = _diverse(plans, RERANK)
@@ -156,11 +158,15 @@ def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
             out[e["id"]] = e
         for e in r.dropped:
             out[e["id"]] = _hidden(e, d, ctx)
+    decor = _decor_rects(d, ctx)
     for e in d.backgrounds:
         b = _strip(e)
         b.update(x=0.0, y=0.0, width=ctx.W, height=ctx.H)
         if b.get("type") == "image":
             b["fit"] = "cover"
+            box = vision.bg_box(e, plan, d, ctx, decor)  # a focal crop, by bleed (see vision.cover_box)
+            if box is not None:
+                b.update(x=box[0], y=box[1], width=box[2], height=box[3])
         out[b["id"]] = b
     for e in d.decor:
         out[e["id"]] = _slab(e, d, ctx) if e.get("_slab") else _decor(e, d, ctx)
@@ -192,6 +198,25 @@ def _keep_hairlines(els: List[dict], d: Design) -> None:
             if as_number(s.get(k), 0.0) >= 1.0 and 0.0 < e.get(k, 0.0) < 1.0:
                 e[pos] -= (1.0 - e[k]) / 2.0
                 e[k] = 1.0
+
+
+def _decor_rects(d: Design, ctx: Ctx) -> list:
+    """Where the opaque decoration lands (it does not depend on the plan): a
+    background photo's subject keeps out from under it too."""
+    from .color import parse_rgba
+
+    out = []
+    if not any(e.get("type") == "image" for e in d.backgrounds):
+        return out
+    for e in d.decor:
+        if float(e.get("opacity", 1.0) or 0.0) < 0.5:
+            continue
+        if e.get("type") == "shape" and parse_rgba(e.get("fill_color"))[3] < 0.5:
+            continue
+        o = _slab(e, d, ctx) if e.get("_slab") else _decor(e, d, ctx)
+        if o["width"] > 0 and o["height"] > 0 and o["width"] * o["height"] < 0.5 * ctx.W * ctx.H:
+            out.append((o["x"], o["y"], o["width"], o["height"]))
+    return out
 
 
 def _backdrop(bd, plan: Plan, d: Design, ctx: Ctx) -> dict:
@@ -374,7 +399,8 @@ def finalize(source: dict, out: dict, target: dict) -> dict:
         e["height"] = max(0.0, e["height"])
         e["rotation"] = as_number(e.get("rotation"), 0.0)
         _keep_ratio(e, se)
-        _inside(e, W, H)
+        if not _cover_bleed(e, W, H):
+            _inside(e, W, H)
         if e.get("type") == "text":
             fs = as_number(e.get("font_size"), as_number(se.get("font_size"), 12.0))
             e["font_size"] = max(1, int(round(fs)))
@@ -482,6 +508,15 @@ def _keep_ratio(e: dict, se: dict) -> None:
         e["width"] = math.sqrt(area * ra)
         e["height"] = e["width"] / ra
         e["x"], e["y"] = cx - e["width"] / 2.0, cy - e["height"] / 2.0
+
+
+def _cover_bleed(e: dict, W: float, H: float) -> bool:
+    """A photo drawn to cover the whole canvas (a focal crop by bleed): the
+    canvas edge does the cropping, so it is left past the edges."""
+    if e.get("type") != "image" or e.get("fit") != "cover" or abs(float(e.get("rotation", 0) or 0)) > 1e-6:
+        return False
+    x, y, w, h = e["x"], e["y"], e["width"], e["height"]
+    return x <= 0.5 and y <= 0.5 and x + w >= W - 0.5 and y + h >= H - 0.5 and w * h <= 64.0 * W * H
 
 
 def _inside(e: dict, W: float, H: float) -> None:

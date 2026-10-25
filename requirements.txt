@@ -1,2 +1,5 @@
 Pillow>=10.0
 git+https://github.com/CyberAgentAILab/cr-renderer
+# engine/smart/vision.py: face detection (YuNet, cv2.FaceDetectorYN) and image analysis, offline.
+# The headless wheel needs no GUI libraries and installs alongside cr-renderer's numpy.
+opencv-python-headless==4.14.0.94
