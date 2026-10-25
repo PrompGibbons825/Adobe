@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .analyze import Design, Item
 from .geom import Box, el_box, el_visual_box, union_all
-from .items import Ctx, Real, display_size, realize, realize_scaled
+from .items import Ctx, Real, display_size, keep_floor, min_floor, realize, realize_scaled
 from .layout import BUDGET, BudgetExceeded, Flow, HStack, Laid, Leaf, Node, Padded, VStack, search_scale
 from .structure import dominant_align, lead_text, row_align, rows_for, text_edges
 
@@ -63,9 +63,41 @@ class Plan:
     capped: bool = False  # reached its scale cap: hiding more cannot make anything bigger
     score: float = 0.0
     breakdown: Dict[str, float] = field(default_factory=dict)
+    specks: List[Item] = field(default_factory=list)  # art shrunk to a speck (see _specks): lost
 
     def footprints(self) -> List[Tuple[Item, Box]]:
         return [(r.item, Box(x, y, r.w, r.h)) for r, x, y in self.placed + self.floaters]
+
+    def lost(self) -> int:
+        """How many source elements this plan leaves unshown (loop/STEERING.md S1): members of
+        hidden items and parts a composite left off its art. A missing asset or a void element
+        has nothing to show and does not count."""
+        n = sum(len(h.els) for h in self.hidden if h.role not in ("missing", "void"))
+        return n + sum(len(i.els) for i in self.specks) + sum(len(r.dropped) for r, _, _ in self.placed + self.floaters)
+
+    def core_lost(self) -> int:
+        """Core items (headline, CTA, logo, hero) hidden or shrunk to a speck."""
+        return sum(1 for h in self.hidden + self.specks if h.role in CORE_ROLES)
+
+
+SPECK = 0.06  # x canvas short side: art set smaller than this reads as lost (see _specks)
+
+
+def _specks(p: Plan, d: Design, ctx: Ctx) -> List[Item]:
+    """Art a plan keeps only as a speck: an image (or art with its stickers) whose shorter side
+    is under SPECK of the canvas's shorter side, or under half its own share of the source's
+    shorter side if that was smaller (a small logo may stay small). Shrinking a product to a
+    dot is hiding it (loop/STEERING.md S1), so such a plan does not count as keeping it."""
+    short, src_short = min(ctx.W, ctx.H), min(d.W, d.H)
+    out = []
+    for r, _, _ in p.placed + p.floaters:
+        it = r.item
+        if it.kind not in ("image", "composite"):
+            continue
+        share = min(it.src_box.w, it.src_box.h) / max(1.0, src_short)
+        if min(r.w, r.h) < min(SPECK, 0.5 * share) * short - 0.5:
+            out.append(it)
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -272,7 +304,7 @@ def solve(root: Node, ctx: Ctx, zone: Box, lo: float, hi: float) -> Tuple[Option
             w, h = min(w, ez.w), min(h, ez.h)
         return None
 
-    for relax in (1.0, 0.85, 0.72, 0.6):
+    for relax in (1.0, 0.85, 0.72, 0.6) + ((0.5,) if ctx.keep_px else ()):
         s, laid = search_scale(lambda s: fits(s, relax), lo, hi)
         if laid is not None:
             return s, laid, relax
@@ -479,10 +511,10 @@ def _zone(d: Design, ctx: Ctx, insets) -> Tuple[Box, float, float]:
 
 
 def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", insets=(0, 0, 0, 0),
-               force_align: Optional[str] = None) -> Optional[Plan]:
+               force_align: Optional[str] = None, fold: frozenset = frozenset()) -> Optional[Plan]:
     vis = _visible(d, hidden)
-    floaters = [it for it in vis if it.corner]
-    body = [it for it in vis if not it.corner]
+    floaters = [it for it in vis if it.corner and id(it) not in fold]
+    body = [it for it in vis if not it.corner or id(it) in fold]
     if not body:
         return None
     rows = rows_for(body)
@@ -501,17 +533,21 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
             s, laid, relax = _with_bold_cta(root, d, ctx, zone, lo, hi, (s, laid, relax), TALL_CTA)
         placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, side=force_align)
         fl, bad, clash, new_zone = _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax)
+        if bad:  # S1: a corner item with no room in its corner joins the column instead of being left out
+            return plan_stack(d, ctx, hidden, name, insets, force_align, _folded(fold, bad))
         if not clash:
-            return Plan(name=name, placed=placed, hidden=list(hidden) + bad, s=s, zone=zone, floaters=fl,
+            return Plan(name=name, placed=placed, hidden=list(hidden), s=s, zone=zone, floaters=fl,
                         relax=relax, capped=s >= hi * 0.999)
         if new_zone.h < 0.4 * (ctx.H - 2 * my) or new_zone.w < 0.5 * (ctx.W - 2 * mx):
-            return None
+            return _fold_all(plan_stack, d, ctx, hidden, fold, floaters, name=name, insets=insets,
+                             force_align=force_align)
         zone = new_zone
-    return None
+    return _fold_all(plan_stack, d, ctx, hidden, fold, floaters, name=name, insets=insets, force_align=force_align)
 
 
 def plan_split(d: Design, ctx: Ctx, hidden: List[Item], hero_side: str = "left", hero_frac: float = 0.45,
-               fold_corners: bool = False, name: str = "split", insets=(0, 0, 0, 0)) -> Optional[Plan]:
+               fold_corners: bool = False, name: str = "split", insets=(0, 0, 0, 0),
+               fold: frozenset = frozenset()) -> Optional[Plan]:
     vis = _visible(d, hidden)
     heroes = [it for it in vis if it.role == "hero"]
     if not heroes:
@@ -520,7 +556,7 @@ def plan_split(d: Design, ctx: Ctx, hidden: List[Item], hero_side: str = "left",
             return None
         heroes = [max(imgs, key=lambda i: i.src_box.area)]
     hero = heroes[0]
-    floaters = [it for it in vis if it.corner and not fold_corners and it is not hero]
+    floaters = [it for it in vis if it.corner and not fold_corners and it is not hero and id(it) not in fold]
     rest = [it for it in vis if it is not hero and it not in floaters]
     if not rest:
         return None
@@ -540,44 +576,72 @@ def plan_split(d: Design, ctx: Ctx, hidden: List[Item], hero_side: str = "left",
             return None
         placed = _place_split(laid, ctx, laid.zone)
         fl, bad, clash, new_zone = _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax)
+        if bad:  # S1: a corner item with no room in its corner joins the copy column
+            return plan_split(d, ctx, hidden, hero_side, hero_frac, fold_corners, name, insets, _folded(fold, bad))
         if not clash:
-            return Plan(name=name, placed=placed, hidden=list(hidden) + bad, s=s, zone=zone, floaters=fl,
+            return Plan(name=name, placed=placed, hidden=list(hidden), s=s, zone=zone, floaters=fl,
                         relax=relax, capped=s >= hi * 0.999)
         if new_zone.h < 0.55 * (ctx.H - 2 * my) or new_zone.w < 0.5 * (ctx.W - 2 * mx):
-            return None
+            return _fold_all(plan_split, d, ctx, hidden, fold, floaters, hero_side=hero_side, hero_frac=hero_frac,
+                             fold_corners=fold_corners, name=name, insets=insets)
         zone = new_zone
-    return None
+    return _fold_all(plan_split, d, ctx, hidden, fold, floaters, hero_side=hero_side, hero_frac=hero_frac,
+                     fold_corners=fold_corners, name=name, insets=insets)
+
+
+def _folded(fold: frozenset, items: Sequence[Item]) -> frozenset:
+    return fold | frozenset(id(i) for i in items)
+
+
+def _fold_all(fn, d: Design, ctx: Ctx, hidden: List[Item], fold: frozenset, floaters: Sequence[Item], **kw):
+    """The planner again with every corner item set in the body, when the corners would not
+    settle beside the content (None if they already were)."""
+    if not floaters:
+        return None
+    return fn(d, ctx, hidden, fold=_folded(fold, floaters), **kw)
 
 
 def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_logo: bool = False,
-             insets=(0, 0, 0, 0)) -> Optional[Plan]:
+             insets=(0, 0, 0, 0), fold: frozenset = frozenset(), footer: bool = False) -> Optional[Plan]:
     vis = _visible(d, hidden)
     hid = list(hidden)
     logo = next((i for i in vis if i.role == "logo"), None)
     hero = next((i for i in vis if i.role == "hero"), None)
     ctas = [i for i in vis if i.role == "cta"]
     texts = [i for i in vis if i.is_copy and i is not logo]
-    badges = [i for i in vis if i.role in ("badge", "panel", "group") and not i.corner and not i.is_copy]
-    floaters = [i for i in vis if i.corner and i.role != "logo"]
+    small_print = [i for i in texts if i.role == "legal"] if footer else []
+    texts = [i for i in texts if i not in small_print]
+    badges = [i for i in vis if i.role in ("badge", "panel", "group") and (not i.corner or id(i) in fold)
+              and not i.is_copy]
+    floaters = [i for i in vis if i.corner and i.role != "logo" and id(i) not in fold]
     others = [i for i in vis if i not in texts and i not in ctas and i not in badges and i not in floaters
-              and i is not logo and i is not hero]
-    hid += others  # secondary art does not fit a one-line banner
+              and i is not logo and i is not hero and i not in small_print]
+    # S1: secondary art (a second product, a sticker) keeps a small place in the row rather than
+    # being left out; it grows into spare height no further than the hero would
+    art = [Leaf(o, fill=True, cap_rel=1.0, min_rel=0.3, max_w_frac=0.15) for o in others]
     copy_rows = rows_for(texts + badges)
     lo, hi = scale_bounds(d, ctx, "row")
     zone, mx, my = _zone(d, ctx, insets)
     if zone.w < 20 or zone.h < 12 or (not copy_rows and not ctas and logo is None and hero is None):
         return None
     centred = dominant_align(texts) == "center" if texts else True
+    full, feet = zone, []
+    if small_print:  # small print runs as one footer line under the row (see _row_footer)
+        feet = [realize(it, lo, ctx, max_w=zone.w, relax=0.6) for it in small_print]
+        if any(f is None for f in feet):
+            return None
+        foot_h = sum(f.h for f in feet) + FOOT_GAP * ctx.base_fs * len(feet)
+        if zone.h - foot_h < 12:
+            return None
+        zone = Box(zone.x, zone.y, zone.w, zone.h - foot_h)
     kids: List[Node] = []
     if logo is not None and not stack_logo:
         kids.append(Leaf(logo, fill=True, cap_rel=1.7, min_rel=1.0, max_w_frac=0.2))
     if hero is not None:  # on a strip the type scale is tiny; the picture may still fill the strip's height
         kids.append(Leaf(hero, fill=True, cap_rel=1.6, min_rel=0.4, max_w_frac=0.3,
                          cap_floor=0.9 * zone.h / max(1.0, hero.src_box.h)))
-    if copy_rows or (stack_logo and logo is not None):
-        rows = ([[logo]] if stack_logo and logo is not None else []) + copy_rows
-        col, _ = column(d, rows, force_align="center" if centred else "start", gap_scale=0.6)
-        kids.append(col)
+    kids += art
+    rows = ([[logo]] if stack_logo and logo is not None else []) + copy_rows
     gap = max(1.2 * ctx.base_fs, 0.022 * ctx.W)
 
     def hstack(parts: List[Node]) -> HStack:
@@ -590,31 +654,92 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
     # on a strip the call to action is the banner's second focal point, in a column of its own:
     # its label keeps pace with the strip's display type instead of sitting at the legibility floor
     root = None
-    for nowrap in (True, False):  # a one-line CTA reads as a button; wrap only if forced
-        parts = _padded_runs(d, kids + [Leaf(c, nowrap=nowrap) for c in ctas], hstack)
-        if parts is None:
-            return None
-        root = hstack(parts)
-        s, laid, relax = solve(root, ctx, zone, lo, hi)
-        if laid is not None:
+    # the copy is one column; when that cannot fit the strip's height with everything kept, it is
+    # re-stacked into two or three side by side (S1: re-stack before anything is left out)
+    for n in range(1, min(MAX_COPY_COLUMNS, len(rows)) + 1):
+        cols = [column(d, g, force_align="center" if centred else "start", gap_scale=0.6)[0]
+                for g in _split_rows(rows, n)]
+        for nowrap in (True, False):  # a one-line CTA reads as a button; wrap only if forced
+            parts = _padded_runs(d, kids + cols + [Leaf(c, nowrap=nowrap) for c in ctas], hstack)
+            if parts is None:
+                break
+            root = hstack(parts)
+            s, laid, relax = solve(root, ctx, zone, lo, hi)
+            if laid is not None:
+                break
+        if laid is not None or (n == 1 and parts is None):
             break
     if laid is None:
+        if not footer and any(i.role == "legal" for i in texts) and not _in_panel(d, [i for i in texts
+                                                                                    if i.role == "legal"]):
+            # S1: small print that will not fit the row's columns runs as a line along the foot
+            # of the strip instead of being left out
+            return plan_row(d, ctx, hidden, name, stack_logo, insets, fold, footer=True)
         return None
     if ctas and ctx.W >= STRIP * ctx.H:  # on a strip the CTA sits in a column of its own
         s, laid, relax = _with_bold_cta(root, d, ctx, zone, lo, hi, (s, laid, relax), STRIP_CTA)
     
     placed = place_row(laid, ctx, laid.zone, ends_in_cta=bool(ctas))
+    if small_print:
+        placed += _row_footer(small_print, feet, placed, s, relax, ctx, full, centred)
     fl = []
     corner, failed = place_floaters(floaters, s, ctx, mx, my, relax)
-    hid += failed
-    for p in corner:  # a one-line banner has no room to give: a corner item that clashes is dropped
+    bad = list(failed)
+    for p in corner:  # a one-line banner has no room to give around a corner item that clashes ...
         if any(collides(Box(p[1], p[2], p[0].w, p[0].h), Box(xx, yy, rr.w, rr.h), 0.4 * ctx.base_fs)
                for rr, xx, yy in placed):
-            hid.append(p[0].item)
+            bad.append(p[0].item)
         else:
             fl.append(p)
+    if bad:  # ... so it joins the row itself (S1: kept, never left out)
+        return plan_row(d, ctx, hidden, name, stack_logo, insets, _folded(fold, bad), footer)
     return Plan(name=name, placed=placed, hidden=hid, s=s, zone=zone, floaters=fl, relax=relax,
                 capped=s >= hi * 0.999)
+
+
+MAX_COPY_COLUMNS = 3  # a strip's copy may be re-stacked into this many columns side by side
+FOOT_GAP = 0.3  # x base type size: the gap between a strip's row and its small-print footer
+
+
+def _in_panel(d: Design, items: Sequence[Item]) -> bool:
+    ids = {id(i) for i in items}
+    return any(id(m) in ids for bd in d.backdrops for m in bd.members)
+
+
+def _row_footer(items: Sequence[Item], feet: Sequence[Real], placed, s: float, relax: float, ctx: Ctx,
+                zone: Box, centred: bool) -> List[Placement]:
+    """Small print as lines along the foot of a strip, under the row: set at the row's scale
+    when that still fits the room reserved for it, else at the size the room was reserved at;
+    aligned with the row's copy (centred, or from the row's left edge)."""
+    left = min((x for _, x, _ in placed), default=zone.x)
+    out, y = [], zone.b
+    for it, f in reversed(list(zip(items, feet))):
+        r = realize(it, s, ctx, max_w=zone.w, max_h=f.h, relax=relax) or f
+        y -= r.h
+        x = zone.x + (zone.w - r.w) / 2.0 if centred else max(zone.x, min(left, zone.r - r.w))
+        out.append((r, x, y))
+        y -= FOOT_GAP * ctx.base_fs
+    return out
+
+
+def _split_rows(rows: List[List[Item]], n: int) -> List[List[List[Item]]]:
+    """``rows`` in reading order cut into ``n`` consecutive runs of about equal source height
+    (the first run never empty, so the headline leads)."""
+    if n <= 1 or len(rows) <= 1:
+        return [rows]
+    hs = [_row_box(r).h for r in rows]
+    total = sum(hs)
+    out, cur, acc = [], [], 0.0
+    for i, (r, h) in enumerate(zip(rows, hs)):
+        left = len(rows) - i  # rows still to place, this one included
+        need = n - len(out) - 1  # runs still to open after the current one
+        if cur and (acc + h / 2.0 > total * (len(out) + 1) / n or left <= need) and need > 0:
+            out.append(cur)
+            cur = []
+        cur.append(r)
+        acc += h
+    out.append(cur)
+    return out
 
 
 def _with_bold_cta(root: Node, d: Design, ctx: Ctx, zone: Box, lo: float, hi: float, plain, share: float):
@@ -773,6 +898,31 @@ def drop_orders(d: Design) -> List[List[Item]]:
     return out
 
 
+DEMOTE_ROLES = ("badge", "ribbon", "legal", "watermark")
+
+
+def _demotions(d: Design) -> List[Tuple[Item, str]]:
+    """S1 demotion: the corner each small secondary item not pinned to one may move to when the
+    column cannot hold it. Small print goes to a bottom corner, badges, ribbons and watermarks to
+    the top corner on their side; items of one role share the corner, so place_floaters queues
+    a set of badges in one line along the edge."""
+    out: List[Tuple[Item, str]] = []
+    for role in DEMOTE_ROLES:
+        its = [it for it in d.items if it.role == role and not it.corner and not it.core]
+        if not its:
+            continue
+        cx = sum(it.src_box.cx for it in its) / len(its)
+        side = "l" if cx < 0.4 * d.W else "r"
+        vert = "b" if role in ("legal", "watermark") else "t"
+        out += [(it, vert + side) for it in its]
+    return out
+
+
+def drop_units(orders: List[List[Item]]) -> List[List[Item]]:
+    """The units a cumulative hide-set chain (drop_orders) adds one step at a time."""
+    return [[i for i in b if i not in a] for a, b in zip(orders, orders[1:])]
+
+
 def _shift(p: Plan, dx: float, dy: float) -> Plan:
     p.placed = [(r, x + dx, y + dy) for r, x, y in p.placed]
     return p
@@ -807,7 +957,10 @@ def _with_insets(fn, d: Design, ctx: Ctx, *args, **kw) -> Optional[Plan]:
     return None
 
 
-def generate(d: Design, ctx: Ctx) -> List[Plan]:
+def generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
+    """Candidate plans. With ``settle`` the search stops at the first stage whose plans keep
+    every element; without it every stage runs, down to the hide-sets (plan_design asks for
+    that only when no plan that keeps everything passes the final hard checks)."""
     r = ctx.W / ctx.H
     plans: List[Plan] = []
     missing = [it for it in d.items if it.role in ("missing", "void")]
@@ -837,7 +990,7 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
 
     measures = (1.0, WIDE_MEASURE) if r >= WIDER * d.W / d.H else (1.0,)
 
-    def variants(force_all: bool = False):
+    def variants(force_all: bool, ctx: Ctx):
         """(name, planner, options, ctx). A reflowed design is also offered with
         its headline set as display type, larger than the rest (EMPHASIS; a
         long headline only the first step, see items._display), and, on a much
@@ -859,32 +1012,104 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
             return [p]
 
     done = set()  # archetypes that already reached their cap without relaxing type
+    tried: Dict[tuple, bool] = {}  # (variant, hide-set) -> found a plan: a later pass only adds what an earlier one left out
+
+    def attempt(drop: List[Item], force_all: bool, base: Ctx, tag: str = "") -> bool:
+        """Every variant with ``drop`` hidden; False when out of budget."""
+        hidden = missing + drop
+        fitted = set()
+        for name, fn, kw, c in variants(force_all, base):
+            plain = name.split("@")[0]
+            # emphasis only makes the headline larger: if the plain plan did not fit, neither will it
+            if name + tag in done or (plain != name and plain not in fitted) or (tag and plain != name):
+                continue  # (a plan kept only at the keep floor gets no display emphasis)
+            key = (name + tag, frozenset(id(i) for i in drop))
+            if key in tried:
+                if tried[key]:
+                    fitted.add(name)  # its refinements were already tried alongside it
+                continue
+            tried[key] = False
+            if BUDGET.economy and name != name.split("~")[0].split("@")[0]:
+                # short of budget: the plain archetypes only, not their display/measure refinements
+                continue
+            try:
+                p = _with_insets(fn, d, c, hidden, name=name + tag, **kw)
+            except BudgetExceeded:
+                if plans:
+                    return False  # out of budget: the candidates found so far are the field
+                raise
+            if p:
+                p.specks = _specks(p, d, c)
+                plans.append(p)
+                fitted.add(name)
+                tried[key] = True
+                if p.relax >= 1.0 and p.capped:
+                    done.add(name + tag)
+        return True
+
+    def kept() -> bool:
+        return settle and any(p.lost() == 0 for p in plans)
+
+    # S1 (loop/STEERING.md): every candidate places every element. Hiding is no longer a move a
+    # layout may choose; it is the repair of last resort, tried only when nothing else keeps all.
     for force_all in (False, True):
-        for drop in drop_orders(d):
-            hidden = missing + drop
+        if not attempt([], force_all, ctx) or kept():
+            return plans
+    # 1. type below the usual legibility floor, down to the explicit keep floor (keeping wins)
+    #    (a keep plan also keeps the stickers and captions a composite would leave off its art)
+    kctx, tag = replace(ctx, keep_px=float(keep_floor(ctx.W, ctx.H))), "!keep"
+    if not attempt([], True, kctx, tag) or kept():
+        return plans
+    # 1b. small secondary items (badges, ribbon, small print, watermark) move out of the column
+    #     into the margins and corners, a set of them queued in one line along the edge
+    demote = _demotions(d)
+
+    def cornered(base: Ctx, tag: str) -> bool:
+        saved = [(it, it.corner) for it, _ in demote]
+        try:
+            for it, c in demote:
+                it.corner = c
+            return attempt([], True, base, tag)
+        finally:
+            for it, c in saved:
+                it.corner = c
+
+    if demote and (not cornered(kctx, "!corner") or kept()):
+        return plans
+    # 1c. squeeze: secondary copy goes under the usual floor, down to the explicit minimum
+    #     (items.min_floor; headline and CTA stay at the usual floor), first in place, then with
+    #     the secondary items in the corners (S1: keeping wins over legibility)
+    sctx = replace(ctx, keep_px=float(min_floor(ctx.W, ctx.H)))
+    if sctx.keep_px < kctx.keep_px:
+        if not attempt([], True, sctx, "!squeeze") or kept():
+            return plans
+        if demote and (not cornered(sctx, "!squeeze-corner") or kept()):
+            return plans
+    # 2. the old hide-sets, least important first, still at the keep floor (keeping wins over
+    #    legibility, so as little as possible is given up)
+    orders = drop_orders(d)
+    units = drop_units(orders)
+    gave_back = False
+    for force_all in (False, True):
+        for k, drop in enumerate(orders[1:]):
             if any(h.role in CORE_ROLES for h in drop) and plans:
                 break  # core items are only given up when nothing else worked
-            fitted = set()
-            for name, fn, kw, c in variants(force_all):
-                base = name.split("@")[0]
-                # emphasis only makes the headline larger: if the plain plan did not fit, neither will it
-                if name in done or (base != name and base not in fitted):
-                    continue
-                if BUDGET.economy and name != name.split("~")[0].split("@")[0]:
-                    # short of budget: the plain archetypes only, not their display/measure refinements
-                    continue
-                try:
-                    p = _with_insets(fn, d, c, hidden, name=name, **kw)
-                except BudgetExceeded:
-                    # out of budget: the candidates found so far are the field
-                    if plans:
+            n0 = len(plans)
+            if not attempt(drop, force_all, kctx, tag):
+                return plans
+            if len(plans) > n0 and not gave_back:
+                # 3. the chain hides cumulatively, so the first set that fits may hold items that
+                #    no longer need to go: each is given back, most important first, if the
+                #    layout still fits with it (S1: as few elements left out as possible)
+                gave_back = True
+                keep = list(drop)
+                for u in reversed(units[:k + 1]):
+                    trial = [i for i in keep if i not in u]
+                    n1 = len(plans)
+                    if not attempt(trial, force_all, kctx, tag):
                         return plans
-                    raise
-                if p:
-                    plans.append(p)
-                    fitted.add(name)
-                    if p.relax >= 1.0 and p.capped:
-                        done.add(name)
+                    if len(plans) > n1:
+                        keep = trial
         if plans:
             break
     return plans

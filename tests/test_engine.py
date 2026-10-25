@@ -201,6 +201,22 @@ class Samples(unittest.TestCase):
                 self.assertEqual(hard_rule_errors(src, out, tgt) + promise_errors(src, out, tgt), [])
 
 
+class NothingHidden(unittest.TestCase):
+    """S1 (loop/STEERING.md): no sample or kit case hides an element at any catalogue format
+    (tools/rules.hidden_errors: opacity 0, 1 px type or a speck; a missing asset is exempt)."""
+
+    def test_every_sample_on_every_format(self):
+        from engine.resize import resize
+        from tools.rules import hidden_errors
+        from tools.sheet import CATALOGUE
+
+        bad = []
+        for name, src in _sources():
+            for fmt, (w, h) in CATALOGUE.items():
+                tgt = {"width": w, "height": h}
+                bad += [f"{name}@{fmt}: {e}" for e in hidden_errors(src, resize(json.loads(json.dumps(src)), tgt))]
+        self.assertEqual(bad, [])
+
 
 class WorkBudget(unittest.TestCase):
     """The resize's work budget (engine/smart/layout.Budget, r10): the economy layout and the
