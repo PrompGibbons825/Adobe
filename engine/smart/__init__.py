@@ -104,13 +104,19 @@ def _diverse(plans, top: int, per_kind: int = 2):
             unique.append(p)
     head, rest, count = [], [], {}
     for p in unique:
-        kind = p.name.split("@")[0].split("~")[0]
+        kind = archetype(p.name)
         if len(head) < top and count.get(kind, 0) < per_kind:
             count[kind] = count.get(kind, 0) + 1
             head.append(p)
         else:
             rest.append(p)
     return head + rest
+
+
+def archetype(name: str) -> str:
+    """The archetype of a plan (stack, split, row, adapt, scaled), whatever its
+    variant: ``split-left-0.34-fold~1.8@1.35`` is a split."""
+    return name.split("@")[0].split("~")[0].split("-")[0]
 
 
 def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:

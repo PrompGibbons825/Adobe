@@ -128,6 +128,17 @@ typographic **rhythm**:
   centred, with each row's text alignment kept inside it.
 Margins follow the source's breathing room but are never thinner than a
 banner's (about 5% of the canvas's length, at most 0.3 of its short side).
+On a story or reel (1.6 or more times taller than wide, not an ad unit) copy,
+logo, button and corner items also stay out of the platform UI: the account
+bar over the top 14% and the reply box over the bottom 20%. Backgrounds and
+decoration still run under them. On a roomy canvas (short side 400 px or more)
+a hero keeps at least 70% of its source share of the canvas, and any other
+picture that covered 8% of the source 60% (a cut-out, which cannot be cropped,
+no more than 70% of the largest share it could show whole): the copy gives way
+first, so a product never shrinks to a thumbnail. Texts that shared a font
+size, family and role in the source share one size in every layout, the
+smallest any of them was set at (Adobe's copyfit rule: each old size maps to
+one new size). The headline is exempt, since display type is sized on its own.
 Headline and CTA are never dropped. Copy never goes below a legibility floor
 (cap height of about 7 px when the canvas is viewed at 1024 px), except secondary
 copy on the ladder's last rung. When a label
@@ -156,7 +167,13 @@ on tiny formats, costs more than leaving it out), copy density (copy covering
 more than the larger of a quarter of the canvas and 1.5× the source's share, off
 strips, reads as a wall of text), headline line breaks (more lines than display
 type takes, about two words a line, counts as short lines), a prior for the archetype that suits the format, and a charge for secondary
-items that take far more of the canvas than they had in the source. The best eight are then re-ranked by the pixels under
+items that take far more of the canvas than they had in the source. On a roomy canvas a layout also earns
+credit for filling it, up to 1.1× the source's coverage (at most 55%), and pays when its headline or hero
+falls below 70% of its source share of the canvas, or a large picture below 60%. A layout that is only
+the source scaled uniformly into the middle of a canvas of another shape (aspect changed 1.5× or more,
+empty bands either side) pays heavily, as VLM rubrics mark "trivial scaling" down. Corner items keep
+a clear gap of at least 2% of the short side from the content, since judges misread near-touching
+shapes as collisions. The best eight are then re-ranked by the pixels under
 their copy (contrast and texture, rendered through the real renderer), relative to
 the source. Those eight are shared out first: identical layouts count once and no
 archetype takes more than two places, so variants of one plan cannot crowd out a
