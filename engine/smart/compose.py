@@ -1085,8 +1085,9 @@ def generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
             return plans
         if demote and (not cornered(sctx, "!squeeze-corner") or kept()):
             return plans
-    # 2. the old hide-sets, least important first, still at the keep floor (keeping wins over
-    #    legibility, so as little as possible is given up)
+    # 2. content that fits at no rung: the old hide-sets, least important first, as a repair of
+    #    last resort, at the usual context (there a composite may shed a sticker it cannot hold,
+    #    so the picture itself stays; keep_everything_first ranks core losses last)
     orders = drop_orders(d)
     units = drop_units(orders)
     gave_back = False
@@ -1095,7 +1096,7 @@ def generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
             if any(h.role in CORE_ROLES for h in drop) and plans:
                 break  # core items are only given up when nothing else worked
             n0 = len(plans)
-            if not attempt(drop, force_all, kctx, tag):
+            if not attempt(drop, force_all, ctx, "!repair"):
                 return plans
             if len(plans) > n0 and not gave_back:
                 # 3. the chain hides cumulatively, so the first set that fits may hold items that
@@ -1106,7 +1107,7 @@ def generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
                 for u in reversed(units[:k + 1]):
                     trial = [i for i in keep if i not in u]
                     n1 = len(plans)
-                    if not attempt(trial, force_all, kctx, tag):
+                    if not attempt(trial, force_all, ctx, "!repair"):
                         return plans
                     if len(plans) > n1:
                         keep = trial
