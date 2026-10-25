@@ -204,7 +204,11 @@ class Samples(unittest.TestCase):
 # (sample, format) whose content does not fit even at the explicit minimum type size, measured
 # 2026-10-25 (sprint A): only there may the last-resort repair still leave an element out. A pair
 # that starts keeping everything should be struck from here; a pair not listed fails the test.
-UNFIT = set()  # FILLED BELOW
+UNFIT = {
+    ("chameleon_sample_level2_core", "mobile-banner"), ("chameleon_sample_level3_advanced", "mobile-banner"),
+    ("band_panel", "mobile-banner"), ("sticker_divider", "mobile-banner"), ("story_hero_top", "mobile-banner"),
+    ("two_products", "mobile-banner"),
+}  # all 320x50: logo, product, headline, subhead and button do not share 50 px even at the minimum
 
 
 class NothingHidden(unittest.TestCase):
