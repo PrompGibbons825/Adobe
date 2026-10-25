@@ -154,9 +154,9 @@ items that take far more of the canvas than they had in the source. On a roomy c
 credit for filling it, up to 1.1× the source's coverage (at most 55%), and pays when its headline or hero
 falls below 70% of its source share of the canvas, or a large picture below 60%. A layout that is only
 the source scaled uniformly into the middle of a canvas of another shape (aspect changed 1.5× or more,
-empty bands either side) pays heavily, as VLM rubrics mark "trivial scaling" down. Copy that comes
-closer to something than a clear gap of max(2% of the short side, about 0.35 em), where the source kept
-them apart, pays too: judges misread near-touching shapes as collisions. The best eight are then re-ranked by the pixels under
+empty bands either side) pays heavily, as VLM rubrics mark "trivial scaling" down. Corner items keep
+a clear gap of at least 2% of the short side from the content, since judges misread near-touching
+shapes as collisions. The best eight are then re-ranked by the pixels under
 their copy (contrast and texture, rendered through the real renderer), relative to
 the source. Those eight are shared out first: identical layouts count once and no
 archetype takes more than two places, so variants of one plan cannot crowd out a
