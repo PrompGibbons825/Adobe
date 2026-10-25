@@ -34,7 +34,10 @@ tools.gate.stats.
 resize where the task has one, else the base output) against a copy with one unambiguous defect
 (``sentinel_kinds``: the headline cut past the edge, the headline moved onto the photo) or, only
 where a designer's resize is the good side, fit-and-centre. run.py checks each family's accuracy
-on its own; a family below ``sentinel_min`` is dropped from the gate run. **Report-only
+on its own; a family below ``sentinel_min`` is dropped from the gate run. Every candidate is
+screened first (``sentinel_screen``, ``tools.gate.sentinels``): a clean good side, the defect on
+the element it names (the headline is the largest text), and a visible pixel difference; the
+rest are dropped and another (tile, kind) is tried. **Report-only
 sentinels** (``report_kinds``: the S6 small defects plus the 20 px misalignment and low-contrast
 moves, which both families missed about half the time in G6's first run) are measured, never
 decisive. ``python -m tools.gate.sentinel_check`` measures the sentinels on dev data.
@@ -91,6 +94,10 @@ DEFAULT_PANEL = {
     "small_sentinels": 0.5,  # report-only sentinel asks per decisive sentinel ask
     "sentinel_kinds": ["p_crop", "p_onart", "fit_centre"],  # decisive; fit_centre only vs a designer resize
     "report_kinds": ["p_mis20", "p_lowcon", "p_hide_one", "p_clip_letter", "p_edge_touch", "p_typescale"],
+    "sentinel_screen": True,      # drop sentinels a judge could not see (tools.gate.sentinels)
+    "sentinel_min_diff": 0.006,   # share of the view's pixels the defect must change, at least
+    "sentinel_fit_min_diff": 0.12,  # the same for fit-and-centre (a whole-design change)
+    "sentinel_small_min_diff": 0.0005,  # the same for the report-only small defects (subtle by design)
 }
 PANEL_KEYS = set(DEFAULT_PANEL)
 
@@ -378,6 +385,8 @@ class Panel:
         for lab in self._read("labels.jsonl"):
             self.labels[lab["ask"]] = lab
         self.calls = self._read("calls.jsonl")
+        self.screened: List[dict] = []   # sentinel candidates tools.gate.sentinels dropped
+        self._good_ok: Dict[tuple, List[str]] = {}
 
     def _judge_for(self, fam: str, judge):
         if isinstance(judge, dict):
@@ -596,11 +605,16 @@ class Panel:
         ask_kind = "sentinel_small" if small else "sentinel"
         rng = _seeded(self.seed, self.gate_id, "small_sentinels" if small else "sentinels", batch)
         kinds = list(self.cfg["report_kinds"] if small else self.cfg["sentinel_kinds"])
-        made, tries = 0, 0
-        while made < n and tries < 20 * n:
+        screen = bool(self.cfg.get("sentinel_screen"))
+        made, tries, seen = 0, 0, set()
+        while made < n and tries < 40 * n:
             tries += 1
             t = rng.choice(pool)
             kind = rng.choice(kinds)
+            n0 = f"{t['set']}.{t['tile']}"
+            if screen and (n0, kind) in seen and len(seen) < len(pool) * len(kinds):
+                continue  # a screened (tile, kind) is deterministic: try an untried one first
+            seen.add((n0, kind))
             good = t.get("reference") or t["base"]
             tgt = {"width": good["canvas"]["width"], "height": good["canvas"]["height"]}
             if kind == "fit_centre":
@@ -615,8 +629,12 @@ class Panel:
             if bad is None:
                 continue
             key = f"{batch}.{made}.{kind}"
-            n0 = f"{t['set']}.{t['tile']}"
             kit = t.get("kit")
+            if screen:
+                why = self._screen(kind, t, good, bad, tgt, kit)
+                if why:
+                    self.screened.append({"tile": n0, "kind": kind, "small": small, "why": why})
+                    continue
             ref = self.view(t["source"], f"{n0}.src", kit)
             gv = self.view(good, f"{n0}.good", kit)
             bv = self.view(bad, f"{'small' if small else 'sent'}.{key}", kit)
@@ -625,16 +643,52 @@ class Panel:
             made += 1
         return out
 
+    def _screen(self, kind: str, t: dict, good: dict, bad: dict, tgt: dict, kit) -> Optional[str]:
+        """Why this sentinel would not be a fair one (tools.gate.sentinels), or None. Renders the
+        good side and the candidate under a private screening name."""
+        from tools.gate import sentinels as SN
+
+        n0 = f"{t['set']}.{t['tile']}"
+        key = (n0, "good")
+        if key not in self._good_ok:
+            why = SN.good_ok(t["source"], good, tgt)
+            if not why:
+                e_good = SN.edge_ink(self.view(good, f"{n0}.good", kit),
+                                     self.view(SN._no_text(good), f"screen.{n0}.good.notext", kit))
+                e_src = SN.edge_ink(self.view(t["source"], f"{n0}.src", kit),
+                                    self.view(SN._no_text(t["source"]), f"screen.{n0}.src.notext", kit))
+                r = SN.rendered_ok(e_good, e_src)
+                why = [r] if r else []
+            self._good_ok[key] = why
+        if self._good_ok[key]:
+            return "good side: " + "; ".join(self._good_ok[key])[:200]
+        why, moved = SN.structural(kind, t["source"], good, bad)
+        if why:
+            return why
+        gv = self.view(good, f"{n0}.good", kit)
+        h = hashlib.sha256(json.dumps(bad, sort_keys=True).encode()).hexdigest()[:12]
+        bv = self.view(bad, f"screen.{n0}.{kind}.{h}", kit)
+        from tools.judge.perturb import SMALL_DEFECTS
+
+        md = float(self.cfg["sentinel_fit_min_diff"] if kind == "fit_centre" else
+                   self.cfg["sentinel_small_min_diff"] if kind in SMALL_DEFECTS else self.cfg["sentinel_min_diff"])
+        why, _ = SN.pixel_ok(gv, bv, good["canvas"], SN.region_of(kind, moved), md)
+        return why
+
     def sentinel_accuracy(self, ask_ids: Iterable[str]) -> dict:
         """Overall-vote accuracy on sentinel asks, in total and per perturbation kind."""
         by: Dict[str, List[float]] = {}
+        side: Dict[str, List[float]] = {}
         for aid in ask_ids:
             v = self.vote(aid)
             if v:
                 by.setdefault(self.asks[aid]["key"].rsplit(".", 1)[-1], []).append(v["overall"])
+                side.setdefault(self.asks[aid]["x_side"], []).append(v["overall"])
         allv = [x for v in by.values() for x in v]
         return {"n": len(allv), "correct": int(sum(allv)), "accuracy": (sum(allv) / len(allv)) if allv else None,
-                "by_kind": {k: round(sum(v) / len(v), 3) for k, v in sorted(by.items())}}
+                "by_kind": {k: round(sum(v) / len(v), 3) for k, v in sorted(by.items())},
+                # the good side's position: a judge that misreads which image is B shows up here
+                "by_side": {k: round(sum(v) / len(v), 3) for k, v in sorted(side.items())}}
 
     def sentinel_kinds(self) -> Dict[str, Dict[str, dict]]:
         """Per ask kind (``sentinel``, ``sentinel_small``), family and perturbation kind: how many

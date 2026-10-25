@@ -59,6 +59,21 @@ def _images(out: dict) -> List[dict]:
                   key=lambda e: -(e["width"] * e["height"]))
 
 
+HEADLINE_NEAR = 0.9  # font sizes within this ratio of the largest count as equally large
+
+
+def headline(out: dict) -> Optional[dict]:
+    """The largest text: the largest font size; among texts within ``HEADLINE_NEAR`` of it, the
+    one with the largest drawn area (a short tag set as large as a long title is not the
+    headline). The text p_crop, p_clip_letter and p_onart move."""
+    texts = _texts(out)
+    if not texts:
+        return None
+    top = float(texts[0].get("font_size", 0))
+    near = [e for e in texts if float(e.get("font_size", 0)) >= HEADLINE_NEAR * top]
+    return max(near, key=lambda e: (_drawn(e).area, float(e.get("font_size", 0))))
+
+
 def _drawn(e: dict):
     from engine.smart.textfit import drawn_box
 
@@ -87,7 +102,7 @@ def perturb(kind: str, out: dict, rng: Optional[random.Random] = None) -> Option
     if kind == "p_onart":  # the headline moved onto the photo / product
         if not texts or not imgs:
             return None
-        t, im = _get(o, texts[0]["id"]), imgs[0]
+        t, im = _get(o, headline(out)["id"]), imgs[0]
         db = _drawn(t)
         dx = (im["x"] + im["width"] / 2) - (db.x + db.w / 2)
         dy = (im["y"] + im["height"] / 2) - (db.y + db.h / 2)
@@ -144,7 +159,7 @@ def perturb(kind: str, out: dict, rng: Optional[random.Random] = None) -> Option
     if kind == "p_clip_letter":  # about one letter of the headline past the right edge
         if not texts:
             return None
-        t = _get(o, texts[0]["id"])
+        t = _get(o, headline(out)["id"])
         db = _drawn(t)
         t["x"] += (W + 0.5 * float(t["font_size"])) - db.r
         return o
@@ -170,7 +185,7 @@ def perturb(kind: str, out: dict, rng: Optional[random.Random] = None) -> Option
     if kind == "p_crop":  # 30% of the headline's ink pushed past the right edge
         if not texts:
             return None
-        t = _get(o, texts[0]["id"])
+        t = _get(o, headline(out)["id"])
         db = _drawn(t)
         t["x"] += (W - 0.7 * db.w) - db.x
         return o

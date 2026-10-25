@@ -172,6 +172,9 @@ def validate_panel(cfg: dict) -> List[str]:
             errs.append(f"panel {k} must list known perturbations ({', '.join(sorted(known))})")
     if not c.get("sentinel_kinds"):
         errs.append("panel sentinel_kinds must not be empty")
+    for k in ("sentinel_min_diff", "sentinel_fit_min_diff", "sentinel_small_min_diff"):
+        if not (isinstance(c.get(k), (int, float)) and 0 <= c[k] < 0.5):
+            errs.append(f"panel {k} must be a share of pixels in [0, 0.5)")
     if not (isinstance(c.get("batch"), int) and 1 <= c["batch"] <= 12):
         errs.append("panel batch must be 1-12 comparisons per call")
     return errs

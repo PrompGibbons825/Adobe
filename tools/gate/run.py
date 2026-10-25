@@ -435,10 +435,16 @@ def sentinel_pool(sets: List[dict]) -> List[dict]:
 
 def sentinel_drops(sent: Dict[str, dict], active: List[str], rule: dict, look: int, stop: bool) -> Dict[str, str]:
     """Families to drop on their cumulative sentinel accuracy: at an early look only once a
-    family holds ``sentinel_min_n`` sentinels; at the look where the run stops, whatever it holds."""
+    family holds ``sentinel_min_n`` sentinels; at the look where the run stops, whatever it holds
+    (none at all drops it too, when the rule asks for sentinels)."""
     out = {}
     for f in active:
         n = (sent.get(f) or {}).get("n", 0)
+        if not n and stop and float(rule.get("sentinel_share") or 0) > 0:
+            # screening (tools.gate.sentinels) can leave a pool with no fair sentinel: a family
+            # nothing has checked is not trusted
+            out[f] = f"no sentinels answered at look {look}"
+            continue
         if not n or (not stop and n < int(rule["sentinel_min_n"])):
             continue
         acc = sent[f]["correct"] / n
