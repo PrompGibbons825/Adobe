@@ -375,6 +375,16 @@ def margin_clear(grow: float = 0.05) -> Check:
     return check
 
 
+def nothing_hidden() -> Check:
+    """S1 (loop/STEERING.md): every source element stays shown (tools/rules.hidden_errors: not set
+    to opacity 0, to 1 px type or to a speck; a missing asset is exempt). The gate's box-level
+    cover test (tools/gate/visible.py) is not used here: it ignores image alpha."""
+    def check(src, out, tgt):
+        from tools.rules import hidden_errors
+        return hidden_errors(src, out)
+    return check
+
+
 def all_of(*checks: Check) -> Check:
     def check(src, out, tgt):
         return [e for c in checks for e in c(src, out, tgt)]
@@ -846,8 +856,7 @@ def round5_cases() -> List[Case]:
                  text("legal", 90, 1010, 900, 30, "Offer ends 31 August. Terms apply.", 14,
                       color="rgba(255,255,255,0.75)", z=5),
              ], targets=("ig-square", "med-rect", "fb-link", "half-page", "ig-portrait"),
-             show=("headline", "cta_label", "sticker_label", "legal"),
-             xfail=("med-rect",)),
+             show=("headline", "cta_label", "sticker_label", "legal")),
 
         Case("product_not_a_thumbnail",
              "one big product and a short headline: on 300x250 and square formats the product keeps a "
@@ -1005,6 +1014,67 @@ def round10_cases() -> List[Case]:
              "nested width searches must not blow up (bounded time and memory), and the output is valid",
              1080, 1350, deep_panel(), targets=("1640x924", "pres-16x9", "leaderboard"),
              show=("headline", "cta_label"), seconds=120.0, max_mb=1500.0),
+
+        Case("crowded_promo_keeps_all",
+             "S1: a crowded promo (logo, two products, headline, subhead, a row of three badges, a corner "
+             "sticker, small print, button) keeps every element visible on every format, banners "
+             "included: the layout re-stacks and sets small print smaller rather than leaving anything out",
+             1080, 1080, [
+                 logo(60, 50, 240, 80),
+                 shape("sticker_bg", 880, 40, 160, 160, ORANGE, z=3, kind="ellipse", group_id="sticker"),
+                 text("sticker_label", 890, 95, 140, 50, "NEW", 36, bold=True, z=4, group_id="sticker"),
+                 image("product", 200, 180, 300, 420),
+                 image("product2", 580, 220, 280, 380, "solstice_bottle.png"),
+                 text("headline", 90, 640, 900, 110, "The Golden Hour Collection", 64, "Solstice Serif", True),
+                 text("subhead", 140, 760, 800, 50, "Small-batch botanical sparkling drinks", 30),
+                 *button("badge1", 150, 840, 220, 50, "Limited", 22, fill=PLUM),
+                 *button("badge2", 430, 840, 220, 50, "Award winner", 22, fill=PLUM),
+                 *button("badge3", 710, 840, 220, 50, "Small batch", 22, fill=PLUM),
+                 *button("cta", 340, 920, 400, 80, "Shop now", 28),
+                 text("legal", 140, 1020, 800, 34, "Please drink responsibly. Offer ends Sunday.", 18),
+             ], targets=("ig-square", "story", "fb-link", "yt-thumb", "leaderboard", "med-rect", "billboard",
+                         "skyscraper"),
+             show=("headline", "cta_label"), check=nothing_hidden()),
+
+        Case("small_print_footer_on_strips",
+             "S1: a post with a long line of small print under its button: on a one-line strip the "
+             "small print cannot share the row's columns, so it runs as a footer line along the strip "
+             "instead of being left out",
+             1080, 1080, [
+                 logo(390, 80, 300, 100),
+                 text("headline", 90, 300, 900, 180, "Summer Botanicals Are Back", 72, "Solstice Serif", True),
+                 text("subhead", 140, 500, 800, 90, "Five sparkling flavours, made with real fruit", 32),
+                 *button("cta", 390, 640, 300, 80, "Shop now", 30),
+                 text("legal", 90, 960, 900, 60,
+                      "Please enjoy responsibly. Offer valid while stocks last, see our website for full terms.",
+                      20),
+             ], targets=("leaderboard", "large-leader", "billboard", "li-banner", "ig-square"),
+             show=("headline", "cta_label", "legal"), check=nothing_hidden()),
+
+        Case("sticker_on_product_kept",
+             "S1: a small round sticker sits on the corner of the product shot: on strips and small "
+             "banners the sticker stays on the product (set at the legibility floor) rather than being "
+             "left off the art because its label would have to grow",
+             1080, 1080, [
+                 image("product", 340, 120, 400, 520),
+                 shape("vip_bg", 650, 130, 90, 90, GOLD, z=5, kind="ellipse", group_id="vip"),
+                 text("vip_label", 650, 160, 90, 30, "VIP", 18, bold=True, color=PLUM, z=6, group_id="vip"),
+                 text("headline", 90, 690, 900, 110, "Tonight Only", 80, "Solstice Serif", True),
+                 *button("cta", 390, 860, 300, 80, "RSVP", 30),
+             ], targets=("billboard", "leaderboard", "med-rect", "ig-square", "story"),
+             show=("headline", "cta_label"), check=nothing_hidden()),
+
+        Case("hairline_rule_kept",
+             "S1: a 2 px rule between headline and subhead: on small formats it scales under a pixel "
+             "and stops painting unless it is held at 1 px",
+             1080, 1080, [
+                 image("product", 120, 200, 380, 560),
+                 text("headline", 560, 300, 440, 200, "Golden Hour", 72, "Solstice Serif", True, align="left"),
+                 shape("rule", 560, 530, 160, 2, GOLD, z=3),
+                 text("subhead", 560, 560, 440, 100, "Small-batch sparkling botanicals", 30, align="left"),
+                 *button("cta", 560, 700, 280, 76, "Shop now", 28),
+             ], targets=("med-rect", "leaderboard", "skyscraper", "ig-square"),
+             show=("headline", "cta_label"), check=nothing_hidden()),
     ]
 
 
@@ -1071,7 +1141,7 @@ def relations() -> List[Relation]:
 # Measured failures of the engine on 2026-10-24 (absolute-pixel thresholds, hard cut-offs).
 SCALE_XFAIL = {("explicit_newlines", "med-rect"), ("explicit_newlines", "leaderboard"),
                ("letter_spaced_caps", "med-rect"), ("letter_spaced_caps", "leaderboard"),
-               ("crowded_l3", "med-rect"), ("crowded_l3", "leaderboard"), ("crowded_l3", "fb-link"),
+               ("crowded_l3", "med-rect"), ("crowded_l3", "leaderboard"),
                ("band_stays_band_on_squares", "med-rect"),
                ("tiny_items_kept_on_small_canvases", "med-rect"),
                ("tiny_items_kept_on_small_canvases", "leaderboard")}
@@ -1080,8 +1150,10 @@ SCALE3_XFAIL = {("fill_bg_odd_id_bleeding", "med-rect"), ("plate_text_not_split"
                 ("caption_stays_with_photo", "leaderboard"), ("caption_stays_with_photo", "fb-link"),
                 ("freetype_margin_stack", "med-rect"), ("freetype_margin_stack", "leaderboard")}  # measured 2026-10-25 (r7)
 STEP7_XFAIL: set = set()
-STEP_XFAIL = {("crowded_l3", 1200, 628, 1, 0), ("crowded_l3", 1080, 1920, 1, 0),
-              ("crowded_l3", 1080, 1920, 0, 1)}
+STEP_XFAIL = {("crowded_l3", 1080, 1920, 0, 1),  # +10 steps fixed by S1 (r10): nothing hidden, nothing flips
+              # S1 (sprint A): kept at the squeeze floor, a split with the ribbon folded into the copy
+              # fits at 300x250 but leaves the product a speck at 300x251, so the plain split wins there
+              ("crowded_l3", 300, 250, 0, 1)}
 
 
 # ----------------------------------------------------------------------------
@@ -1164,7 +1236,8 @@ def _thin(rid: str, src: dict, out: dict) -> List[str]:
     if float(o.get("opacity", 1)) <= 0:
         return []
     ratio = (o["width"] / max(1e-6, o["height"])) / (s["width"] / s["height"])
-    if not 0.95 <= ratio <= 1.05 or o["height"] > 8:
+    held = o["height"] <= 1.01 <= s["height"] + 0.01  # S1: a hairline is held at 1 px, not scaled out of sight
+    if not (0.95 <= ratio <= 1.05 or held) or o["height"] > 8:
         return [f"{rid}: rule became {o['width']:.1f}x{o['height']:.1f}"]
     return []
 

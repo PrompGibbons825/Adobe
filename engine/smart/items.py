@@ -42,6 +42,7 @@ class Ctx:
     measure: float = 1.0  # how much longer than in the source copy lines may run in this plan
     display_room: float = 1.0  # how far past the canvas's display size this design's headline may go
     cta_min: float = 0.0  # px: the least label size of a call to action in this plan (strips)
+    keep_px: float = 0.0  # px: when set, the type floor of a plan that must keep everything (see keep_floor)
 
     @property
     def display_max(self) -> float:
@@ -57,10 +58,41 @@ class Ctx:
     def judge_floor(self) -> int:
         """No visible text below this: cap height >= 7 px when the judge sees the
         canvas at 1024 px on the long side (research 04), and never under 10 px."""
+        if self.keep_px:
+            return int(self.keep_px)
+        return self.usual_floor
+
+    @property
+    def usual_floor(self) -> int:
         return max(10, math.ceil(10.0 * max(self.W, self.H) / 1024.0))
 
     def floor(self, role: str, relax: float = 1.0) -> float:
-        return max(float(self.judge_floor), FLOOR_MULT.get(role, 1.0) * self.base_fs * relax)
+        jf = float(self.judge_floor)
+        if role in LEGIBLE_ROLES:  # a plan squeezed under the usual floor (keep_px) never squeezes these
+            jf = max(jf, float(self.usual_floor))
+        return max(jf, FLOOR_MULT.get(role, 1.0) * self.base_fs * relax)
+
+
+def keep_floor(W: float, H: float) -> int:
+    """The type floor of a plan that must keep every element (loop/STEERING.md S1: keeping wins
+    over legibility). Held at the usual judge floor: tools/rules.promise_errors (and the gate's
+    promise row) forbid visible text under it, so going lower trades one floor row for another.
+    A keep plan instead relaxes the type scale further (compose.solve) and keeps the stickers
+    and captions a composite would otherwise leave off its art (_composite_at). Lowering this
+    is a steering decision, not an engine one; keep_px carries it through every plan."""
+    return Ctx(W=W, H=H, W0=W, H0=H).judge_floor
+
+
+LEGIBLE_ROLES = ("headline", "cta")  # held at the usual floor even in a squeezed plan
+
+
+def min_floor(W: float, H: float) -> int:
+    """The explicit absolute minimum type size (loop/STEERING.md S1: "text may go down to an
+    absolute minimum size on tiny banners, but it is never hidden"): 70% of the usual judge
+    floor, never under 7 px. Only a plan that cannot keep every element at the usual floor
+    (compose.generate, the squeeze stage) sets secondary copy (small print, badges, a subhead)
+    this small; headline and CTA keep the usual floor (LEGIBLE_ROLES)."""
+    return max(7, int(round(0.7 * Ctx(W=W, H=H, W0=W, H0=H).usual_floor)))
 
 
 def display_size(W: float, H: float) -> float:
@@ -592,7 +624,8 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float, type_cap: float = 
         if sat.kind == "text":
             # a secondary caption that would have to grow past twice its art's scale to stay
             # legible no longer belongs on the art: it is left out rather than blown up
-            if ctx.judge_floor > CAPTION_GROWTH * sat.fs0 * k and sat.role not in ("headline", "cta") and not sat.core:
+            if ctx.judge_floor > CAPTION_GROWTH * sat.fs0 * k and sat.role not in ("headline", "cta") and not sat.core \
+                    and not ctx.keep_px:  # a plan that must keep everything sets it at the keep floor instead
                 dropped += sat.els
                 continue
             # copy on art keeps its place and measure, so captions do not collide
@@ -602,7 +635,7 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float, type_cap: float = 
             continue
         sticker = sat.container is not None and not sat.is_copy  # a badge or button on the art, not copy
         ts = t if sat.kind == "image" else min(t, type_cap)  # copy and stickers keep to the type scale
-        if sticker and not sat.core and sat.role not in ("headline", "cta") and \
+        if sticker and not sat.core and sat.role not in ("headline", "cta") and not ctx.keep_px and \
                 ctx.judge_floor > CAPTION_GROWTH * sat.main_fs() * ts:
             dropped += sat.els  # a sticker whose label must be blown up to read no longer belongs on the art
             continue
@@ -851,7 +884,7 @@ def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF
     heads = it.role == "headline" or any(sat.role == "headline" for sat in it.sats)
     key = (id(it), s, max_w, max_h, relax, k, mode, nowrap, ctx.W, ctx.H, ctx.W0, ctx.H0, ctx.display_room,
            ctx.emphasis if heads else 1.0, ctx.measure if it.kind == "text" else 1.0,
-           ctx.cta_min if it.role == "cta" else 0.0)
+           ctx.cta_min if it.role == "cta" else 0.0, ctx.keep_px)
     r = _REALIZED.get(key, _MISS)
     if r is _MISS:
         BUDGET.tick()

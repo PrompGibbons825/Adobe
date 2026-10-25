@@ -201,6 +201,39 @@ class Samples(unittest.TestCase):
                 self.assertEqual(hard_rule_errors(src, out, tgt) + promise_errors(src, out, tgt), [])
 
 
+# (sample, format) whose content does not fit even at the explicit minimum type size, measured
+# 2026-10-25 (sprint A): only there may the last-resort repair still leave an element out. A pair
+# that starts keeping everything should be struck from here; a pair not listed fails the test.
+UNFIT = {
+    ("chameleon_sample_level2_core", "mobile-banner"), ("chameleon_sample_level3_advanced", "mobile-banner"),
+    ("band_panel", "mobile-banner"), ("sticker_divider", "mobile-banner"), ("story_hero_top", "mobile-banner"),
+    ("two_products", "mobile-banner"),
+}  # all 320x50: logo, product, headline, subhead and button do not share 50 px even at the minimum
+
+
+class NothingHidden(unittest.TestCase):
+    """S1 (loop/STEERING.md): no sample or kit case hides an element at any catalogue format
+    (tools/rules.hidden_errors: opacity 0, 1 px type or a speck; a missing asset is exempt),
+    except the few pairs in UNFIT, where the content cannot fit at all."""
+
+    def test_every_sample_on_every_format(self):
+        from engine.resize import resize
+        from tools.rules import hidden_errors
+        from tools.sheet import CATALOGUE
+
+        bad, fixed = [], set(UNFIT)
+        for name, src in _sources():
+            for fmt, (w, h) in CATALOGUE.items():
+                tgt = {"width": w, "height": h}
+                errs = hidden_errors(src, resize(json.loads(json.dumps(src)), tgt))
+                if errs:
+                    fixed.discard((name, fmt))
+                if (name, fmt) not in UNFIT:
+                    bad += [f"{name}@{fmt}: {e}" for e in errs]
+        self.assertEqual(bad, [])
+        if fixed:
+            print(f"\nNothingHidden: now keeps everything, strike from UNFIT: {sorted(fixed)}")
+
 
 class WorkBudget(unittest.TestCase):
     """The resize's work budget (engine/smart/layout.Budget, r10): the economy layout and the
