@@ -138,8 +138,9 @@ def validate(p: dict) -> List[str]:
 def validate_panel(cfg: dict) -> List[str]:
     """The two-family protocol (loop/STEERING.md S10): exactly two judge families, each with a
     known CLI and a model, on different CLIs and different models (one Claude, one Cursor); a
-    tie-break judge on a third model; 1-12 comparisons per call."""
-    from tools.gate.panel import CLIS, DEFAULT_PANEL, PANEL_KEYS, TIEBREAK
+    tie-break judge on a third model; Cursor judges only on included models (S14); 1-12
+    comparisons per call."""
+    from tools.gate.panel import CLIS, CURSOR_POOL, DEFAULT_PANEL, PANEL_KEYS, TIEBREAK
 
     errs = []
     bad = set(cfg) - PANEL_KEYS
@@ -164,6 +165,11 @@ def validate_panel(cfg: dict) -> List[str]:
         errs.append("panel tiebreak needs a cli and a model")
     elif isinstance(fams, dict) and tb.get("model") in {(f or {}).get("model") for f in fams.values()}:
         errs.append("the tie-break judge must be a third model")
+    judges = list(fams.values()) if isinstance(fams, dict) else []
+    for j in judges + [tb]:
+        if isinstance(j, dict) and j.get("cli") == "agent" and j.get("model") not in CURSOR_POOL:
+            errs.append(f"Cursor judge model {j.get('model')!r} is not in the plan's included pool "
+                        f"({', '.join(sorted(CURSOR_POOL))}); S14")
     from tools.judge.perturb import PERTURBATIONS, SMALL_DEFECTS
 
     known = set(PERTURBATIONS) | set(SMALL_DEFECTS) | {"fit_centre"}

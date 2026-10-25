@@ -4,10 +4,12 @@ Every judge call is one fresh CLI process run from the gate's judge folder
 ``~/judge-adobe-hackathon-2026/<gate-id>/`` so the loop's usage meters count it:
 
 * the **claude** family: ``claude -p --model claude-sonnet-5-5`` with the Read tool only;
-* the **cursor** family: ``agent -p --trust --mode=ask --model gpt-5.6-sol-high`` (Cursor CLI,
+* the **cursor** family: ``agent -p --trust --mode=ask --model grok-4.7-high`` (Cursor CLI,
   read-only ask mode), run from the gate's ``asks/`` folder so the images are opened by name;
-* the **tiebreak** judge: ``agent ... --model gemini-3.7-flash-high``, a third family asked only
+* the **tiebreak** judge: ``agent ... --model composer-2.5``, a third family asked only
   on a split.
+
+Cursor judges use only models in the plan's included pool (``CURSOR_POOL``, STEERING S14).
 
 The judge sees images under random names (``tools.judge.views.blind_ask``): per comparison REF,
 the source design, and A/B, two resizes. Which side is which lives only in the gate's private
@@ -99,12 +101,18 @@ from tools.gate.baselines import fit_centre
 CRITERIA = ["collisions", "readable", "brand", "intentional", "overall"]
 TIEBREAK = "tiebreak"
 CLIS = ("claude", "agent")
+# The models Vlatko's Cursor plan includes ("Cursor Models": Composer and Cursor's Grok). GPT, Gemini
+# and Claude through Cursor bill on-demand once the "Other Models" pool runs out (10-25), `auto` can
+# route to them, and -fast variants are not in the pool (loop/STEERING.md S14).
+CURSOR_POOL = frozenset({"composer-2.5", "grok-4.7-low", "grok-4.7-medium", "grok-4.7-high", "grok-4.7-xhigh",
+                         "cursor-grok-4.6-low", "cursor-grok-4.6-medium", "cursor-grok-4.6-high",
+                         "cursor-grok-4.6-xhigh", "cursor-grok-4.5-high"})
 
 DEFAULT_PANEL = {
     "protocol": "two-family",
     "families": {"claude": {"cli": "claude", "model": "claude-sonnet-5-5"},
-                 "cursor": {"cli": "agent", "model": "gpt-5.6-sol-high"}},
-    "tiebreak": {"cli": "agent", "model": "gemini-3.7-flash-high"},
+                 "cursor": {"cli": "agent", "model": "grok-4.7-high"}},
+    "tiebreak": {"cli": "agent", "model": "composer-2.5"},
     "batch": 8,              # comparisons per call (S10: 6-12)
     "concurrency": 4,        # claude calls at once
     "agent_concurrency": 2,  # agent calls at once

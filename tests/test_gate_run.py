@@ -66,7 +66,7 @@ def _engine(root: Path, src: str) -> Path:
     return root
 
 
-CLAUDE_M, CURSOR_M, TIE_M = "claude-sonnet-5-5", "gpt-5.6-sol-high", "gemini-3.7-flash-high"
+CLAUDE_M, CURSOR_M, TIE_M = "claude-sonnet-5-5", "grok-4.7-high", "composer-2.5"
 
 
 class FakeJudge:
@@ -373,7 +373,10 @@ class Prereg(TempEnv):
                                 ("p3", {"families": {"claude": {"cli": "claude", "model": "m"}}}, "exactly two"),
                                 ("p4", {"families": {"a": {"cli": "claude", "model": "m"},
                                                      "b": {"cli": "agent", "model": "m"}}}, "different models"),
-                                ("p5", {"tiebreak": {"cli": "agent", "model": "gpt-5.6-sol-high"}}, "third model"),
+                                ("p5", {"tiebreak": {"cli": "agent", "model": "grok-4.7-high"}}, "third model"),
+                                ("pa", {"tiebreak": {"cli": "agent", "model": "gpt-5.6-sol-high"}}, "included pool"),
+                                ("pb", {"families": {"claude": {"cli": "claude", "model": "claude-sonnet-5-5"},
+                                                     "cursor": {"cli": "agent", "model": "auto"}}}, "included pool"),
                                 ("p6", {"batch": 20}, "batch must be"),
                                 ("p8", {"sentinel_kinds": ["p_nope"]}, "known perturbations"),
                                 ("p9", {"sentinel_kinds": []}, "must not be empty"),
@@ -386,8 +389,8 @@ class Prereg(TempEnv):
         with mock.patch.object(P, "resolve", side_effect=lambda ref, repo=P.REPO: {"b": "b" * 40, "c": "c" * 40}[ref]):
             m = P.make("mk", "b", "c", sets=["novel-v1"], panel={"batch": 10})
         self.assertEqual(m["panel"]["batch"], 10)
-        self.assertEqual(m["panel"]["families"]["cursor"]["model"], "gpt-5.6-sol-high")
-        self.assertEqual(m["panel"]["tiebreak"]["model"], "gemini-3.7-flash-high")
+        self.assertEqual(m["panel"]["families"]["cursor"]["model"], "grok-4.7-high")
+        self.assertEqual(m["panel"]["tiebreak"]["model"], "composer-2.5")
         self.assertEqual(m["panel"]["protocol"], "two-family")
 
     def test_null_and_builtin_keys(self):
