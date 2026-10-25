@@ -16,9 +16,9 @@ counts calls, not tiles.
 
 Per changed tile:
 
-* one ask to each family; the candidate sits on A for one family and on B for the other, and
-  which family gets which order is random per tile (never fixed), so position bias cancels
-  within each family across tiles;
+* one ask to each family (two with ``orders`` 2); the candidate sits on A for one family and on
+  B for the other, and which family gets which order is random per tile (never fixed) and
+  balanced per batch (``balance``), so position bias cancels within each family across tiles;
 * when the two families split on overall, one tie-break ask goes to the third family;
 * forced choice on the per-tile brief criteria (collisions, readable, brand, intentional) and
   overall, plus a 1-10 score per criterion for each side. (The brief's fifth row, consistency
@@ -47,6 +47,28 @@ starts. When a UTC day already holds ``agent_daily_cap`` calls, or either CLI re
 usage limit (Claude's weekly or five-hour limit included), the panel raises ``CapReached``; the
 limited call labels nothing, so a ``--resume`` (or run.py's ``--wait``) continues exactly where it
 stopped. The gate never falls back to one family because the other ran out of quota.
+
+**Position bias (round 7).** r6 measured the cursor judge right 19/19 when the good side was A
+and 11/21 when it was B. A probe showed why: shown two near-identical images, it read the
+second as only what differed from the first (the full good design on B came back as "only the
+headline; no logo, subtitle or button"). Four protocol changes, all in ``DEFAULT_PANEL``:
+
+* ``mat``: every image the judge sees sits on a gray mat at its own offset (``matted``,
+  ``MAT_PADS``), so no two images share a pixel grid; which of A and B gets which offset is
+  random per ask. On the same 24 dev sentinels the cursor judge went from 0.54 (v1) and 0.62
+  (v2 prompt alone) to 1.00 with the mats.
+* ``prompt`` v2: A and B are named as random, each image is described on its own (``seen_A``,
+  ``seen_B``) before the choice, comparisons are taken one at a time, and each verdict echoes
+  its A file (``A_file``); ``parse_batch`` drops a verdict filed under the wrong id (Claude
+  described comparison k+1 under id k when one REF came twice in a call). ``spread_chunks``
+  keeps asks of one REF in different calls.
+* ``balance``: per family, batch and ask kind, exactly half the asks put x on A
+  (``balanced_side``), so a leftover bias cancels exactly instead of on average.
+* ``orders`` 2 (off by default; doubles the asks): each family asks every comparison in both
+  orders and ``combine_votes`` resolves a split by the score deltas, then confidence, else 0.5.
+
+``sentinel_accuracy`` reports ``prior_A`` (the share of asks that chose A; 0.5 is unbiased on
+balanced asks) next to ``by_side``.
 
 **What decides:** the pairwise votes. The 1-10 scores are only reported.
 
@@ -98,6 +120,12 @@ DEFAULT_PANEL = {
     "sentinel_min_diff": 0.006,   # share of the view's pixels the defect must change, at least
     "sentinel_fit_min_diff": 0.12,  # the same for fit-and-centre (a whole-design change)
     "sentinel_small_min_diff": 0.0005,  # the same for the report-only small defects (subtle by design)
+    # position bias (round 7): in r6 the cursor judge chose the good side 19/19 when it sat on A
+    # and 11/21 when it sat on B
+    "prompt": "v2",          # v2: describe each image on its own before choosing; v1: the r4-r6 prompt
+    "balance": True,         # per family and batch, exactly half of each ask kind with x on A
+    "orders": 1,             # 2: each family asks every comparison in both orders (``family_vote``)
+    "mat": True,             # show every image on a gray mat, offset differently per image (``MAT``)
 }
 PANEL_KEYS = set(DEFAULT_PANEL)
 
@@ -106,7 +134,7 @@ RUBRIC = """  - No unwanted collisions: overlaps are fine when they're intention
   - It stays on brand: colours, fonts, and the logo survive the resize intact and in proportion.
   - It looks intentional: things line up, spacing is even, the most important element still stands out, pictures keep their proportions."""
 
-PROMPT = """You judge a design-resize competition. A resize engine re-lays out a design for a new canvas size; pictures are never regenerated, only moved, scaled or cropped, and text may change size but never wording or font.
+PROMPT_V1 = """You judge a design-resize competition. A resize engine re-lays out a design for a new canvas size; pictures are never regenerated, only moved, scaled or cropped, and text may change size but never wording or font.
 
 The rubric (from the challenge brief):
 {rubric}
@@ -129,6 +157,73 @@ Forced choice: always "A" or "B", even when they look alike. Also score each sid
 
 Reply with exactly one JSON object and nothing else, with one entry per comparison id:
 {{"{first}": {{"collisions": "A", "readable": "A", "brand": "B", "intentional": "A", "overall": "A", "confidence": 2, "scores": {{"A": {{"collisions": 7, "readable": 8, "brand": 9, "intentional": 6, "overall": 7}}, "B": {{"collisions": 6, "readable": 8, "brand": 9, "intentional": 5, "overall": 6}}}}, "why": "<at most 20 words naming the decisive difference>"}}{more}}}"""
+
+PROMPT_V2 = """You judge a design-resize competition. A resize engine re-lays out a design for a new canvas size; pictures are never regenerated, only moved, scaled or cropped, and text may change size but never wording or font.
+
+The rubric (from the challenge brief):
+{rubric}
+
+There are {n} independent comparisons. Each has three images:
+  REF  the original design (what the designer intended)
+  A    one resize of REF to a new canvas
+  B    another resize of REF to the same canvas
+{open_line}
+{items}
+Open nothing else and run nothing else. Judge only what you see; do not guess where a version came from. Judge every comparison on its own.
+
+The labels A and B are assigned at random: in half of the comparisons the better resize is A, in the other half B. Position tells you nothing.
+
+Take the comparisons one at a time, in the order listed: open one comparison's three images and settle its verdict before you open the next comparison's images, and file each verdict under its own comparison id. Several comparisons may share a REF; they are still separate.
+
+For each comparison, first look at A on its own and write what you see in it: which of REF's texts, pictures and logo are there, whether any text is cut off at an edge or by another element, and what overlaps. Then do the same for B, as carefully as for A. Only then compare, per criterion:
+  collisions   unwanted overlaps; text on a busy image
+  readable     text large enough, enough contrast, nothing cut off
+  brand        colours, fonts and logo intact and in proportion
+  intentional  alignment, even spacing, the most important element stands out, picture proportions
+  overall      which one is better on the whole rubric
+Forced choice: always "A" or "B", even when they look alike. Also score each side 1-10 per criterion (10 = a demanding designer would ship it as is), scoring each side for what you wrote about it. confidence: 1 coin flip, 2 clear, 3 obvious.
+
+Reply with exactly one JSON object and nothing else, with one entry per comparison id:
+{{"{first}": {{"A_file": "{first_a}", "seen_A": "<at most 25 words: what A shows, what is cut or overlapping>", "seen_B": "<the same for B>", "collisions": "A", "readable": "A", "brand": "B", "intentional": "A", "overall": "A", "confidence": 2, "scores": {{"A": {{"collisions": 7, "readable": 8, "brand": 9, "intentional": 6, "overall": 7}}, "B": {{"collisions": 6, "readable": 8, "brand": 9, "intentional": 5, "overall": 6}}}}, "why": "<at most 20 words naming the decisive difference>"}}{more}}}"""
+
+PROMPTS = {"v1": PROMPT_V1, "v2": PROMPT_V2}
+
+MAT_LINE = ("Every image sits on a plain gray mat with a thin dark line around its canvas; the mat is not part of "
+            "the design, and its width means nothing. Text running into the dark line is cut off at the canvas edge.\n")
+
+# Mat padding (left, top, right, bottom) in pixels of the view. The cursor judge read the second
+# of two near-identical images as only what differed from the first (r7 probe: the full good
+# design shown as B was described as "only the headline remains; no logo, subtitle or button"),
+# which is the r6 "position bias". Shifting each image's pixel grid by a different offset ended
+# it in the probe. REF, A and B each get a different offset; which of A and B gets which is
+# random per ask, so neither side is marked.
+MAT_LO, MAT_HI = 10, 23
+MAT_PADS = {"ref": (MAT_HI, MAT_LO, MAT_LO, MAT_HI), "x": (MAT_LO, MAT_LO, MAT_HI, MAT_HI),
+            "y": (MAT_HI, MAT_HI, MAT_LO, MAT_LO)}
+MAT_FILL, MAT_LINE_RGB = (128, 128, 128), (24, 24, 24)
+
+
+def matted(src: Path, pads: Tuple[int, int, int, int], out_dir: Path) -> Path:
+    """``src`` on a gray mat padded by ``pads`` (left, top, right, bottom), with a 1 px dark line
+    just outside the canvas. Cached next to the views; the design's own pixels are untouched."""
+    from PIL import Image, ImageDraw
+
+    src = Path(src)
+    l, t, r, b = pads
+    tag = hashlib.sha256(str(src.resolve()).encode()).hexdigest()[:8]
+    out = Path(out_dir) / f"{src.stem}.{tag}.mat{l}-{t}-{r}-{b}.png"
+    if out.exists():
+        return out
+    with Image.open(src) as im:
+        im = im.convert("RGB")
+        w, h = im.size
+        m = Image.new("RGB", (w + l + r, h + t + b), MAT_FILL)
+        ImageDraw.Draw(m).rectangle([l - 1, t - 1, l + w, t + h], outline=MAT_LINE_RGB)
+        m.paste(im, (l, t))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    m.save(out)
+    return out
+PROMPT = PROMPT_V1  # the r4-r6 prompt, kept under its old name
 
 OPEN_LINE = {
     "claude": "Read every image below with the Read tool (several files per call is fine).",
@@ -182,16 +277,18 @@ def agent_calls_today(day: Optional[str] = None) -> int:
     return n
 
 
-def prompt_for(items: List[dict], cli: str = "claude") -> str:
+def prompt_for(items: List[dict], cli: str = "claude", version: str = "v1", mat: bool = False) -> str:
     """One call's prompt: ``items`` are dicts with id, ref, A, B (paths). The ``agent`` CLI runs
-    from the asks folder and opens files by name; ``claude`` reads absolute paths."""
+    from the asks folder and opens files by name; ``claude`` reads absolute paths. ``version``
+    picks the prompt (``PROMPTS``); ``mat`` explains the mats (``matted``)."""
     def p(x):
         return Path(x).name if cli == "agent" else str(x)
 
     lines = "\n".join(f"  {it['id']}:  REF {p(it['ref'])}   A {p(it['A'])}   B {p(it['B'])}" for it in items)
     more = "".join(f', "{it["id"]}": {{...}}' for it in items[1:3]) + (", ..." if len(items) > 3 else "")
-    return PROMPT.format(rubric=RUBRIC, n=len(items), open_line=OPEN_LINE.get(cli, OPEN_LINE["claude"]),
-                         items=lines, first=items[0]["id"], more=more)
+    open_line = OPEN_LINE.get(cli, OPEN_LINE["claude"]) + ("\n" + MAT_LINE.rstrip("\n") if mat else "")
+    return PROMPTS[version].format(rubric=RUBRIC, n=len(items), open_line=open_line,
+                         items=lines, first=items[0]["id"], first_a=Path(items[0]["A"]).name, more=more)
 
 
 def parse_reply(r) -> Optional[dict]:
@@ -218,12 +315,17 @@ def parse_reply(r) -> Optional[dict]:
         except (KeyError, TypeError, ValueError):
             pass
     out["why"] = str(r.get("why", ""))[:200]
+    for s in "AB":
+        if r.get(f"seen_{s}"):
+            out[f"seen_{s}"] = str(r[f"seen_{s}"])[:240]
     return out
 
 
-def parse_batch(text: str, ids: List[str]) -> Dict[str, Optional[dict]]:
+def parse_batch(text: str, ids: List[str], a_files: Optional[Dict[str, str]] = None) -> Dict[str, Optional[dict]]:
     """Per comparison id, its verdict or None. Accepts an object keyed by id, a list of objects
-    carrying ``id``, and (for a batch of one) a bare verdict."""
+    carrying ``id``, and (for a batch of one) a bare verdict. ``a_files`` (id -> the A image's file
+    name): an entry whose echoed ``A_file`` names another file is None, since the judge filed a
+    verdict under the wrong comparison (r7: Claude described comparison k+1 under id k)."""
     out: Dict[str, Optional[dict]] = {i: None for i in ids}
     if not text or "{" not in text:
         return out
@@ -239,10 +341,14 @@ def parse_batch(text: str, ids: List[str]) -> Dict[str, Optional[dict]]:
         j = {str(x.get("id")): x for x in j if isinstance(x, dict)}
     if not isinstance(j, dict):
         return out
+    def aligned(i, r):
+        echo = r.get("A_file") if isinstance(r, dict) else None
+        return not (a_files and echo and i in a_files and Path(str(echo)).name != Path(a_files[i]).name)
+
     if len(ids) == 1 and ids[0] not in j and parse_reply(j):
-        return {ids[0]: parse_reply(j)}
+        return {ids[0]: parse_reply(j) if aligned(ids[0], j) else None}
     for i in ids:
-        if i in j:
+        if i in j and aligned(i, j[i]):
             out[i] = parse_reply(j[i])
     return out
 
@@ -322,6 +428,60 @@ def _other(side: str) -> str:
     return "B" if side == "A" else "A"
 
 
+def spread_chunks(ids: List[str], n: int, group: Callable[[str], str]) -> List[List[str]]:
+    """``ids`` in calls of at most ``n``, as few calls as plain chunking, keeping asks of one
+    ``group`` (the same REF) in different calls where the counts allow: a judge reading two
+    comparisons of one design in one call mixed their verdicts up (r7)."""
+    k = max(1, math.ceil(len(ids) / max(1, n)))
+    by: Dict[str, List[str]] = {}
+    for a in ids:
+        by.setdefault(group(a), []).append(a)
+    out: List[List[str]] = [[] for _ in range(k)]
+    i = 0
+    for g in sorted(by, key=lambda g: -len(by[g])):  # largest groups first, round robin
+        for a in by[g]:
+            for _ in range(k):  # the next call with room
+                if len(out[i % k]) < n:
+                    break
+                i += 1
+            out[i % k].append(a)
+            i += 1
+    return [c for c in out if c]
+
+
+def balanced_side(seed, gate_id: str, kind: str, batch, i: int) -> str:
+    """The side x takes in the ``i``-th comparison of ``kind`` in ``batch``: each consecutive
+    pair of comparisons holds one A and one B, in a seeded random order, so any prefix is
+    balanced to within one and an even count is exactly half A."""
+    first = _seeded(seed, gate_id, "balanced", kind, batch, i // 2).choice("AB")
+    return first if i % 2 == 0 else _other(first)
+
+
+def combine_votes(votes: List[Optional[Dict[str, float]]], deltas: List[Optional[Dict[str, float]]],
+                  confs: List[int]) -> Optional[Dict[str, float]]:
+    """One family's vote on one comparison from its asks in different orders (``orders`` 2).
+    Per criterion the mean of the asks' votes (1 = x); where they split, the side the 1-10 score
+    deltas favour summed over the asks, then the more confident ask (overall only: confidence is
+    per comparison), else 0.5. A position-biased judge splits rather than voting twice for one
+    side, and the split goes to the ask that saw the difference more clearly."""
+    got = [(v, d, c) for v, d, c in zip(votes, deltas, confs) if v]
+    if not got:
+        return None
+    out = {}
+    for crit in CRITERIA:
+        m = sum(v[crit] for v, _, _ in got) / len(got)
+        if len(got) > 1 and 0 < m < 1:
+            ds = sum(d[crit] for _, d, _ in got if d and crit in d)
+            if ds:
+                m = 1.0 if ds > 0 else 0.0
+            else:
+                # confidence for x: an ask's confidence counts for the side it chose
+                cx = sum(c if v[crit] == 1.0 else -c for v, _, c in got)
+                m = 1.0 if cx > 0 else 0.0 if cx < 0 else 0.5
+        out[crit] = m
+    return out
+
+
 # ---- tile scores -----------------------------------------------------------------------------
 
 def score_tile(rec: dict, active: List[str]) -> Optional[dict]:
@@ -356,9 +516,13 @@ class Panel:
     """Asks, labels and views of one gate run. ``private`` holds everything that ties an ask to a
     tile (never shown to a judge); the judge folder holds only the blind images."""
 
-    def __init__(self, gate_id: str, private: Path, cfg: Optional[dict] = None, judge=None, seed: int = 0):
+    def __init__(self, gate_id: str, private: Path, cfg: Optional[dict] = None, judge=None, seed: int = 0,
+                 draw_id: Optional[str] = None):
         self.cfg = dict(DEFAULT_PANEL, **(cfg or {}))
         self.gate_id, self.seed = gate_id, seed
+        # what seeds the sentinel draw and the sides (default: the gate id); sentinel_check's
+        # --sample reuses another check's draw, so two protocols meet the same sentinels
+        self.draw_id = draw_id or gate_id
         self.dir = judge_root() / gate_id
         self.ask_dir = self.dir / "asks"
         self.ask_dir.mkdir(parents=True, exist_ok=True)
@@ -410,7 +574,7 @@ class Panel:
 
     def _add_ask(self, a: dict, write: bool = True) -> None:
         self.asks[a["ask"]] = a
-        self._index.setdefault((a["kind"], a["key"], a["family"]), []).append(a["ask"])
+        self._index.setdefault((a["kind"], a["key"], a["family"], int(a.get("order", 0))), []).append(a["ask"])
         if write:
             self._append("asks.jsonl", a)
 
@@ -443,25 +607,50 @@ class Panel:
 
     # ---- asks ----------------------------------------------------------------------------------
 
-    def pair(self, kind: str, key: str, ref: Path, x: Path, y: Path, family: str, side: str, batch: int) -> str:
+    def pair(self, kind: str, key: str, ref: Path, x: Path, y: Path, family: str, side: str, batch: int,
+             order: int = 0) -> str:
         """One ask of x against y for ``family`` with x on ``side``. Reuses the ask already made
-        for (kind, key, family), so a resumed run asks nothing twice."""
-        have = self._index.get((kind, key, family))
+        for (kind, key, family, order), so a resumed run asks nothing twice. ``order`` 1 is the
+        same comparison asked again with the sides swapped (``orders`` 2)."""
+        have = self._index.get((kind, key, family, order))
         if have:
             return have[0]
         from tools.judge.views import blind_ask
 
+        if self.cfg.get("mat"):
+            md = self.views_dir / "mat"
+            xm, ym = (("x", "y") if _seeded(self.seed, self.draw_id, "mat", kind, key, family, order).random() < 0.5
+                      else ("y", "x"))
+            ref, x, y = (matted(ref, MAT_PADS["ref"], md), matted(x, MAT_PADS[xm], md), matted(y, MAT_PADS[ym], md))
         a, b = (x, y) if side == "A" else (y, x)
         ask = blind_ask(ref, a, b, self.ask_dir, self.rng, set(self.asks))
         rec = {"ask": ask["id"], "kind": kind, "key": key, "x_side": side, "family": family,
                "model": self.roster[family]["model"], "batch": batch,
-               "ref": str(ask["ref"]), "A": str(ask["A"]), "B": str(ask["B"])}
+               "ref": str(ask["ref"]), "A": str(ask["A"]), "B": str(ask["B"]), "ref_view": str(ref)}
+        if order:
+            rec["order"] = order
         self._add_ask(rec)
         return ask["id"]
 
-    def _sides(self, kind: str, key: str, fams: List[str]) -> Dict[str, str]:
-        """Per family, the side x sits on: random per key, and opposite for the two families."""
-        r = _seeded(self.seed, self.gate_id, "order", kind, key)
+    def asks_for(self, kind: str, key: str, ref: Path, x: Path, y: Path, family: str, side: str,
+                 batch: int) -> List[str]:
+        """Every ask of one comparison for ``family``: x on ``side``, and with ``orders`` 2 the
+        same comparison again with x on the other side."""
+        ids = [self.pair(kind, key, ref, x, y, family, side, batch)]
+        if int(self.cfg.get("orders") or 1) >= 2:
+            ids.append(self.pair(kind, key, ref, x, y, family, _other(side), batch, order=1))
+        return ids
+
+    def _sides(self, kind: str, key: str, fams: List[str], slot: Optional[tuple] = None) -> Dict[str, str]:
+        """Per family, the side x sits on, opposite for the two families. With ``balance`` and a
+        ``slot`` (batch, index of the comparison in its kind and batch) the side follows
+        ``balanced_side``, so each family gets exactly half of a batch's asks of a kind with x on
+        A (to within one); which family sees which order is still random per comparison.
+        Otherwise random per key (the r4-r6 protocol)."""
+        if self.cfg.get("balance") and slot is not None:
+            first = balanced_side(self.seed, self.draw_id, kind, slot[0], slot[1])
+            return {f: (first if i % 2 == 0 else _other(first)) for i, f in enumerate(fams)}
+        r = _seeded(self.seed, self.draw_id, "order", kind, key)
         first = r.choice("AB")
         order = list(fams)
         r.shuffle(order)
@@ -491,8 +680,8 @@ class Panel:
             t0 = time.time()
             cid = f"{fam}.{len(self.calls)}.{os.getpid()}.{threading.get_ident() % 100000}.{int(t0 * 1000) % 10**8}"
             try:
-                text, u = self.judges[fam](prompt_for(its, cli), model)
-                got = parse_batch(text, left)
+                text, u = self.judges[fam](prompt_for(its, cli, self.cfg.get("prompt") or "v1", bool(self.cfg.get("mat"))), model)
+                got = parse_batch(text, left, {a: self.asks[a]["A"] for a in left})
                 err = None
             except CapReached:
                 raise
@@ -532,9 +721,11 @@ class Panel:
         n = max(1, int(self.cfg["batch"]))
         chunks: Dict[str, List[Tuple[str, List[str]]]] = {c: [] for c in CLIS}
         for fam in self.roster:
-            ids = [a for a in todo if self.asks[a]["family"] == fam]
-            for i in range(0, len(ids), n):
-                chunks[self.roster[fam]["cli"]].append((fam, ids[i: i + n]))
+            # the second order of a comparison never shares a call with the first
+            for o in sorted({int(self.asks[a].get("order", 0)) for a in todo}):
+                ids = [a for a in todo if self.asks[a]["family"] == fam and int(self.asks[a].get("order", 0)) == o]
+                for c in spread_chunks(ids, n, lambda a: self.asks[a].get("ref_view") or a):
+                    chunks[self.roster[fam]["cli"]].append((fam, c))
         abort = threading.Event()
         caps: List[CapReached] = []
 
@@ -584,6 +775,22 @@ class Panel:
         sc = lab["label"]["scores"]
         return {c: sc[xs][c] - sc[_other(xs)][c] for c in CRITERIA}
 
+    def family_vote(self, ask_ids: Iterable[Optional[str]]) -> Optional[Dict[str, float]]:
+        """One family's vote on one comparison from all its asks (``combine_votes``); a single
+        ask's vote as is."""
+        ids = [a for a in ask_ids if a]
+        if len(ids) == 1:
+            return self.vote(ids[0])
+        confs = [int((self.labels.get(a) or {}).get("label", {}).get("confidence", 1))
+                 if (self.labels.get(a) or {}).get("ok") else 0 for a in ids]
+        return combine_votes([self.vote(a) for a in ids], [self.delta(a) for a in ids], confs)
+
+    def family_delta(self, ask_ids: Iterable[Optional[str]]) -> Optional[Dict[str, float]]:
+        ds = [d for d in (self.delta(a) for a in ask_ids if a) if d]
+        if not ds:
+            return None
+        return {c: sum(d[c] for d in ds) / len(ds) for c in CRITERIA}
+
     # ---- a batch of changed tiles ------------------------------------------------------------
 
     def tile_views(self, t: dict, reencode_cand: bool = False) -> Tuple[Path, Path, Path]:
@@ -603,7 +810,7 @@ class Panel:
         if not pool or n <= 0:
             return out
         ask_kind = "sentinel_small" if small else "sentinel"
-        rng = _seeded(self.seed, self.gate_id, "small_sentinels" if small else "sentinels", batch)
+        rng = _seeded(self.seed, self.draw_id, "small_sentinels" if small else "sentinels", batch)
         kinds = list(self.cfg["report_kinds"] if small else self.cfg["sentinel_kinds"])
         screen = bool(self.cfg.get("sentinel_screen"))
         made, tries, seen = 0, 0, set()
@@ -638,8 +845,8 @@ class Panel:
             ref = self.view(t["source"], f"{n0}.src", kit)
             gv = self.view(good, f"{n0}.good", kit)
             bv = self.view(bad, f"{'small' if small else 'sent'}.{key}", kit)
-            for f, side in self._sides(ask_kind, key, fams).items():
-                out[f].append(self.pair(ask_kind, key, ref, gv, bv, f, side, batch))
+            for f, side in self._sides(ask_kind, key, fams, (batch, made)).items():
+                out[f] += self.asks_for(ask_kind, key, ref, gv, bv, f, side, batch)
             made += 1
         return out
 
@@ -675,35 +882,55 @@ class Panel:
         why, _ = SN.pixel_ok(gv, bv, good["canvas"], SN.region_of(kind, moved), md)
         return why
 
+    def _comparisons(self, ask_ids: Iterable[str]) -> Dict[tuple, List[str]]:
+        """Ask ids grouped per comparison and family: (kind, key, family) -> ids in order."""
+        out: Dict[tuple, List[str]] = {}
+        for aid in dict.fromkeys(ask_ids):
+            a = self.asks[aid]
+            out.setdefault((a["kind"], a["key"], a["family"]), []).append(aid)
+        return out
+
     def sentinel_accuracy(self, ask_ids: Iterable[str]) -> dict:
-        """Overall-vote accuracy on sentinel asks, in total and per perturbation kind."""
+        """Overall-vote accuracy on sentinel comparisons, in total and per perturbation kind. With
+        ``orders`` 2 a comparison's two asks count once (``family_vote``; a split left at 0.5
+        counts half). ``by_side`` and ``prior_A`` are per ask: accuracy by the good side's
+        position and the share of asks that chose A (0.5 for an unbiased judge on balanced asks)."""
         by: Dict[str, List[float]] = {}
         side: Dict[str, List[float]] = {}
-        for aid in ask_ids:
-            v = self.vote(aid)
+        chose_a: List[float] = []
+        raw: List[float] = []
+        for (_, key, _), ids in self._comparisons(ask_ids).items():
+            v = self.family_vote(ids)
             if v:
-                by.setdefault(self.asks[aid]["key"].rsplit(".", 1)[-1], []).append(v["overall"])
-                side.setdefault(self.asks[aid]["x_side"], []).append(v["overall"])
+                by.setdefault(key.rsplit(".", 1)[-1], []).append(v["overall"])
+            for aid in ids:
+                w = self.vote(aid)
+                if w:
+                    xs = self.asks[aid]["x_side"]
+                    side.setdefault(xs, []).append(w["overall"])
+                    raw.append(w["overall"])
+                    chose_a.append(float((xs == "A") == (w["overall"] == 1.0)))
         allv = [x for v in by.values() for x in v]
-        return {"n": len(allv), "correct": int(sum(allv)), "accuracy": (sum(allv) / len(allv)) if allv else None,
+        return {"n": len(allv), "correct": round(sum(allv), 2) if allv and sum(allv) % 1 else int(sum(allv)),
+                "accuracy": (sum(allv) / len(allv)) if allv else None,
                 "by_kind": {k: round(sum(v) / len(v), 3) for k, v in sorted(by.items())},
                 # the good side's position: a judge that misreads which image is B shows up here
-                "by_side": {k: round(sum(v) / len(v), 3) for k, v in sorted(side.items())}}
+                "by_side": {k: round(sum(v) / len(v), 3) for k, v in sorted(side.items())},
+                "asks": len(raw), "ask_accuracy": round(sum(raw) / len(raw), 3) if raw else None,
+                "prior_A": round(sum(chose_a) / len(chose_a), 3) if chose_a else None}
 
     def sentinel_kinds(self) -> Dict[str, Dict[str, dict]]:
         """Per ask kind (``sentinel``, ``sentinel_small``), family and perturbation kind: how many
         sentinel asks were answered and how many chose the good side (overall)."""
         out: Dict[str, Dict[str, dict]] = {}
-        for aid, a in self.asks.items():
-            if a["kind"] not in ("sentinel", "sentinel_small"):
-                continue
-            v = self.vote(aid)
+        sent = [aid for aid, a in self.asks.items() if a["kind"] in ("sentinel", "sentinel_small")]
+        for (kind, key, fam), ids in self._comparisons(sent).items():
+            v = self.family_vote(ids)
             if not v:
                 continue
-            m = out.setdefault(a["kind"], {}).setdefault(a["family"], {}).setdefault(
-                a["key"].rsplit(".", 1)[-1], {"n": 0, "correct": 0})
+            m = out.setdefault(kind, {}).setdefault(fam, {}).setdefault(key.rsplit(".", 1)[-1], {"n": 0, "correct": 0})
             m["n"] += 1
-            m["correct"] += int(v["overall"])
+            m["correct"] += v["overall"]
         return out
 
     def judge_tiles(self, tiles: List[dict], batch: int, pool: Optional[List[dict]] = None,
@@ -713,13 +940,13 @@ class Panel:
         records (``votes`` per family and tie-break; score them with ``score_tiles``) and each
         family's sentinel accuracy on this batch."""
         fams = list(families) if families is not None else list(self.families)
-        first: Dict[str, Dict[str, str]] = {}
+        first: Dict[str, Dict[str, List[str]]] = {}
         views: Dict[str, tuple] = {}
-        for t in tiles:
+        for i, t in enumerate(tiles):
             k = f"{t['set']}/{t['tile']}"
             views[k] = ref, bv, cv = self.tile_views(t, reencode_cand)
-            first[k] = {f: self.pair("pair", k, ref, cv, bv, f, side, batch)
-                        for f, side in self._sides("pair", k, fams).items()}
+            first[k] = {f: self.asks_for("pair", k, ref, cv, bv, f, side, batch)
+                        for f, side in self._sides("pair", k, fams, (batch, i)).items()}
         n_sent = 0
         if share > 0:
             # per family as many sentinels as a two-asks-per-tile panel at this share
@@ -728,30 +955,33 @@ class Panel:
         sent = self.sentinels(src, n_sent, batch, fams)
         small = self.sentinels(src, math.ceil(float(self.cfg.get("small_sentinels", 0) or 0) * n_sent), batch,
                                fams, small=True)
-        order = ([a for v in first.values() for a in v.values()] + [a for v in sent.values() for a in v]
+        order = ([a for v in first.values() for ids in v.values() for a in ids] + [a for v in sent.values() for a in v]
                  + [a for v in small.values() for a in v])
-        _seeded(self.seed, self.gate_id, "mix", batch).shuffle(order)
+        _seeded(self.seed, self.draw_id, "mix", batch).shuffle(order)
         self.run(order)
         tb: Dict[str, str] = {}
         if len(fams) >= 2 and TIEBREAK in self.roster:
             for k, d in first.items():
-                v = [self.vote(d[f]) for f in fams[:2]]
+                v = [self.family_vote(d[f]) for f in fams[:2]]
                 if v[0] and v[1] and v[0]["overall"] != v[1]["overall"]:
                     ref, bv, cv = views[k]
-                    side = _seeded(self.seed, self.gate_id, "tiebreak", k).choice("AB")
+                    if self.cfg.get("balance"):
+                        side = balanced_side(self.seed, self.draw_id, "tiebreak", batch, len(tb))
+                    else:
+                        side = _seeded(self.seed, self.draw_id, "tiebreak", k).choice("AB")
                     tb[k] = self.pair("pair", k, ref, cv, bv, TIEBREAK, side, batch)
             self.run(list(tb.values()))
         recs = []
         for t in tiles:
             k = f"{t['set']}/{t['tile']}"
-            ids = dict(first[k], **({TIEBREAK: tb[k]} if k in tb else {}))
-            votes = {f: self.vote(a) for f, a in ids.items()}
+            ids = dict(first[k], **({TIEBREAK: [tb[k]]} if k in tb else {}))
+            votes = {f: self.family_vote(a) for f, a in ids.items()}
             if not any(votes.get(f) for f in fams):
                 continue  # every ask failed: no evidence either way
             recs.append({"tile": t["tile"], "set": t["set"], "design": t["design"], "tier": t["tier"],
                          "bleed": t.get("bleed"), "votes": {f: v for f, v in votes.items() if v},
-                         "deltas": {f: d for f, d in ((f, self.delta(a)) for f, a in ids.items()) if d},
-                         "asks": len(ids), "tiebreak": k in tb})
+                         "deltas": {f: d for f, d in ((f, self.family_delta(a)) for f, a in ids.items()) if d},
+                         "asks": sum(len(a) for a in ids.values()), "tiebreak": k in tb})
         asked = order + list(tb.values())
         return {"tiles": recs,
                 "sentinels": {f: self.sentinel_accuracy(sent[f]) for f in fams},
@@ -764,18 +994,19 @@ class Panel:
         opposite orders. Returns per item the share of votes for x on overall."""
         fams = list(families) if families is not None else list(self.families)
         ids: Dict[str, List[str]] = {}
-        for it in items:
+        for i, it in enumerate(items):
             kit = it.get("kit")
             n = f"{kind}.{it['key']}"
             ref = self.view(it["source"], f"{n}.src", kit)
             xv = it["x_png"] if it.get("x_png") else self.view(it["x"], f"{n}.x", kit)
             yv = it["y_png"] if it.get("y_png") else self.view(it["y"], f"{n}.y", kit)
-            ids[it["key"]] = [self.pair(kind, it["key"], ref, Path(xv), Path(yv), f, side, batch)
-                              for f, side in self._sides(kind, it["key"], fams).items()]
+            ids[it["key"]] = [a for f, side in self._sides(kind, it["key"], fams, (batch, i)).items()
+                              for a in self.asks_for(kind, it["key"], ref, Path(xv), Path(yv), f, side, batch)]
         self.run([a for v in ids.values() for a in v])
         out = []
         for k, v in ids.items():
-            o = self.votes(v)["overall"]
+            fv = [self.family_vote(ids_f) for ids_f in self._comparisons(v).values()]
+            o = [x["overall"] for x in fv if x]
             if o:
                 out.append({"key": k, "x_share": sum(o) / len(o)})
         return out
