@@ -146,8 +146,8 @@ def validate_panel(cfg: dict) -> List[str]:
     """The two-family protocol (loop/STEERING.md S10): exactly two judge families, each with a
     known CLI and a model, on different CLIs and different models (one Claude, one Cursor); a
     tie-break judge on a third model; 1-12 comparisons per call. Every ``agent`` (Cursor) judge
-    must be on the S14 allow-list (``tools.gate.panel.CURSOR_ALLOWED``)."""
-    from tools.gate.panel import CLIS, DEFAULT_PANEL, PANEL_KEYS, TIEBREAK
+    must be in the S14 included pool (``tools.gate.panel.CURSOR_POOL``)."""
+    from tools.gate.panel import CLIS, CURSOR_POOL, DEFAULT_PANEL, PANEL_KEYS, TIEBREAK, cursor_model_ok
 
     errs = []
     bad = set(cfg) - PANEL_KEYS
@@ -172,12 +172,10 @@ def validate_panel(cfg: dict) -> List[str]:
         errs.append("panel tiebreak needs a cli and a model")
     elif isinstance(fams, dict) and tb.get("model") in {(f or {}).get("model") for f in fams.values()}:
         errs.append("the tie-break judge must be a third model")
-    from tools.gate.panel import cursor_model_ok
-
     for name, f in list((fams or {}).items() if isinstance(fams, dict) else []) + [(TIEBREAK, tb)]:
         if isinstance(f, dict) and f.get("cli") == "agent" and not cursor_model_ok(f.get("model")):
-            errs.append(f"panel {name} model {f.get('model')!r} is not an included Cursor model (S14: "
-                        "grok-4.7-*, cursor-grok-4.6-*, cursor-grok-4.5-high, composer-2.5; no -fast, no auto)")
+            errs.append(f"panel {name} model {f.get('model')!r} is not an included Cursor model: not in the "
+                        f"plan's included pool ({', '.join(sorted(CURSOR_POOL))}); S14, no -fast, no auto")
     from tools.judge.perturb import PERTURBATIONS, SMALL_DEFECTS
 
     known = set(PERTURBATIONS) | set(SMALL_DEFECTS) | {"fit_centre"}

@@ -11,7 +11,7 @@ Every judge call is one fresh CLI process run from the gate's judge folder
   only on a split.
 
 **S14 (2026-10-25): through Cursor only the models the subscription includes.**
-``CURSOR_ALLOWED`` is the allow-list (``grok-4.7-low|medium|high|xhigh``,
+``CURSOR_POOL`` is the allow-list, matched exactly and backed by ``CURSOR_REFUSED_RE`` (``grok-4.7-low|medium|high|xhigh``,
 ``cursor-grok-4.6-low|medium|high|xhigh``, ``cursor-grok-4.5-high``, ``composer-2.5``); never a
 ``-fast`` variant, never ``auto``, never GPT, Gemini or Claude through Cursor (those bill
 on-demand once the "Other Models" pool is spent). ``require_cursor_model`` raises
@@ -110,6 +110,12 @@ from tools.gate.baselines import fit_centre
 CRITERIA = ["collisions", "readable", "brand", "intentional", "overall"]
 TIEBREAK = "tiebreak"
 CLIS = ("claude", "agent")
+# The models Vlatko's Cursor plan includes ("Cursor Models": Composer and Cursor's Grok). GPT, Gemini
+# and Claude through Cursor bill on-demand once the "Other Models" pool runs out (10-25), `auto` can
+# route to them, and -fast variants are not in the pool (loop/STEERING.md S14).
+CURSOR_POOL = frozenset({"composer-2.5", "grok-4.7-low", "grok-4.7-medium", "grok-4.7-high", "grok-4.7-xhigh",
+                         "cursor-grok-4.6-low", "cursor-grok-4.6-medium", "cursor-grok-4.6-high",
+                         "cursor-grok-4.6-xhigh", "cursor-grok-4.5-high"})
 
 DEFAULT_PANEL = {
     "protocol": "two-family",
@@ -247,9 +253,9 @@ LIMIT_RE = re.compile(r"rate.?limit|usage limit|quota|too many requests|\b429\b|
                       r"out of (?:credits|usage|requests)|hit your (?:\w+ )?limit|spend(?:ing)? limit|"
                       r"on.demand|usage.based|upgrade (?:your plan|to)", re.I)
 
-# S14: the only models the gate may ask through the Cursor CLI (the subscription's included pool)
-CURSOR_ALLOWED = re.compile(r"^(?:grok-4\.7-(?:low|medium|high|xhigh)|cursor-grok-4\.6-(?:low|medium|high|xhigh)|"
-                            r"cursor-grok-4\.5-high|composer-2\.5)$")
+# S14 belt and braces: whatever CURSOR_POOL ever grows to hold, these never run through Cursor
+# (a -fast variant, auto routing, or another vendor's model billed on-demand).
+CURSOR_REFUSED_RE = re.compile(r"-fast\b|^auto$|gpt|gemini|claude|sonnet|opus|o\d-|\s", re.I)
 
 
 class ModelNotAllowed(ValueError):
@@ -257,7 +263,7 @@ class ModelNotAllowed(ValueError):
 
 
 def cursor_model_ok(model) -> bool:
-    return isinstance(model, str) and bool(CURSOR_ALLOWED.match(model))
+    return isinstance(model, str) and model in CURSOR_POOL and not CURSOR_REFUSED_RE.search(model)
 
 
 def require_cursor_model(model) -> str:
@@ -267,6 +273,8 @@ def require_cursor_model(model) -> str:
                               "cursor-grok-4.6-low|medium|high|xhigh, cursor-grok-4.5-high, composer-2.5; "
                               "no -fast, no auto, no GPT/Gemini/Claude through Cursor)")
     return model
+
+
 CLAUDE_RETRY_SECS = 3600  # Claude's limits reset on rolling windows, not at UTC midnight
 
 
