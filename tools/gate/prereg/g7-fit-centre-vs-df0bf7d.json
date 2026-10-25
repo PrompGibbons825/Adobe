@@ -13,9 +13,7 @@
   "novel-v5"
  ],
  "null": false,
- "floor": [
-  "tiles"
- ],
+ "floor": [],
  "rule": {},
  "panel": {
   "protocol": "two-family",
