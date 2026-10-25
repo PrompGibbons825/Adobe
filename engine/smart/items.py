@@ -10,6 +10,7 @@ ribbon's bounding box.
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -782,7 +783,8 @@ def _display(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: fl
     return None
 
 
-_REALIZED: Dict[tuple, Optional[Real]] = {}
+_REALIZED: "OrderedDict[tuple, Optional[Real]]" = OrderedDict()
+REALIZED_MAX = 150_000  # least recently used sizes are forgotten past this many (memory stays bounded)
 
 
 def forget_realized() -> None:
@@ -801,9 +803,17 @@ def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF
     key = (id(it), s, max_w, max_h, relax, k, mode, nowrap, ctx.W, ctx.H, ctx.W0, ctx.H0, ctx.display_room,
            ctx.emphasis if heads else 1.0, ctx.measure if it.kind == "text" else 1.0,
            ctx.cta_min if it.role == "cta" else 0.0)
-    if key not in _REALIZED:
-        _REALIZED[key] = _realize(it, s, ctx, max_w, max_h, relax, k, mode, nowrap)
-    return _REALIZED[key]
+    r = _REALIZED.get(key, _MISS)
+    if r is _MISS:
+        r = _REALIZED[key] = _realize(it, s, ctx, max_w, max_h, relax, k, mode, nowrap)
+        if len(_REALIZED) > REALIZED_MAX:
+            _REALIZED.popitem(last=False)
+    else:
+        _REALIZED.move_to_end(key)
+    return r
+
+
+_MISS = object()
 
 
 def _realize(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float, k: float, mode: str,

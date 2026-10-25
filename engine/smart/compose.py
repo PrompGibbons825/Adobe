@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .analyze import Design, Item
 from .geom import Box, el_box, el_visual_box, union_all
 from .items import Ctx, Real, display_size, realize, realize_scaled
-from .layout import Flow, HStack, Laid, Leaf, Node, Padded, VStack, search_scale
+from .layout import BUDGET, BudgetExceeded, Flow, HStack, Laid, Leaf, Node, Padded, VStack, search_scale
 from .structure import dominant_align, lead_text, row_align, rows_for, text_edges
 
 Placement = Tuple[Real, float, float]
@@ -870,7 +870,16 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
                 # emphasis only makes the headline larger: if the plain plan did not fit, neither will it
                 if name in done or (base != name and base not in fitted):
                     continue
-                p = _with_insets(fn, d, c, hidden, name=name, **kw)
+                if BUDGET.economy and name != name.split("~")[0].split("@")[0]:
+                    # short of budget: the plain archetypes only, not their display/measure refinements
+                    continue
+                try:
+                    p = _with_insets(fn, d, c, hidden, name=name, **kw)
+                except BudgetExceeded:
+                    # out of budget: the candidates found so far are the field
+                    if plans:
+                        return plans
+                    raise
                 if p:
                     plans.append(p)
                     fitted.add(name)

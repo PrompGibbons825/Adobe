@@ -10,7 +10,7 @@ from .color import normalize as normalize_colour
 from .compose import Plan, display_room, generate
 from .geom import Box, el_box, rotated_aabb
 from .items import Ctx, forget_realized
-from .layout import PANEL_PAD, panel_pads
+from .layout import BUDGET, PANEL_PAD, panel_pads
 from .score import prune_relaxed, score_plans
 from .textfit import TextStyle, letter_spacing
 
@@ -28,6 +28,7 @@ def plan_design(source: dict, target: dict):
     separate copy. If still nothing passes, this raises and resize() falls
     back to the safe fit-and-centre layout."""
     reason = "no feasible layout"
+    BUDGET.start()  # one work budget for the whole resize (see layout.Budget)
     for lockups in (True, False):
         forget_realized()  # items are keyed by identity: a fresh analysis must not meet stale sizes
         d = analyze(source, lockups=lockups)

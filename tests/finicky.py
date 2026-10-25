@@ -54,6 +54,10 @@ class Case:
     # loop, not fixed yet). The suite reports them as XFAIL and stays green; once the engine
     # passes one, the run reports XPASS and fails, so the mark is removed with the fix.
     xfail: Tuple[str, ...] = ()
+    # Resource budget for one resize (engine robustness, r10): wall seconds and growth of the
+    # process's peak memory. None = not checked.
+    seconds: Optional[float] = None
+    max_mb: Optional[float] = None
 
     @property
     def source(self) -> dict:
@@ -64,11 +68,19 @@ class Case:
         return {"canvas": {"width": self.W, "height": self.H}, "elements": els}
 
     def target(self, name: str) -> dict:
-        w, h = CATALOGUE[name]
+        w, h = _size(name)
         return {"width": w, "height": h}
 
     def must_show(self, name: str) -> Tuple[str, ...]:
-        return self.show + (self.show_roomy if min(CATALOGUE[name]) >= ROOMY_SIDE else ())
+        return self.show + (self.show_roomy if min(_size(name)) >= ROOMY_SIDE else ())
+
+
+def _size(name: str) -> Tuple[int, int]:
+    """A catalogue format, or a bare 'WxH' target."""
+    if name in CATALOGUE:
+        return CATALOGUE[name]
+    w, h = name.split("x")
+    return int(w), int(h)
 
 
 def image(id, x, y, w, h, asset="solstice_bottle.png", z=2, **kw) -> dict:
@@ -374,7 +386,7 @@ def all_of(*checks: Check) -> Check:
 
 
 def cases() -> List[Case]:
-    return _base_cases() + round5_cases() + round7_cases()
+    return _base_cases() + round5_cases() + round7_cases() + round10_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -957,6 +969,42 @@ def round7_cases() -> List[Case]:
                  *button("cta", 340, 860, 400, 90, "Shop now", 28),
              ], targets=SPREAD, show=("headline", "cta_label"),
              check=style_survives("headline", "body", "tag", "cta_label")),
+    ]
+
+
+def deep_panel(rows: int = 6, per: int = 3, W: int = 1080, H: int = 1350) -> List[dict]:
+    """A menu card: a logo, a product shot and one panel holding a headline, ``rows`` rows of
+    ``per`` side-by-side texts and a button, plus a few decorative shapes. Every row of copy is a
+    flex row inside the panel's column, the panel sits in the layout's own row or column, so
+    nested width searches stack three deep (the r9 blow-up class, novel-v5)."""
+    els = [logo(60, 40, 220, 72),
+           image("product", 640, 140, 380, 420),
+           shape("card", 40, 600, W - 80, H - 660, "rgba(43,27,46,0.85)", z=2, corner_radius=24),
+           text("headline", 70, 630, 900, 100, "The summer tasting menu", 64, "Solstice Serif", True, align="left"),
+           shape("rule", 60, 130, 300, 4, GOLD, z=2),
+           shape("dot", 960, 40, 60, 60, GOLD, z=2, kind="ellipse")]
+    cw = (W - 140) // per
+    y = 750
+    for r in range(rows):
+        for k in range(per):
+            els.append(text(f"t{r}_{k}", 70 + k * cw, y, cw - 30, 44, f"Course {r + 1}{'abc'[k % 3]} citrus thyme",
+                            24, bold=(k == 0), align="left" if k == 0 else "right"))
+        y += 70
+    els += button("cta", 70, min(y + 10, H - 150), 360, 70, "Book a table", 26)
+    for i in range(6):  # small decorative ticks along the bottom edge
+        els.append(shape(f"tick{i}", 300 + 120 * i, H - 40, 80, 6, GOLD, z=2))
+    return els
+
+
+def round10_cases() -> List[Case]:
+    """Engine robustness (r10, H17): a design whose layout tree nests flex rows three deep must
+    resize in bounded time and memory, with every hard rule held."""
+    return [
+        Case("deep_panel_rows",
+             "a panel of many side-by-side text rows beside a product, on a 16:9-ish landscape: the "
+             "nested width searches must not blow up (bounded time and memory), and the output is valid",
+             1080, 1350, deep_panel(), targets=("1640x924", "pres-16x9", "leaderboard"),
+             show=("headline", "cta_label"), seconds=60.0, max_mb=1500.0),
     ]
 
 

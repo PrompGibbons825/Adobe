@@ -202,6 +202,53 @@ class Samples(unittest.TestCase):
 
 
 
+class WorkBudget(unittest.TestCase):
+    """The resize's work budget (engine/smart/layout.Budget, r10): the economy layout and the
+    out-of-budget cut-off still give valid output, and a deep design stays bounded."""
+
+    TARGETS = ({"width": 1640, "height": 924}, {"width": 1080, "height": 1350}, {"width": 728, "height": 90})
+
+    def _with(self, **attrs):
+        from engine.smart.layout import Budget
+
+        old = {k: getattr(Budget, k) for k in attrs}
+        for k, v in attrs.items():
+            setattr(Budget, k, v)
+        self.addCleanup(lambda: [setattr(Budget, k, v) for k, v in old.items()])
+
+    def _valid(self, src, tgt):
+        out, fell_back = run(src, tgt)
+        self.assertEqual(hard_rule_errors(src, out, tgt), [])
+        self.assertEqual(sorted(e["id"] for e in out["elements"]), sorted(e["id"] for e in src["elements"]))
+        return out, fell_back
+
+    def test_economy_from_the_start(self):
+        self._with(ECONOMY=0)
+        for name, src in _sources()[:5]:
+            for tgt in self.TARGETS:
+                with self.subTest(design=name, target=tgt):
+                    _, fell_back = self._valid(src, tgt)
+                    self.assertFalse(fell_back)
+
+    def test_budget_spent_early(self):
+        self._with(ECONOMY=2_000, LIMIT=20_000)
+        for name, src in _sources()[:5]:
+            for tgt in self.TARGETS:
+                with self.subTest(design=name, target=tgt):
+                    self._valid(src, tgt)
+
+    def test_deep_design_is_bounded(self):
+        import time
+
+        from tests.finicky import deep_panel
+
+        src = {"canvas": {"width": 1080, "height": 1350}, "elements": deep_panel()}
+        t0 = time.monotonic()
+        _, fell_back = self._valid(src, {"width": 1640, "height": 924})
+        self.assertFalse(fell_back)
+        self.assertLess(time.monotonic() - t0, 60.0)
+
+
 class GeneratedDesigns(unittest.TestCase):
     """Designs the engine was never looked at on (tools.designs, a seed the audit
     does not use): every rule holds and the core message survives everywhere."""

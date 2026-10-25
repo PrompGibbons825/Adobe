@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import json
 import math
+import resource
+import time
 from contextlib import redirect_stderr
 from typing import List, Tuple
 
@@ -22,6 +24,14 @@ def run(src: dict, tgt: dict) -> Tuple[dict, bool]:
     with redirect_stderr(buf):
         out = resize(json.loads(json.dumps(src)), dict(tgt))
     return out, "Traceback" in buf.getvalue()
+
+
+def _peak_mb() -> float:
+    """This process's peak resident memory so far, in MB (Linux reports KB, macOS bytes)."""
+    import sys
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak / (1024.0 * 1024.0) if sys.platform == "darwin" else peak / 1024.0
 
 
 def _visible(e: dict) -> bool:
@@ -75,8 +85,14 @@ def together_errors(case: Case, src: dict, out: dict, roomy: bool = True) -> Lis
 
 def evaluate(case: Case, target: str, render_check: bool = True) -> Tuple[dict, List[str]]:
     src, tgt = case.source, case.target(target)
+    rss0, t0 = _peak_mb(), time.monotonic()
     out, fell_back = run(src, tgt)
+    secs, grew = time.monotonic() - t0, _peak_mb() - rss0
     errs = hard_rule_errors(src, out, tgt)
+    if case.seconds is not None and secs > case.seconds:
+        errs.append(f"took {secs:.0f}s, budget {case.seconds:.0f}s")
+    if case.max_mb is not None and grew > case.max_mb:
+        errs.append(f"peak memory grew {grew:.0f} MB, budget {case.max_mb:.0f} MB")
     if fell_back:
         errs.append("fell back to fit-and-centre")
     else:
