@@ -1236,7 +1236,8 @@ def _thin(rid: str, src: dict, out: dict) -> List[str]:
     if float(o.get("opacity", 1)) <= 0:
         return []
     ratio = (o["width"] / max(1e-6, o["height"])) / (s["width"] / s["height"])
-    if not 0.95 <= ratio <= 1.05 or o["height"] > 8:
+    held = o["height"] <= 1.01 <= s["height"] + 0.01  # S1: a hairline is held at 1 px, not scaled out of sight
+    if not (0.95 <= ratio <= 1.05 or held) or o["height"] > 8:
         return [f"{rid}: rule became {o['width']:.1f}x{o['height']:.1f}"]
     return []
 
