@@ -23,6 +23,9 @@ A prereg holds everything the verdict depends on, fixed before anything renders:
                                                   (promise, contrast, hierarchy) may rise vs base
                                                   per set; absent = 0 (no rise). Hard rules,
                                                   ghost text and hidden elements never take one
+     "floor_profile": "whole-engine",             optional (tools.gate.floor.PROFILES): one whole
+                                                  engine vs another; suites = stress only and the
+                                                  soft rows are reported, never blocking
      "rule": {...},                               tools.gate.stats.DEFAULT_RULE, overrides allowed
      "panel": {...},                              tools.gate.panel.DEFAULT_PANEL, written out in full
                                                   by ``make`` (protocol two-family: families, tiebreak,
@@ -130,6 +133,9 @@ def validate(p: dict) -> List[str]:
     from tools.gate.floor import tolerance_errors
 
     errs += tolerance_errors(p.get("floor_tolerance"))
+    from tools.gate.floor import profile_errors
+
+    errs += profile_errors(p.get("floor_profile"))
     from tools.gate.stats import DEFAULT_RULE
 
     bad = set(p.get("rule", {})) - set(DEFAULT_RULE)
@@ -278,7 +284,7 @@ def _full_panel(overrides: Optional[dict]) -> dict:
 def make(gid: str, base: str, cand: Optional[str], sets: Optional[List[str]] = None, hypothesis: str = "",
          null: bool = False, builtin: Optional[str] = None, rule: Optional[dict] = None,
          panel: Optional[dict] = None, floor: Optional[List[str]] = None,
-         floor_tolerance: Optional[Dict[str, int]] = None) -> dict:
+         floor_tolerance: Optional[Dict[str, int]] = None, floor_profile: Optional[str] = None) -> dict:
     base_sha = resolve(base)
     if null:
         candidate = {"commit": base_sha, "label": f"{base} (nudged)", "transform": "nudge"}
@@ -296,6 +302,8 @@ def make(gid: str, base: str, cand: Optional[str], sets: Optional[List[str]] = N
          "created": _now()}
     if floor_tolerance:  # absent unless asked for, so older preregs keep their content hash
         p["floor_tolerance"] = dict(floor_tolerance)
+    if floor_profile and floor_profile != "default":  # likewise absent unless asked for
+        p["floor_profile"] = floor_profile
     if "novel" not in {sealed._parse(v)[0] for v in p["sets"]} and "primary" not in p["rule"]:
         p["rule"]["primary"] = sealed._parse(p["sets"][0])[0]  # no sealed-novel yet: say so in the prereg
     errs = validate(p)
@@ -319,6 +327,9 @@ def main(argv=None) -> int:
     m.add_argument("--panel", help="JSON overrides of tools.gate.panel.DEFAULT_PANEL")
     m.add_argument("--floor-tolerance", help='JSON, e.g. {"contrast": 1}: how far a soft floor row may rise '
                                              "vs base (default: not at all)")
+    m.add_argument("--floor-profile", help="tools.gate.floor.PROFILES, e.g. whole-engine (a line head vs main)")
+    m.add_argument("--floor", help="comma list of floor parts (default: all for an engine, tiles for a builtin, "
+                                   "none for a null run)")
     m.add_argument("--out", help="default tools/gate/prereg/<id>.json")
     c = sub.add_parser("check")
     c.add_argument("path")
@@ -331,7 +342,9 @@ def main(argv=None) -> int:
                 ap.error("need --cand, --null or --builtin")
             p = make(a.id, a.base, a.cand, a.sets.split(",") if a.sets else None, a.hypothesis, a.null,
                      a.builtin, json.loads(a.rule) if a.rule else None, json.loads(a.panel) if a.panel else None,
-                     floor_tolerance=json.loads(a.floor_tolerance) if a.floor_tolerance else None)
+                     floor=[x for x in a.floor.split(",") if x] if a.floor is not None else None,
+                     floor_tolerance=json.loads(a.floor_tolerance) if a.floor_tolerance else None,
+                     floor_profile=a.floor_profile)
             out = Path(a.out) if a.out else GATE / "prereg" / f"{a.id}.json"
             if out.exists():
                 raise Refused(f"{out} exists; a prereg is never rewritten")
