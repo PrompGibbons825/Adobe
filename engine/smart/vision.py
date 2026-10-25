@@ -254,8 +254,13 @@ def _yunet(cv2, bgr) -> List[Tuple[Frac, float]]:
         return []
     if res is None:
         return []
-    return [((max(0.0, float(r[0]) / w), max(0.0, float(r[1]) / h),
-              min(1.0, float(r[0] + r[2]) / w), min(1.0, float(r[1] + r[3]) / h)), float(r[14])) for r in res]
+    out = []
+    for r in res:
+        x, y, fw, fh, sc = (float(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[14]))
+        if not all(math.isfinite(c) for c in (x, y, fw, fh, sc)) or fw <= 0 or fh <= 0:
+            continue
+        out.append(((max(0.0, x / w), max(0.0, y / h), min(1.0, (x + fw) / w), min(1.0, (y + fh) / h)), sc))
+    return out
 
 
 _CASCADES = None

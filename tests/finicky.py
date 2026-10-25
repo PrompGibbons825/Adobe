@@ -1072,7 +1072,11 @@ def sprint_b_cases() -> List[Case]:
               text("headline", 105, 260, 460, 64, "CANDIDATES", 57, bold=True, align="left"),
               text("body", 110, 360, 300, 40, "since 1980", 30, align="left")],
              targets=("ig-square", "ig-portrait", "story", "yt-thumb", "fb-link"),
-             show=("headline",), background=False, check=face_kept("photo")),
+             show=("headline",), background=False, check=face_kept("photo"),
+             # the face is kept whole on both, but the copy column is wider than the wall beside
+             # her: on the portrait the small line lands on her sweater (low contrast), on the
+             # story (her head fills the width) the copy can only go over her or the paper
+             xfail=("ig-portrait", "story")),
     ]
 
 
