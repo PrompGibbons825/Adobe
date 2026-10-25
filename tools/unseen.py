@@ -25,12 +25,14 @@ Per-tile checks, each a named check (all must hold for a tile to pass):
   C2 hidden    tools.gate.visible.hidden_elements == [] (alpha-aware covers, missing assets exempt)
   C3 legible   every visible text >= the engine's judge floor; on tier-1 targets the headline
                (most prominent source text) has a cap height >= 7 px at 512 px on the long side
-  C4 on_photo  each text over an image: p10 WCAG >= 3.0 or no worse than the source (-0.3), and
-               busy-ness no worse than the source (+0.02 over max(src, 0.03)) (tools.judge.terms)
+  C4 on_photo  every visible text: p10 WCAG >= 3.0 or no worse than the source (-0.3); each text
+               over an image: busy-ness no worse than the source (+0.04 over max(src, 0.03));
+               measured as tools.judge.terms does, against a render of the design without its copy
   C5 faces     a face in a source image keeps > 85% of its area on the canvas and is < 10% covered
                by copy, logos or buttons painted above it (relative to the source, +5% slack)
   C6 audit     tools.audit.flags: overlap / hidden / flat / speck / nothing are failures; empty,
-               sparse, lopsided, cramped are soft (reported, budget <= 10% of tiles)
+               sparse, lopsided, cramped are soft (reported, budget <= 10% of tiles), and so is
+               bare: > 20% of the canvas blank and 15 points more than the source
 
 The kit (~/chameleon-data/unseen-kit: assets/, fonts/, models/) is assembled on first use; the
 engine and renderer find it through CHAMELEON_BRAND_KIT. Dev-only: nothing here ships.
@@ -74,7 +76,7 @@ MISSING_ASSET = "unseen_award_seal_2026.png"  # referenced on purpose, never in 
 CHECKS = ("C1", "C2", "C3", "C4", "C5", "C6")
 CHECK_NAMES = {"C1": "rules", "C2": "hidden", "C3": "legible", "C4": "on_photo", "C5": "faces", "C6": "audit"}
 AUDIT_HARD = ("overlap", "hidden", "flat", "speck", "nothing")
-AUDIT_SOFT = ("empty", "sparse", "lopsided", "cramped")
+AUDIT_SOFT = ("empty", "sparse", "lopsided", "cramped", "bare")
 CAP_RATIO = 0.70  # Solstice Sans / Serif cap height over font size (measured on 'H')
 
 # Faces the detectors miss in the illustrated people (annotated by eye, 2026-10-25), in asset px.
@@ -1221,23 +1223,26 @@ def text_contrast(design: dict, limit: int = C4_LIMIT) -> Dict[str, dict]:
     return res
 
 
+BUSY_TOL = 0.04  # p90 gradient a text may gain over max(source, 0.03); +0.02 flagged copy that
+#                  still read cleanly on a translucent card (glass_card on 10-25), so half of
+#                  tools.judge.terms' 0.08 busy_gain range it is
+
+
 def check_c4(src, out, tgt, kit: Path, cache: dict) -> List[str]:
-    ids = texts_on_images(out, kit)
-    if not ids:
-        return []
+    """Contrast for every visible text (copy that lost its panel reads as badly as copy on a photo);
+    busy-ness for the texts over an image."""
+    on_img = set(texts_on_images(out, kit))
     if "src_contrast" not in cache:
         cache["src_contrast"] = text_contrast(src)
     rs, ro = cache["src_contrast"], text_contrast(out)
     errs = []
-    for i in ids:
-        o, s = ro.get(i), rs.get(i)
-        if o is None:
-            continue
+    for i, o in ro.items():
+        s = rs.get(i)
         c0 = s["wcag"] if s else 4.5
         if o["wcag"] < 3.0 and o["wcag"] < c0 - 0.3:
-            errs.append(f"{i}: contrast {o['wcag']:.1f} (src {c0:.1f})")
+            errs.append(f"{i}: contrast {o['wcag']:.1f} (src {c0:.1f})" + ("" if i in on_img else " off-photo"))
         b0 = s["busy"] if s else 0.0
-        if o["busy"] > max(b0, 0.03) + 0.02:
+        if i in on_img and o["busy"] > max(b0, 0.03) + BUSY_TOL:
             errs.append(f"{i}: busy {o['busy']:.3f} (src {b0:.3f})")
     return errs
 
@@ -1321,13 +1326,49 @@ def check_c5(src, out, tgt, kit: Path, cache: dict) -> List[str]:
     return errs
 
 
-def check_c6(src, out, tgt) -> Tuple[List[str], List[str]]:
+def bare(design: dict, kit: Path, n: int = 64) -> float:
+    """Share of the canvas no image or shape paints (white canvas showing through), on a grid."""
+    W, H = design["canvas"]["width"], design["canvas"]["height"]
+    boxes = []
+    for e in design["elements"]:
+        if e.get("type") == "text" or not _shown(e):
+            continue
+        if e.get("type") == "shape":
+            c = str(e.get("fill_color") or "")
+            try:
+                if c.startswith("rgba(") and float(c[5:-1].split(",")[3]) < 0.3:
+                    continue
+            except (ValueError, IndexError):
+                pass
+        elif not (kit / "assets" / str(e.get("asset_id"))).is_file():
+            continue
+        boxes.append(_ink_box(e, kit))
+    hit = 0
+    for i in range(n):
+        px = (i + 0.5) * W / n
+        for j in range(n):
+            py = (j + 0.5) * H / n
+            if any(b.x <= px <= b.r and b.y <= py <= b.b for b in boxes):
+                hit += 1
+    return 1.0 - hit / (n * n)
+
+
+def check_c6(src, out, tgt, kit: Optional[Path] = None, cache: Optional[dict] = None) -> Tuple[List[str], List[str]]:
+    """tools.audit.flags split into hard and soft, plus a soft "bare" flag: blank canvas the
+    source did not show (a photo half shrunk to a thumbnail on white, seen on 10-25)."""
     from tools.audit import flags
 
     hard, soft = [], []
     for f in flags(src, out, tgt):
         k = f.split()[0]
         (hard if k in AUDIT_HARD else soft).append(f)
+    if kit is not None:
+        cache = {} if cache is None else cache
+        if "bare" not in cache:
+            cache["bare"] = bare(src, kit)
+        b0, b1 = cache["bare"], bare(out, kit)
+        if b1 > 0.2 and b1 > b0 + 0.15:
+            soft.append(f"bare {b1:.2f} (src {b0:.2f})")
     return hard, soft
 
 
@@ -1347,7 +1388,7 @@ def check_tile(src: dict, out: Optional[dict], tgt: dict, rec: dict, kit: Path, 
         except Exception as ex:  # noqa: BLE001  a measuring failure is reported, never hidden
             res[c] = [f"check error {type(ex).__name__}: {ex}"[:120]]
     try:
-        res["C6"], res["soft"] = check_c6(src, out, tgt)
+        res["C6"], res["soft"] = check_c6(src, out, tgt, kit, cache)
     except Exception as ex:  # noqa: BLE001
         res["C6"] = [f"check error {type(ex).__name__}: {ex}"[:120]]
     return res
@@ -1393,9 +1434,18 @@ def _thumb(design: dict, kit: Path, cell: int) -> bytes:
     return buf.getvalue()
 
 
+def _quiet() -> None:
+    """Crello designs name fonts the kit does not have; the renderer's per-glyph-run fallback
+    warnings would drown the report (the fallback itself is intended: Solstice, as in scoring)."""
+    import logging
+
+    logging.getLogger("cr_renderer").setLevel(logging.ERROR)
+
+
 def _measure_design(arg) -> List[dict]:
     """Every check on every tile of one design (one worker; the source measure is shared)."""
     d, tiles, outs, thumbs, cell = arg
+    _quiet()
     kit = Path(d["kit"])
     os.environ["CHAMELEON_BRAND_KIT"] = str(kit)
     cache: dict = {}
@@ -1534,6 +1584,7 @@ def main(argv=None) -> int:
     ap.add_argument("--only", default="", help="comma-separated substrings of design names to keep")
     ap.add_argument("--cell", type=int, default=220)
     a = ap.parse_args(argv)
+    _quiet()
     if a.split in SEEDS:
         ensure_kit()
         os.environ["CHAMELEON_BRAND_KIT"] = str(KIT)

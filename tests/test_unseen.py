@@ -7,7 +7,8 @@ reported only (printed), for now.
     .venv/bin/python -m unittest tests.test_unseen          # ~1-3 min, wrap in loop/capped on the box
 
 Baseline (sprint/t at 1265aa8 = the 7pm sprint start engine, H17), 2026-10-25 18:25 UTC:
-C1 0/24, C2 4/24, C3 0/24 fail; report-only C4 1/24, C5 0/24, C6 0/24. C2 is marked
+C1 0/24, C2 4/24, C3 0/24 fail; report-only C4 3/24 (contrast; two are copy that lost its
+panel), C5 0/24, C6 0/24. C2 is marked
 expectedFailure for that reason (the four tiles are named at the test); when an engine fixes them,
 unittest reports an "unexpected success" and the decorator must come off.
 """
