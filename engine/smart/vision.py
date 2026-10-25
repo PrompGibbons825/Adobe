@@ -414,7 +414,7 @@ def _cover_box(v: Vision, W: float, H: float, copy: Tuple[Rect, ...], shown: Fra
         else:
             target = 0.5
         focal = v.focal[0] if horiz else v.focal[1]
-        sc = sc - 0.8 * np.abs((focal - T) / win - target)  # the subject on its third line
+        sc = sc - 0.5 * np.abs((focal - T) / win - target)  # the subject on its third line
         for hd in v.heads:  # never cut a head
             h0, h1 = (hd[0], hd[2]) if horiz else (hd[1], hd[3])
             cut = np.maximum(0.0, T - h0) + np.maximum(0.0, h1 - (T + win))
@@ -425,7 +425,7 @@ def _cover_box(v: Vision, W: float, H: float, copy: Tuple[Rect, ...], shown: Fra
             else:
                 lo, hi, c0, c1 = r[1] / H, (r[1] + r[3]) / H, r[0] / W, (r[0] + r[2]) / W
             f = region(lo, hi, c0, c1)
-            sc = sc - 1.2 * _masses(v, *f) * min(1.0, 6.0 * r[2] * r[3] / max(1.0, W * H))
+            sc = sc - 2.5 * _masses(v, *f) * min(1.0, 6.0 * r[2] * r[3] / max(1.0, W * H))
             for pp in v.people:
                 ix = np.maximum(0.0, np.minimum(f[2], pp[2]) - np.maximum(f[0], pp[0]))
                 iy = np.maximum(0.0, np.minimum(f[3], pp[3]) - np.maximum(f[1], pp[1]))
@@ -459,6 +459,7 @@ def centre_box(v: Vision, W: float, H: float) -> Rect:
 FACE = 1.0  # x importance, for an item over a head (share of the smaller box)
 PEOPLE = 0.3  # x importance, over head and shoulders
 QUIET = 0.8  # x importance, per unit of picture weight under an item past the picture's mean
+QUIET_SLACK = 0.1  # picture weight past the mean that costs nothing (the map's noise on plain areas)
 CAP = 1.5  # x importance, at most, per item
 DECOR = 30.0  # importance of a decoration set on the photo
 
@@ -483,11 +484,13 @@ def bg_box(e: dict, plan, d, ctx, extra: Sequence[Rect] = ()) -> Optional[Rect]:
         return None
 
 
-def penalty(plan, d, ctx, extra: Sequence[Rect] = ()) -> float:
-    """Items set over a face, over the people, or on the busy part of a
-    background photo, as this plan crops it (decoration, ``extra``, counts
-    as an item of importance DECOR)."""
-    pen = 0.0
+def item_penalties(plan, d, ctx, extra: Sequence[Rect] = ()) -> Tuple[dict, float]:
+    """What each placed item of this plan costs on a background photo with a
+    subject, as this plan crops it: over a face, over the people, or on the
+    busy part of the picture (``{item key: cost}``), plus what the decoration
+    (``extra``, importance DECOR) costs."""
+    per: dict = {}
+    deco = 0.0
     for e in d.backgrounds:
         if e.get("type") != "image":
             continue
@@ -498,9 +501,9 @@ def penalty(plan, d, ctx, extra: Sequence[Rect] = ()) -> float:
         heads, people = drawn_faces(v, box, "heads"), drawn_faces(v, box, "people")
         avg = v.mass((0.0, 0.0, 1.0, 1.0))
         bx, by, bw, bh = box
-        things = [(x, y, r.w, r.h, float(getattr(r.item, "importance", 40.0)))
-                  for r, x, y in plan.placed + plan.floaters] + [tuple(rc) + (DECOR,) for rc in extra]
-        for x, y, w, h, imp in things:
+        things = [(x, y, r.w, r.h, float(getattr(r.item, "importance", 40.0)), getattr(r.item, "key", id(r.item)))
+                  for r, x, y in plan.placed + plan.floaters] + [tuple(rc) + (DECOR, None) for rc in extra]
+        for x, y, w, h, imp, key in things:
             if w <= 0 or h <= 0:
                 continue
             a = w * h
@@ -511,24 +514,42 @@ def penalty(plan, d, ctx, extra: Sequence[Rect] = ()) -> float:
                 if ix * iy > 0:
                     k += wt * ix * iy / max(1.0, min(a, fw * fh))
             q = v.mass(((x - bx) / bw, (y - by) / bh, (x + w - bx) / bw, (y + h - by) / bh))
-            k += QUIET * max(0.0, q - avg)
-            pen += imp * min(CAP, k)
-        # an item left out pays as much as one set squarely on the subject: copy is moved off
-        # the subject, never dropped for it
-        pen += CAP * sum(float(getattr(it, "importance", 0.0)) for it in plan.hidden
-                         if getattr(it, "role", "") not in ("missing", "void"))
-    return pen
+            k += QUIET * max(0.0, q - avg - QUIET_SLACK)
+            if key is None:
+                deco += imp * min(CAP, k)
+            else:
+                per[key] = per.get(key, 0.0) + imp * min(CAP, k)
+    return per, deco
+
+
+def penalty(plan, d, ctx, extra: Sequence[Rect] = ()) -> float:
+    """Items and decoration set over a face, over the people, or on the busy
+    part of a background photo, as this plan crops it."""
+    per, deco = item_penalties(plan, d, ctx, extra)
+    return sum(per.values()) + deco
 
 
 def rank(plans, d, ctx, extra: Sequence[Rect] = ()) -> None:
-    """Charge every candidate for what it sets on the subject (see penalty)."""
+    """Charge every candidate for what it sets on the subject (see
+    item_penalties). An item a plan leaves out pays what it costs where the
+    other candidates set it best, so copy is moved off the subject but never
+    dropped for it, and dropping stays exactly as attractive as it was."""
     if np is None or not any(e.get("type") == "image" for e in d.backgrounds):
         return
+    costs = []
+    best: dict = {}
     for p in plans:
         try:
-            pen = penalty(p, d, ctx, extra)
+            per, deco = item_penalties(p, d, ctx, extra)
         except Exception:
-            pen = 0.0
+            per, deco = {}, 0.0
+        costs.append((per, deco))
+        for k, c in per.items():
+            best[k] = min(best.get(k, c), c)
+    for p, (per, deco) in zip(plans, costs):
+        if not per and not deco:
+            continue
+        pen = sum(per.values()) + deco + sum(best.get(getattr(it, "key", None), 0.0) for it in p.hidden)
         if pen:
             p.breakdown["subject"] = -pen
             p.score -= pen
