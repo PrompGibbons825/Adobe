@@ -86,7 +86,7 @@ class FakeJudge:
     def __call__(self, prompt: str, model: str):
         self.calls += 1
         self.by_model[model] = self.by_model.get(model, 0) + 1
-        ids = re.findall(r"([0-9a-f]{8})_A\.png", prompt)
+        ids = list(dict.fromkeys(re.findall(r"([0-9a-f]{8})_A\.png", prompt)))  # the reply example names one again
         self.items += len(ids)
         p_x, p_sent = self.models.get(model, (self.p_x, self.p_sent))
         out = {}

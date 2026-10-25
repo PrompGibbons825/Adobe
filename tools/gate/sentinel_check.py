@@ -60,20 +60,21 @@ def _screened(pn) -> dict:
 
 
 def check(gid: str, name: str, n: int, cfg: dict, min_acc: float, min_n: int, judge=None, seed: int = 0,
-          engine: bool = False, n_tasks: int = 0) -> dict:
+          engine: bool = False, n_tasks: int = 0, sample: str = None) -> dict:
     if sealed.VERSION_RE.match(name) and name in set(sealed.sealed_versions()):
         raise SystemExit(f"{name} is a sealed version: sentinel_check runs on dev data only")
     pool = pool_for(name, engine, n_tasks, seed)
     if not pool:
         raise SystemExit(f"dev set {name!r} has no tasks with a designer resize (try --engine)")
     private = GATE_ROOT / "output" / "sentinel_check" / gid
-    pn = PN.Panel(gid, private, cfg, judge=judge, seed=seed)
+    pn = PN.Panel(gid, private, cfg, judge=judge, seed=seed, draw_id=sample)
     fams = list(pn.families)
     sent = pn.sentinels(pool, n, 0, fams)
     small = pn.sentinels(pool, math.ceil(n * float(pn.cfg.get("small_sentinels") or 0)), 0, fams, small=True)
     pn.run([a for v in sent.values() for a in v] + [a for v in small.values() for a in v])
     kinds = pn.sentinel_kinds()
-    res = {"id": gid, "set": name, "pool": len(pool), "families": {}, "kinds": kinds, "usage": pn.usage(),
+    res = {"id": gid, "set": name, "sample": sample or gid, "panel": {k: pn.cfg.get(k) for k in ("prompt", "balance", "orders")},
+           "pool": len(pool), "families": {}, "kinds": kinds, "usage": pn.usage(),
            "screened": _screened(pn)}
     ok = True
     for f in fams:
@@ -121,6 +122,8 @@ def main(argv=None) -> int:
     ap.add_argument("--engine", action="store_true", help="the current engine's output is the good side "
                                                           "of tasks without a designer resize")
     ap.add_argument("--tasks", type=int, default=0, help="sample this many tasks of the set (0: all)")
+    ap.add_argument("--sample", help="draw the sentinels (and their sides) as check SAMPLE did, to compare "
+                                     "two panel protocols on the same sentinels")
     ap.add_argument("--dry", action="store_true", help="build and screen the sentinels, ask nobody")
     a = ap.parse_args(argv)
     try:
@@ -129,7 +132,7 @@ def main(argv=None) -> int:
             print(json.dumps(r, indent=1))
             return 0
         r = check(a.id, a.set, a.n, json.loads(a.panel) if a.panel else {}, a.min, a.min_n,
-                  engine=a.engine, n_tasks=a.tasks)
+                  engine=a.engine, n_tasks=a.tasks, sample=a.sample)
     except PN.CapReached as e:
         print(f"SENTINELS PAUSED: {e}")
         return 4
@@ -138,7 +141,8 @@ def main(argv=None) -> int:
         d, s = v["decisive"], v["report_only"]
         acc = f"{d['accuracy']:.2f}" if d["accuracy"] is not None else "n/a"
         racc = f"{s['accuracy']:.2f}" if s["accuracy"] is not None else "n/a"
-        parts.append(f"{f} {acc} n={d['n']} {d['by_kind']} good-side {d.get('by_side')} report-only {racc} n={s['n']}")
+        parts.append(f"{f} {acc} n={d['n']} {d['by_kind']} good-side {d.get('by_side')} prior-A {d.get('prior_A')} "
+                     f"asks {d.get('asks')} report-only {racc} n={s['n']}")
     print(f"SENTINELS {a.set} pool {r['pool']} | " + " | ".join(parts) + f" | cursor_asks {r['usage']['cursor_asks']} | "
           + ("PASS" if r["pass"] else "FAIL"))
     return 0 if r["pass"] else 1

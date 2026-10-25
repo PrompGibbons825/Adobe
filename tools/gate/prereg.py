@@ -177,6 +177,15 @@ def validate_panel(cfg: dict) -> List[str]:
             errs.append(f"panel {k} must be a share of pixels in [0, 0.5)")
     if not (isinstance(c.get("batch"), int) and 1 <= c["batch"] <= 12):
         errs.append("panel batch must be 1-12 comparisons per call")
+    from tools.gate.panel import PROMPTS
+
+    if c.get("prompt") not in PROMPTS:
+        errs.append(f"panel prompt must be one of {', '.join(sorted(PROMPTS))}")
+    if c.get("orders") not in (1, 2) or isinstance(c.get("orders"), bool):
+        errs.append("panel orders must be 1 or 2 (asks per comparison per family)")
+    for k in ("balance", "mat"):
+        if not isinstance(c.get(k), bool):
+            errs.append(f"panel {k} must be true or false")
     return errs
 
 
