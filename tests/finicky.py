@@ -386,7 +386,7 @@ def all_of(*checks: Check) -> Check:
 
 
 def cases() -> List[Case]:
-    return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_b_cases()
+    return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_b_cases() + split_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -1077,6 +1077,70 @@ def sprint_b_cases() -> List[Case]:
              # her: on the portrait the small line lands on her sweater (low contrast), on the
              # story (her head fills the width) the copy can only go over her or the paper
              xfail=("ig-portrait", "story")),
+    ]
+
+
+def split_kept(photo: str, panel: str, copy: Tuple[str, ...]) -> Check:
+    """A photo / colour panel split stays two regions that tile the canvas: the panel runs edge to
+    edge (three canvas edges) and the photo fills the rest (no bare canvas), the copy stays on the
+    panel, and on a tall canvas the photo sits above the panel, on a wide one beside it."""
+    def check(src, out, tgt):
+        W, H = tgt["width"], tgt["height"]
+        oo = {e["id"]: e for e in out["elements"]}
+        p_, q_ = oo[photo], oo[panel]
+        if float(q_.get("opacity", 1)) <= 0 or float(p_.get("opacity", 1)) <= 0:
+            return [f"{panel if float(q_.get('opacity', 1)) <= 0 else photo} dropped"]
+        pb, qb = el_box(p_), el_box(q_)
+        errs = []
+        edges = sum((qb.x <= 0.5, qb.y <= 0.5, qb.r >= W - 0.5, qb.b >= H - 0.5))
+        if edges < 3:
+            errs.append(f"{panel} no longer runs edge to edge ({edges} canvas edges)")
+        n, bare = 24, 0
+        for i in range(n):
+            for j in range(n):
+                x, y = (i + 0.5) * W / n, (j + 0.5) * H / n
+                if not (qb.x <= x <= qb.r and qb.y <= y <= qb.b) and not (pb.x <= x <= pb.r and pb.y <= y <= pb.b):
+                    bare += 1
+        if bare > 0.03 * n * n:
+            errs.append(f"photo and panel leave {bare / (n * n):.0%} of the canvas bare")
+        for c in copy:
+            e = oo[c]
+            if float(e.get("opacity", 1)) <= 0:
+                continue
+            b = drawn_box(e)
+            if b.x < qb.x - 1 or b.y < qb.y - 1 or b.r > qb.r + 1 or b.b > qb.b + 1:
+                errs.append(f"{c} left the {panel}")
+        vis = pb.inter_box(el_box({"x": 0, "y": 0, "width": W, "height": H}))
+        if vis is not None and H > 1.2 * W and not vis.cy < qb.cy:
+            errs.append(f"{photo} not above the {panel} on a tall canvas")
+        if W > 1.2 * H and qb.h < H - 1:
+            errs.append(f"{panel} not beside the {photo} on a wide canvas")
+        return errs
+    return check
+
+
+def split_cases() -> List[Case]:
+    """A photo fills one side of the canvas edge to edge and a flat colour panel the other, with
+    the copy on the panel (sprint F1). Resized, the two keep tiling the canvas."""
+    W, H = 1200, 628
+    return [
+        Case("photo_panel_split",
+             "a photo fills the right of the canvas edge to edge, a plum panel the left with the copy: "
+             "going square, portrait or story the photo shrank to a thumbnail on white or the panel was "
+             "dropped and white copy sat on white; the two must keep tiling the canvas, photo on top "
+             "of a tall one, its face kept",
+             W, H,
+             [{"id": "photo", "type": "image", "x": 520, "y": 0, "width": 680, "height": H, "z_index": 1,
+               "asset_id": FACE_PHOTO, "fit": "cover"},
+              shape("panel", 0, 0, 520, H, "rgba(43,27,46,1)", z=2),
+              text("headline", 60, 170, 400, 150, "Hiring the best", 56, "Solstice Serif", True, align="left"),
+              text("subhead", 60, 340, 400, 70, "Join a team that builds what it believes in.", 24,
+                   align="left", color="rgba(255,255,255,0.85)"),
+              *button("cta", 60, 450, 220, 60, "Apply now", 22, fill=GOLD, color=PLUM)],
+             targets=("ig-square", "ig-portrait", "story", "yt-thumb", "pres-16x9", "pinterest"),
+             show=("headline", "cta_label", "photo", "panel"), background=False,
+             check=all_of(split_kept("photo", "panel", ("headline", "subhead", "cta_label")),
+                          face_kept("photo"))),
     ]
 
 

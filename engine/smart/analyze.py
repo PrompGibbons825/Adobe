@@ -105,6 +105,7 @@ class Design:
     items: List[Item]
     by_id: Dict[str, dict]
     backdrops: List[Backdrop] = field(default_factory=list)
+    split: Optional[object] = None  # regions.Split: a photo region beside a flat panel carrying the copy
 
     def role_items(self, *roles: str) -> List[Item]:
         return [it for it in self.items if it.role in roles]
@@ -303,6 +304,8 @@ def analyze(source: dict, lockups: bool = True) -> Design:
     _make_composites(design)
     _make_backdrops(design, pending_backdrops)
     _assign_corners(design)
+    from .regions import find_split
+    design.split = find_split(design)
     return design
 
 

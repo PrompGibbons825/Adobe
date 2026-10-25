@@ -11,6 +11,7 @@ from .compose import Plan, display_room, generate
 from .geom import Box, el_box, rotated_aabb
 from .items import BUDGET, Ctx, forget_realized
 from .layout import PANEL_PAD, panel_pads
+from .regions import legal_bleed
 from .score import prune_relaxed, score_plans
 from .textfit import TextStyle, letter_spacing
 from . import vision
@@ -161,6 +162,10 @@ def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
         out[e["id"]] = _slab(e, d, ctx) if e.get("_slab") else _decor(e, d, ctx)
     for bd in d.backdrops:
         out[bd.el["id"]] = _backdrop(bd, plan, d, ctx)
+    for eid, (x, y, w, h) in plan.fixed.items():  # a panel that fills its region (regions.py)
+        o = _strip(d.by_id[eid])
+        o.update(x=x, y=y, width=w, height=h)
+        out[eid] = o
     for it in plan.hidden:
         for e in it.els:
             if e["id"] not in out:
@@ -358,6 +363,8 @@ def finalize(source: dict, out: dict, target: dict) -> dict:
     (and never raise, whatever the source holds)."""
     W, H = max(1.0, as_number(target.get("width"), 1.0)), max(1.0, as_number(target.get("height"), 1.0))
     got = {e.get("id"): e for e in out.get("elements", []) if isinstance(e, dict)}
+    sc = source.get("canvas") if isinstance(source.get("canvas"), dict) else {}
+    W0, H0 = max(1.0, as_number(sc.get("width"), W)), max(1.0, as_number(sc.get("height"), H))
     elements = []
     for se in source.get("elements") or []:
         if not isinstance(se, dict):
@@ -374,7 +381,8 @@ def finalize(source: dict, out: dict, target: dict) -> dict:
         e["height"] = max(0.0, e["height"])
         e["rotation"] = as_number(e.get("rotation"), 0.0)
         _keep_ratio(e, se)
-        if not _cover_bleed(e, W, H):
+        region = bool(e.pop("_region_bleed", False)) and legal_bleed(e, se, W, H, W0, H0)
+        if not region and not _cover_bleed(e, W, H):
             _inside(e, W, H)
         if e.get("type") == "text":
             fs = as_number(e.get("font_size"), as_number(se.get("font_size"), 12.0))

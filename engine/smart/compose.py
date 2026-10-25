@@ -63,6 +63,7 @@ class Plan:
     capped: bool = False  # reached its scale cap: hiding more cannot make anything bigger
     score: float = 0.0
     breakdown: Dict[str, float] = field(default_factory=dict)
+    fixed: Dict[str, Tuple[float, float, float, float]] = field(default_factory=dict)  # element id -> box (regions)
 
     def footprints(self) -> List[Tuple[Item, Box]]:
         return [(r.item, Box(x, y, r.w, r.h)) for r, x, y in self.placed + self.floaters]
@@ -427,6 +428,8 @@ def overflow(placed: Sequence[Placement], ctx: Ctx) -> Tuple[float, float, float
     l = t = r_ = b = 0.0
     for r, x, y in placed:
         for e in r.emit(x, y):
+            if e.get("_region_bleed"):  # a photo filling its region (regions.py): cropped by the canvas edge
+                continue
             vb = el_visual_box(e)
             l, t = max(l, -vb.x), max(t, -vb.y)
             r_, b = max(r_, vb.r - ctx.W), max(b, vb.b - ctx.H)
@@ -803,7 +806,8 @@ def _with_insets(fn, d: Design, ctx: Ctx, *args, **kw) -> Optional[Plan]:
         dx = (l + 0.5 if l > 0.5 and r <= 0.5 else 0.0) - (r + 0.5 if r > 0.5 and l <= 0.5 else 0.0)
         dy = (t + 0.5 if t > 0.5 and b <= 0.5 else 0.0) - (b + 0.5 if b > 0.5 and t <= 0.5 else 0.0)
         if dx or dy:
-            q = _shift(Plan(p.name, list(p.placed), p.hidden, p.s, p.zone, p.floaters, p.relax, p.capped), dx, dy)
+            q = _shift(Plan(p.name, list(p.placed), p.hidden, p.s, p.zone, p.floaters, p.relax, p.capped,
+                            fixed=p.fixed), dx, dy)
             if max(overflow(q.placed, ctx)) <= 0.5 and not any(
                     collides(Box(x, y, rr.w, rr.h), Box(fx, fy, fr.w, fr.h))
                     for rr, x, y in q.placed for fr, fx, fy in q.floaters):
@@ -843,6 +847,10 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
                     for fold in ((False, True) if has_corners else (False,)):
                         yield (f"split-{side}-{frac}{'-fold' if fold else ''}", plan_split,
                                dict(hero_side=side, hero_frac=frac, fold_corners=fold))
+        if d.split is not None and 0.4 <= r <= 2.6:  # a photo / panel split keeps its two regions
+            from .regions import plan_regions
+            for ax in (("x",) if r >= 1.25 else ("y",) if r <= 0.8 else ("x", "y")):
+                yield f"regions-{ax}", plan_regions, dict(axis=ax)
         if r >= 1.7 or force_all:
             for stack_logo in (False, True):
                 yield "row" + ("-logo-stacked" if stack_logo else ""), plan_row, dict(stack_logo=stack_logo)
