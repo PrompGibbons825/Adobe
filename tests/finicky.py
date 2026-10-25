@@ -308,6 +308,61 @@ def label_at_least(pid: str, share: float) -> Check:
     return check
 
 
+def style_survives(*ids: str) -> Check:
+    """Every property of a text except its geometry, size and layer is what the source had
+    (colour, weight, style, alignment, line height, letter spacing, content, font)."""
+    skip = {"x", "y", "width", "height", "font_size", "z_index", "opacity", "letter_spacing", "rotation"}
+
+    def check(src, out, tgt):
+        so = {e["id"]: e for e in src["elements"]}
+        errs = []
+        for e in out["elements"]:
+            if e["id"] in ids and e["id"] in so:
+                for k in sorted((set(so[e["id"]]) | set(e)) - skip):
+                    if so[e["id"]].get(k) != e.get(k):
+                        errs.append(f"{e['id']}: {k} {so[e['id']].get(k)!r} -> {e.get(k)!r}")
+                s_ = so[e["id"]]  # letter spacing is in px, so it scales with the type
+                r0 = float(s_.get("letter_spacing") or 0) / max(1.0, float(s_["font_size"]))
+                r1 = float(e.get("letter_spacing") or 0) / max(1.0, float(e["font_size"]))
+                if abs(r1 - r0) > 0.01 + 0.15 * abs(r0):
+                    errs.append(f"{e['id']}: letter spacing {r0:.3f} em -> {r1:.3f} em")
+                if float(s_.get("rotation") or 0) != float(e.get("rotation") or 0):
+                    errs.append(f"{e['id']}: rotation {s_.get('rotation')!r} -> {e.get('rotation')!r}")
+        return errs
+    return check
+
+
+def margin_clear(grow: float = 0.05) -> Check:
+    """Safe if the renderer sets text a few percent taller than we measured (FreeType vs CoreText):
+    with every shown text's height grown by `grow`, texts that did not overlap in the source still
+    do not overlap each other, no text leaves the canvas, and a button label stays on its button."""
+    def grown(e):
+        b = drawn_box(e)
+        return b.x, b.y, b.r, b.b + grow * b.h
+
+    def hit(a, b):
+        return min(a[2], b[2]) - max(a[0], b[0]) > 0.5 and min(a[3], b[3]) - max(a[1], b[1]) > 0.5
+
+    def check(src, out, tgt):
+        so = {e["id"]: e for e in src["elements"]}
+        shown = [e for e in out["elements"] if e["type"] == "text" and float(e.get("opacity", 1)) > 0
+                 and float(e.get("font_size", 2) or 2) > 1 and e["id"] in so]
+        errs = []
+        for i, a in enumerate(shown):
+            ga = grown(a)
+            if ga[3] > tgt["height"] + 0.5:
+                errs.append(f"{a['id']}: grown by {grow:.0%} it leaves the canvas bottom")
+            for b in shown[i + 1:]:
+                if hit(ga, grown(b)) and not hit(grown(so[a["id"]]), grown(so[b["id"]])):
+                    errs.append(f"{a['id']}/{b['id']}: touch once text runs {grow:.0%} taller")
+            plate = next((x for x in out["elements"] if x["id"] == a["id"].replace("_label", "_bg")
+                          and x["id"] != a["id"]), None)
+            if plate is not None and float(plate.get("opacity", 1)) > 0 and ga[3] > plate["y"] + plate["height"] + 0.5:
+                errs.append(f"{a['id']}: grown by {grow:.0%} it leaves its button")
+        return errs
+    return check
+
+
 def all_of(*checks: Check) -> Check:
     def check(src, out, tgt):
         return [e for c in checks for e in c(src, out, tgt)]
@@ -319,7 +374,7 @@ def all_of(*checks: Check) -> Check:
 
 
 def cases() -> List[Case]:
-    return _base_cases() + round5_cases()
+    return _base_cases() + round5_cases() + round7_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -802,6 +857,109 @@ def round5_cases() -> List[Case]:
     ]
 
 
+def round7_cases() -> List[Case]:
+    """Failure classes from rounds 5-6 (research note 15, loop/weaknesses.md): fill-fit images that
+    are not the first element, group splits, FreeType text-height margin, text style that must
+    survive. Built from the brand kit, no sealed data. Cases failing on the engine are xfail."""
+    fill_art = {"fit": "fill"}
+    return [
+        Case("fill_bg_odd_id_bleeding",
+             "Crello-style background: a fill-fit image with its own id and a layer above zero, a few "
+             "px past the canvas on every side; on any shape it is cropped to cover, never stretched",
+             1080, 1350, [
+                 image("backdrop", -4, -4, 1088, 1358, "solstice_bg_gradient.png", z=0, fit="fill"),
+                 logo(390, 70),
+                 text("headline", 90, 600, 900, 130, "Golden Hour", 84, "Solstice Serif", True),
+                 *button("cta", 340, 800, 400, 90, "Shop now", 28),
+             ], targets=("ig-square", "story", "leaderboard", "skyscraper", "pres-16x9", "med-rect", "a4"),
+             background=False, show=("headline", "cta_label"), check=never_stretched("backdrop")),
+
+        Case("fill_bg_with_fill_panel",
+             "a fill-fit background and a fill-fit photo panel: neither is stretched on any target "
+             "(a photo may be cropped or scaled uniformly, never squashed)",
+             1600, 900, [
+                 image("backdrop", 0, 0, 1600, 900, "solstice_bg_gradient.png", z=0, fit="fill"),
+                 image("photo", 100, 120, 640, 660, "solstice_bottle.png", z=2, fit="fill"),
+                 text("headline", 820, 260, 700, 160, "Golden Hour", 84, "Solstice Serif", True, align="left"),
+                 *button("cta", 820, 520, 380, 90, "Shop now", 28),
+             ], targets=("ig-square", "story", "leaderboard", "skyscraper", "fb-link", "med-rect"),
+             background=False, show=("headline", "cta_label"),
+             check=all_of(never_stretched("backdrop", "photo"), full_bleed("backdrop"))),
+
+        Case("fill_bg_tall_source",
+             "a tall story with a fill-fit background re-laid for wide strips and a square",
+             1080, 1920, [
+                 image("backdrop", 0, 0, 1080, 1920, "solstice_bg_gradient.png", z=0, fit="fill"),
+                 logo(390, 120),
+                 text("headline", 90, 800, 900, 260, "Summer is here", 100, "Solstice Serif", True),
+                 *button("cta", 340, 1400, 400, 100, "Shop now", 30),
+             ], targets=("leaderboard", "billboard", "mobile-banner", "ig-square", "pres-16x9", "fb-cover"),
+             background=False, show=("headline", "cta_label"),
+             check=all_of(never_stretched("backdrop"), full_bleed("backdrop"))),
+
+        Case("plate_text_not_split",
+             "a headline set on a rounded plate: wherever the plate shows, the headline stays on it with "
+             "padding (the pair is one unit, not two things placed separately)",
+             1080, 1080, [
+                 logo(390, 60, 300, 100),
+                 image("product", 340, 200, 400, 420),
+                 shape("plate", 140, 660, 800, 200, "rgba(43,27,46,0.9)", z=3, kind="rectangle", corner_radius=40),
+                 text("headline", 180, 690, 720, 140, "Golden Hour", 80, "Solstice Serif", True, z=5),
+                 *button("cta", 340, 920, 400, 90, "Shop now", 28),
+             ], targets=SPREAD, show=("headline", "cta_label"), together=(("plate", "headline"),),
+             check=framed("plate", ("headline",), least=2.0)),
+
+        Case("caption_stays_with_photo",
+             "a photo with a caption set right under it, plus a separate headline: the caption keeps "
+             "reading straight after its photo (they are never split across the layout)",
+             1080, 1350, [
+                 image("photo", 200, 140, 680, 640, "solstice_bottle.png"),
+                 text("caption", 200, 800, 680, 50, "Citrus and elderflower, bottled at dusk", 28, align="left"),
+                 text("headline", 90, 960, 900, 130, "Golden Hour", 84, "Solstice Serif", True),
+                 *button("cta", 340, 1150, 400, 90, "Shop now", 28),
+             ], targets=SPREAD, show=("headline", "cta_label"), show_roomy=("photo",),
+             together=(("photo", "caption"),), xfail=("fb-link", "leaderboard", "mobile-banner", "billboard")),
+
+        Case("freetype_margin_stack",
+             "stacked copy set tight (headline, subhead, label, button): if the renderer sets text 5% "
+             "taller than measured, nothing touches its neighbour, leaves the canvas or leaves its button",
+             1080, 1350, [
+                 logo(390, 60, 300, 100),
+                 text("headline", 90, 240, 900, 270, "Taste the longest day of summer", 88, "Solstice Serif", True),
+                 text("subhead", 90, 530, 900, 110, "Three botanical infusions, until the equinox.", 36),
+                 text("tag", 90, 650, 900, 50, "LIMITED RUN", 26, letter_spacing=3),
+                 *button("cta", 340, 780, 400, 80, "Shop now", 30),
+             ], targets=SPREAD + ("pres-16x9", "ig-portrait"), show=("headline", "cta_label"),
+             check=margin_clear(0.05)),
+
+        Case("freetype_margin_narrow",
+             "wrapping copy in narrow and short formats keeps 5% of slack under every text",
+             1200, 628, [
+                 logo(60, 40, 240, 80),
+                 text("headline", 60, 150, 620, 220, "Fresh drinks for long evenings outside", 64, "Solstice Serif",
+                      True, align="left"),
+                 text("body", 60, 400, 620, 100, "Small batch, seasonal, always cold.", 30, align="left"),
+                 *button("cta", 60, 530, 320, 70, "Order now", 28),
+             ], targets=("med-rect", "mobile-banner", "skyscraper", "half-page", "fb-link", "ig-square", "email-header"),
+             show=("headline", "cta_label"), check=margin_clear(0.05), xfail=("email-header",)),
+
+        Case("text_style_survives",
+             "every non-size text property (colour, weight, italic, alignment, line height, letter "
+             "spacing) is carried through unchanged on every target",
+             1080, 1350, [
+                 logo(390, 60, 300, 100),
+                 text("headline", 90, 240, 900, 240, "Golden Hour in the garden", 84, "Solstice Serif", True,
+                      align="left", line_height=1.05, letter_spacing=-1, color="rgba(255,236,200,1)"),
+                 text("body", 90, 520, 900, 140, "Citrus, elderflower and a little honey.", 34, align="right",
+                      line_height=1.5, font_style="italic", color="rgba(255,255,255,0.9)"),
+                 text("tag", 90, 700, 900, 50, "NEW SEASON", 24, align="center", letter_spacing=4,
+                      font_weight="bold", color=GOLD),
+                 *button("cta", 340, 860, 400, 90, "Shop now", 28),
+             ], targets=SPREAD, show=("headline", "cta_label"),
+             check=style_survives("headline", "body", "tag", "cta_label")),
+    ]
+
+
 # ----------------------------------------------------------------------------
 # relations: two runs of the engine that must agree (loop/weaknesses.md, r1). Not about one
 # output's quality but about the engine being a well-behaved function of its input.
@@ -847,6 +1005,18 @@ def relations() -> List[Relation]:
                                     "one pixel more of width or height must not flip the layout",
                                     "step", c.source, {"width": w, "height": h}, 1,
                                     xfail=(n, w, h, dw, dh) in STEP_XFAIL))
+    r7 = ("fill_bg_odd_id_bleeding", "plate_text_not_split", "caption_stays_with_photo", "freetype_margin_stack")
+    for n in r7:  # r7: scale invariance at 3x, and a continuity step, on the new cases
+        c = by[n]
+        for t in ("ig-square", "story", "med-rect", "leaderboard", "fb-link"):
+            out.append(Relation(f"scale3x/{n}@{t}", "design and target both tripled: the same layout, tripled",
+                                "scale", c.source, c.target(t), 3, xfail=(n, t) in SCALE3_XFAIL))
+        for (w, h) in ((1080, 1080), (300, 250), (728, 90), (1200, 628), (1080, 1920), (970, 250)):
+            for dw, dh in ((1, 0), (0, 1)):
+                out.append(Relation(f"step/{n}@{w}x{h}+{dw}{dh}",
+                                    "one pixel more of width or height must not flip the layout",
+                                    "step", c.source, {"width": w, "height": h}, 1,
+                                    xfail=(n, w, h, dw, dh) in STEP7_XFAIL))
     return out
 
 
@@ -857,6 +1027,11 @@ SCALE_XFAIL = {("explicit_newlines", "med-rect"), ("explicit_newlines", "leaderb
                ("band_stays_band_on_squares", "med-rect"),
                ("tiny_items_kept_on_small_canvases", "med-rect"),
                ("tiny_items_kept_on_small_canvases", "leaderboard")}
+SCALE3_XFAIL = {("fill_bg_odd_id_bleeding", "med-rect"), ("plate_text_not_split", "med-rect"),
+                ("plate_text_not_split", "leaderboard"), ("caption_stays_with_photo", "med-rect"),
+                ("caption_stays_with_photo", "leaderboard"), ("caption_stays_with_photo", "fb-link"),
+                ("freetype_margin_stack", "med-rect"), ("freetype_margin_stack", "leaderboard")}  # measured 2026-10-25 (r7)
+STEP7_XFAIL: set = set()
 STEP_XFAIL = {("crowded_l3", 1200, 628, 1, 0), ("crowded_l3", 1080, 1920, 1, 0),
               ("crowded_l3", 1080, 1920, 0, 1)}
 
