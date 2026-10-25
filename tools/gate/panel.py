@@ -4,10 +4,20 @@ Every judge call is one fresh CLI process run from the gate's judge folder
 ``~/judge-adobe-hackathon-2026/<gate-id>/`` so the loop's usage meters count it:
 
 * the **claude** family: ``claude -p --model claude-sonnet-5-5`` with the Read tool only;
-* the **cursor** family: ``agent -p --trust --mode=ask --model gpt-5.6-sol-high`` (Cursor CLI,
-  read-only ask mode), run from the gate's ``asks/`` folder so the images are opened by name;
-* the **tiebreak** judge: ``agent ... --model gemini-3.7-flash-high``, a third family asked only
-  on a split.
+* the **cursor** family: ``agent -p --trust --mode=ask --model grok-4.7-high`` (Cursor CLI,
+  ``~/.local/bin/agent``, the same binary as ``cursor-agent``; read-only ask mode), run from the
+  gate's ``asks/`` folder so the images are opened by name;
+* the **tiebreak** judge: ``agent ... --model composer-2.5`` (Cursor's own), a third family asked
+  only on a split.
+
+**S14 (2026-10-25): through Cursor only the models the subscription includes.**
+``CURSOR_ALLOWED`` is the allow-list (``grok-4.7-low|medium|high|xhigh``,
+``cursor-grok-4.6-low|medium|high|xhigh``, ``cursor-grok-4.5-high``, ``composer-2.5``); never a
+``-fast`` variant, never ``auto``, never GPT, Gemini or Claude through Cursor (those bill
+on-demand once the "Other Models" pool is spent). ``require_cursor_model`` raises
+``ModelNotAllowed`` on anything else, and it is checked when a panel is built, before every
+``agent`` call, in ``CursorJudge`` and in the prereg schema. A usage limit pauses the gate
+(``CapReached``); nothing ever falls back to another model.
 
 The judge sees images under random names (``tools.judge.views.blind_ask``): per comparison REF,
 the source design, and A/B, two resizes. Which side is which lives only in the gate's private
@@ -42,8 +52,9 @@ sentinels** (``report_kinds``: the S6 small defects plus the 20 px misalignment 
 moves, which both families missed about half the time in G6's first run) are measured, never
 decisive. ``python -m tools.gate.sentinel_check`` measures the sentinels on dev data.
 
-**Cursor cap:** every ``agent`` call is logged in ``<judge root>/agent_calls.jsonl`` before it
-starts. When a UTC day already holds ``agent_daily_cap`` calls, or either CLI reports a rate or
+**Cursor cap:** every ``agent`` call is logged (with its model) in
+``<judge root>/agent_calls.jsonl`` before it starts; ``usage()`` reports ``cursor_asks`` in total
+and per model (``cursor_asks_by_model``). When a UTC day already holds ``agent_daily_cap`` calls, or either CLI reports a rate or
 usage limit (Claude's weekly or five-hour limit included), the panel raises ``CapReached``; the
 limited call labels nothing, so a ``--resume`` (or run.py's ``--wait``) continues exactly where it
 stopped. The gate never falls back to one family because the other ran out of quota.
@@ -103,9 +114,9 @@ CLIS = ("claude", "agent")
 DEFAULT_PANEL = {
     "protocol": "two-family",
     "families": {"claude": {"cli": "claude", "model": "claude-sonnet-5-5"},
-                 "cursor": {"cli": "agent", "model": "gpt-5.6-sol-high"}},
-    "tiebreak": {"cli": "agent", "model": "gemini-3.7-flash-high"},
-    "batch": 8,              # comparisons per call (S10: 6-12)
+                 "cursor": {"cli": "agent", "model": "grok-4.7-high"}},   # S14: xAI, included
+    "tiebreak": {"cli": "agent", "model": "composer-2.5"},                  # S14: Cursor's own, included
+    "batch": 8,              # comparisons per call (S10, S14: 6-12; one Grok call was 4.9M tokens)
     "concurrency": 4,        # claude calls at once
     "agent_concurrency": 2,  # agent calls at once
     "agent_daily_cap": 200,  # agent calls per UTC day over every gate (S9)
@@ -233,7 +244,29 @@ OPEN_LINE = {
 SYSTEM = "You are a careful, blind design judge. You only read the image files you are told to read and answer in JSON."
 
 LIMIT_RE = re.compile(r"rate.?limit|usage limit|quota|too many requests|\b429\b|limit (?:reached|exceeded)|"
-                      r"out of (?:credits|usage)|hit your (?:\w+ )?limit", re.I)
+                      r"out of (?:credits|usage|requests)|hit your (?:\w+ )?limit|spend(?:ing)? limit|"
+                      r"on.demand|usage.based|upgrade (?:your plan|to)", re.I)
+
+# S14: the only models the gate may ask through the Cursor CLI (the subscription's included pool)
+CURSOR_ALLOWED = re.compile(r"^(?:grok-4\.7-(?:low|medium|high|xhigh)|cursor-grok-4\.6-(?:low|medium|high|xhigh)|"
+                            r"cursor-grok-4\.5-high|composer-2\.5)$")
+
+
+class ModelNotAllowed(ValueError):
+    """A Cursor model outside the S14 allow-list (a -fast variant, auto, GPT, Gemini, Claude...)."""
+
+
+def cursor_model_ok(model) -> bool:
+    return isinstance(model, str) and bool(CURSOR_ALLOWED.match(model))
+
+
+def require_cursor_model(model) -> str:
+    """``model`` when the S14 allow-list holds it; ModelNotAllowed otherwise. Never substitutes."""
+    if not cursor_model_ok(model):
+        raise ModelNotAllowed(f"Cursor model {model!r} is not allowed (S14: only grok-4.7-low|medium|high|xhigh, "
+                              "cursor-grok-4.6-low|medium|high|xhigh, cursor-grok-4.5-high, composer-2.5; "
+                              "no -fast, no auto, no GPT/Gemini/Claude through Cursor)")
+    return model
 CLAUDE_RETRY_SECS = 3600  # Claude's limits reset on rolling windows, not at UTC midnight
 
 
@@ -401,6 +434,7 @@ class CursorJudge:
         self.cwd, self.timeout = Path(cwd), timeout
 
     def __call__(self, prompt: str, model: str) -> Tuple[str, dict]:
+        require_cursor_model(model)
         cmd = [_bin("agent"), "-p", "--trust", "--mode=ask", "--model", model, "--output-format", "json", prompt]
         p = subprocess.run(cmd, cwd=self.cwd, capture_output=True, text=True, timeout=self.timeout,
                            stdin=subprocess.DEVNULL)
@@ -534,6 +568,9 @@ class Panel:
         if self.cfg.get("tiebreak"):
             self.roster[TIEBREAK] = dict(self.cfg["tiebreak"])
         self.families: List[str] = list(self.cfg["families"])
+        for f, r in self.roster.items():
+            if r.get("cli") == "agent":
+                require_cursor_model(r.get("model"))  # S14, whatever judge is plugged in
         self.judges = {f: self._judge_for(f, judge) for f in self.roster}
         for j in {id(j): j for j in self.judges.values()}.values():
             if hasattr(j, "bind"):  # test judges look up the hidden side; real ones never can
@@ -670,6 +707,7 @@ class Panel:
             if not left or abort.is_set():
                 break
             if cli == "agent":
+                require_cursor_model(model)
                 with self._lock:
                     self._cap_check()
                     agent_ledger().parent.mkdir(parents=True, exist_ok=True)
@@ -1031,9 +1069,14 @@ class Panel:
                    "context_per_ask": round(sum(v["ctx"]) / v["items"]) if v["items"] else 0,
                    "cost_usd": round(v["cost_usd"], 3)} for k, v in sorted(fam.items())}
         toks = [x for v in fam.values() for x in v["ctx"]]
+        by_model: Dict[str, int] = {}
+        for c in self.calls:
+            if c["cli"] == "agent":
+                by_model[c["model"]] = by_model.get(c["model"], 0) + 1
         return {"asks": len(self.labels), "failed": sum(1 for lab in self.labels.values() if not lab["ok"]),
                 "calls": len(self.calls),
                 "cursor_asks": sum(1 for c in self.calls if c["cli"] == "agent"),
+                "cursor_asks_by_model": by_model,
                 "context_tokens_mean": round(sum(toks) / len(toks)) if toks else 0,
                 "context_tokens_max": max(toks) if toks else 0,
                 "cost_usd": round(sum(v["cost_usd"] for v in fam.values()), 3), "by_family": per}

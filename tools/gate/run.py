@@ -14,7 +14,8 @@ Steps (each one can end the run with REJECT):
    ``sealed.verify`` of each version (a tampered set refuses the run).
 4. **floor** (the parts the prereg lists): suites and Docker on the candidate root, metamorphic
    checks against the base, and the tile checks on every sealed tile (hard / ghost must be 0;
-   promise, contrast, hierarchy and hidden elements must not rise vs base).
+   promise, contrast, hierarchy and hidden elements must not rise vs base, except by a
+   prereg's ``floor_tolerance`` on promise, contrast or hierarchy, recorded as ``tolerated``).
 5. **proxy** (tools.judge.terms) on the changed tiles of the designs the panel would judge: it
    may only reject, when its candidate win rate's upper bound is below ``proxy_reject_upper``.
 6. **panel** (tools.gate.panel, two families: S10) in pre-registered random design order with
@@ -137,7 +138,7 @@ def render_set(s: dict, roots: Dict[str, Path], private: Path, transform: Option
 # ---- floor -----------------------------------------------------------------------------------
 
 def run_floor(parts: List[str], roots: Dict[str, Path], sets: List[dict], private: Path,
-              cand_is_engine: bool) -> dict:
+              cand_is_engine: bool, tolerance: Optional[Dict[str, int]] = None) -> dict:
     from tools.gate import floor
 
     cache = private / "floor.json"
@@ -164,15 +165,16 @@ def run_floor(parts: List[str], roots: Dict[str, Path], sets: List[dict], privat
         for s in sets:
             src = private / "tasks" / s["version"]
             co, bo = private / "out" / s["version"] / "cand", private / "out" / s["version"] / "base"
-            r = floor.check_tiles(src, co, bo, s["kit"])
+            r = floor.check_tiles(src, co, bo, s["kit"], tolerance)
             ok &= r["pass"]
             # aggregates only: no tile names, no messages (they can quote sealed content)
             sets_rep[s["version"]] = {"pass": r["pass"], "tiles": r["tiles"], "totals": r["totals"],
                                       "base_totals": r["base_totals"],
-                                      "fails": [f.split(":")[0] for f in r["fails"]]}
+                                      "fails": [f.split(":")[0] for f in r["fails"]],
+                                      "tolerated": r.get("tolerated") or {}}
             hidden["cand"] += r["totals"].get("hidden", 0)
             hidden["base"] += (r["base_totals"] or {}).get("hidden", 0)
-        rep["parts"]["tiles"] = {"pass": ok, "sets": sets_rep}
+        rep["parts"]["tiles"] = {"pass": ok, "sets": sets_rep, "tolerance": dict(tolerance or {})}
         rep["hidden"] = hidden
     rep["pass"] = all(v["pass"] for v in rep["parts"].values())
     cache.write_text(json.dumps(rep))
@@ -273,7 +275,11 @@ def verdict_line(rep: dict) -> str:
     fl = rep.get("floor") or {}
     h = fl.get("hidden")
     hs = f" hidden {h['cand']} (base {h['base']})" if h else " hidden n/a"
-    parts.append(f"floor {'PASS' if fl.get('pass') else 'FAIL' if fl else 'n/a'}{hs}")
+    tl = [f"{k} +{v['rise']}/{v['tolerance']}" for s in ((fl.get("parts") or {}).get("tiles") or {}).get("sets", {}).values()
+          for k, v in (s.get("tolerated") or {}).items()]
+    tol = ((fl.get("parts") or {}).get("tiles") or {}).get("tolerance")
+    ts = (f" tolerated {', '.join(tl)}" if tl else "") + (f" (tolerance {json.dumps(tol, sort_keys=True)})" if tol else "")
+    parts.append(f"floor {'PASS' if fl.get('pass') else 'FAIL' if fl else 'n/a'}{hs}{ts}")
     pr = rep.get("proxy")
     if pr:
         parts.append(f"proxy {_fmt(pr)}{' REJECT' if pr.get('reject') else ''}")
@@ -298,7 +304,9 @@ def verdict_line(rep: dict) -> str:
             parts.append("dropped " + ", ".join(f"{f} ({d})" for f, d in rep["panel"]["dropped"].items()))
     u = (rep.get("panel") or {}).get("usage")
     if u:
-        parts.append(f"cursor_asks {u.get('cursor_asks', 0)}")
+        bm = u.get("cursor_asks_by_model") or {}
+        parts.append(f"cursor_asks {u.get('cursor_asks', 0)}"
+                     + (" (" + ", ".join(f"{m} {n}" for m, n in sorted(bm.items())) + ")" if bm else ""))
     an = rep.get("anchors") or {}
     if "parity" in an and an["parity"].get("n"):
         parts.append(f"parity {an['parity']['share']:.2f} n={an['parity']['n']}")
@@ -349,7 +357,8 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
 
     # floor
     parts = p.get("floor", P.FLOOR_PARTS)
-    fl = run_floor(parts, roots, sets, private, cand_is_engine=not p["candidate"].get("builtin") and not transform)
+    fl = run_floor(parts, roots, sets, private, cand_is_engine=not p["candidate"].get("builtin") and not transform,
+                   tolerance=p.get("floor_tolerance"))
     rep["floor"] = fl
     _say(f"floor {'PASS' if fl['pass'] else 'FAIL'} {json.dumps({k: v['pass'] for k, v in fl['parts'].items()})}")
     if not fl["pass"]:
@@ -575,6 +584,7 @@ def _panel_phase(p, rule, seed, panel, rep, designs, by_design, pool, roots, tra
     rep["anchors"] = an
     rep["panel"]["usage"] = panel.usage()
     rep["cursor_asks"] = rep["panel"]["usage"]["cursor_asks"]
+    rep["cursor_asks_by_model"] = rep["panel"]["usage"].get("cursor_asks_by_model", {})
     if not keep_images:
         panel.clean_images()
     return finish(verdict, why)

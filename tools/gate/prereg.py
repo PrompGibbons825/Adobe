@@ -19,6 +19,10 @@ A prereg holds everything the verdict depends on, fixed before anything renders:
      "sets": ["novel-v1", "crello-v1"],           sealed versions (tools.gate.sealed)
      "null": false,
      "floor": ["suites", "docker", "metamorphic", "tiles"],
+     "floor_tolerance": {"contrast": 1},          optional: how far a counted soft floor row
+                                                  (promise, contrast, hierarchy) may rise vs base
+                                                  per set; absent = 0 (no rise). Hard rules,
+                                                  ghost text and hidden elements never take one
      "rule": {...},                               tools.gate.stats.DEFAULT_RULE, overrides allowed
      "panel": {...},                              tools.gate.panel.DEFAULT_PANEL, written out in full
                                                   by ``make`` (protocol two-family: families, tiebreak,
@@ -123,6 +127,9 @@ def validate(p: dict) -> List[str]:
     bad = set(p.get("floor", FLOOR_PARTS)) - set(FLOOR_PARTS)
     if bad:
         errs.append(f"unknown floor parts {sorted(bad)}")
+    from tools.gate.floor import tolerance_errors
+
+    errs += tolerance_errors(p.get("floor_tolerance"))
     from tools.gate.stats import DEFAULT_RULE
 
     bad = set(p.get("rule", {})) - set(DEFAULT_RULE)
@@ -138,7 +145,8 @@ def validate(p: dict) -> List[str]:
 def validate_panel(cfg: dict) -> List[str]:
     """The two-family protocol (loop/STEERING.md S10): exactly two judge families, each with a
     known CLI and a model, on different CLIs and different models (one Claude, one Cursor); a
-    tie-break judge on a third model; 1-12 comparisons per call."""
+    tie-break judge on a third model; 1-12 comparisons per call. Every ``agent`` (Cursor) judge
+    must be on the S14 allow-list (``tools.gate.panel.CURSOR_ALLOWED``)."""
     from tools.gate.panel import CLIS, DEFAULT_PANEL, PANEL_KEYS, TIEBREAK
 
     errs = []
@@ -164,6 +172,12 @@ def validate_panel(cfg: dict) -> List[str]:
         errs.append("panel tiebreak needs a cli and a model")
     elif isinstance(fams, dict) and tb.get("model") in {(f or {}).get("model") for f in fams.values()}:
         errs.append("the tie-break judge must be a third model")
+    from tools.gate.panel import cursor_model_ok
+
+    for name, f in list((fams or {}).items() if isinstance(fams, dict) else []) + [(TIEBREAK, tb)]:
+        if isinstance(f, dict) and f.get("cli") == "agent" and not cursor_model_ok(f.get("model")):
+            errs.append(f"panel {name} model {f.get('model')!r} is not an included Cursor model (S14: "
+                        "grok-4.7-*, cursor-grok-4.6-*, cursor-grok-4.5-high, composer-2.5; no -fast, no auto)")
     from tools.judge.perturb import PERTURBATIONS, SMALL_DEFECTS
 
     known = set(PERTURBATIONS) | set(SMALL_DEFECTS) | {"fit_centre"}
@@ -265,7 +279,8 @@ def _full_panel(overrides: Optional[dict]) -> dict:
 
 def make(gid: str, base: str, cand: Optional[str], sets: Optional[List[str]] = None, hypothesis: str = "",
          null: bool = False, builtin: Optional[str] = None, rule: Optional[dict] = None,
-         panel: Optional[dict] = None, floor: Optional[List[str]] = None) -> dict:
+         panel: Optional[dict] = None, floor: Optional[List[str]] = None,
+         floor_tolerance: Optional[Dict[str, int]] = None) -> dict:
     base_sha = resolve(base)
     if null:
         candidate = {"commit": base_sha, "label": f"{base} (nudged)", "transform": "nudge"}
@@ -281,6 +296,8 @@ def make(gid: str, base: str, cand: Optional[str], sets: Optional[List[str]] = N
                                                    ["tiles"] if builtin else list(FLOOR_PARTS)),
          "rule": rule or {}, "panel": _full_panel(panel), "anchors": {"parity_designs": 0 if null else 30},
          "created": _now()}
+    if floor_tolerance:  # absent unless asked for, so older preregs keep their content hash
+        p["floor_tolerance"] = dict(floor_tolerance)
     if "novel" not in {sealed._parse(v)[0] for v in p["sets"]} and "primary" not in p["rule"]:
         p["rule"]["primary"] = sealed._parse(p["sets"][0])[0]  # no sealed-novel yet: say so in the prereg
     errs = validate(p)
@@ -302,6 +319,8 @@ def main(argv=None) -> int:
     m.add_argument("--builtin", choices=BUILTINS)
     m.add_argument("--rule", help="JSON overrides of tools.gate.stats.DEFAULT_RULE")
     m.add_argument("--panel", help="JSON overrides of tools.gate.panel.DEFAULT_PANEL")
+    m.add_argument("--floor-tolerance", help='JSON, e.g. {"contrast": 1}: how far a soft floor row may rise '
+                                             "vs base (default: not at all)")
     m.add_argument("--out", help="default tools/gate/prereg/<id>.json")
     c = sub.add_parser("check")
     c.add_argument("path")
@@ -313,7 +332,8 @@ def main(argv=None) -> int:
             if not (a.cand or a.null or a.builtin):
                 ap.error("need --cand, --null or --builtin")
             p = make(a.id, a.base, a.cand, a.sets.split(",") if a.sets else None, a.hypothesis, a.null,
-                     a.builtin, json.loads(a.rule) if a.rule else None, json.loads(a.panel) if a.panel else None)
+                     a.builtin, json.loads(a.rule) if a.rule else None, json.loads(a.panel) if a.panel else None,
+                     floor_tolerance=json.loads(a.floor_tolerance) if a.floor_tolerance else None)
             out = Path(a.out) if a.out else GATE / "prereg" / f"{a.id}.json"
             if out.exists():
                 raise Refused(f"{out} exists; a prereg is never rewritten")

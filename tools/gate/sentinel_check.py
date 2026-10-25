@@ -11,6 +11,9 @@ JSON overrides) plus the report-only ones at ``small_sentinels`` per decisive as
 accuracy per family and per perturbation kind. It passes when every family reaches
 ``--min`` (default 0.85, the gate's sentinel_min) on at least ``--min-n`` decisive sentinels.
 
+The Cursor judges are the S14 ones (``grok-4.7-high``, tie-break ``composer-2.5``); a ``--panel``
+naming any other Cursor model is refused (``tools.gate.panel.require_cursor_model``).
+
 Dev data only: it refuses a sealed version name, so no sealed verdict is consumed. The asks run
 from ``~/judge-adobe-hackathon-2026/<id>/`` like a gate's, so the usage meter and the Cursor cap
 see them.
@@ -143,7 +146,7 @@ def main(argv=None) -> int:
         racc = f"{s['accuracy']:.2f}" if s["accuracy"] is not None else "n/a"
         parts.append(f"{f} {acc} n={d['n']} {d['by_kind']} good-side {d.get('by_side')} prior-A {d.get('prior_A')} "
                      f"asks {d.get('asks')} report-only {racc} n={s['n']}")
-    print(f"SENTINELS {a.set} pool {r['pool']} | " + " | ".join(parts) + f" | cursor_asks {r['usage']['cursor_asks']} | "
+    print(f"SENTINELS {a.set} pool {r['pool']} | " + " | ".join(parts) + f" | cursor_asks {r['usage']['cursor_asks']} {r['usage'].get('cursor_asks_by_model', {})} | "
           + ("PASS" if r["pass"] else "FAIL"))
     return 0 if r["pass"] else 1
 

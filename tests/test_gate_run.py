@@ -66,7 +66,7 @@ def _engine(root: Path, src: str) -> Path:
     return root
 
 
-CLAUDE_M, CURSOR_M, TIE_M = "claude-sonnet-5-5", "gpt-5.6-sol-high", "gemini-3.7-flash-high"
+CLAUDE_M, CURSOR_M, TIE_M = "claude-sonnet-5-5", "grok-4.7-high", "composer-2.5"
 
 
 class FakeJudge:
@@ -373,7 +373,7 @@ class Prereg(TempEnv):
                                 ("p3", {"families": {"claude": {"cli": "claude", "model": "m"}}}, "exactly two"),
                                 ("p4", {"families": {"a": {"cli": "claude", "model": "m"},
                                                      "b": {"cli": "agent", "model": "m"}}}, "different models"),
-                                ("p5", {"tiebreak": {"cli": "agent", "model": "gpt-5.6-sol-high"}}, "third model"),
+                                ("p5", {"tiebreak": {"cli": "agent", "model": "grok-4.7-high"}}, "third model"),
                                 ("p6", {"batch": 20}, "batch must be"),
                                 ("p8", {"sentinel_kinds": ["p_nope"]}, "known perturbations"),
                                 ("p9", {"sentinel_kinds": []}, "must not be empty"),
@@ -386,8 +386,8 @@ class Prereg(TempEnv):
         with mock.patch.object(P, "resolve", side_effect=lambda ref, repo=P.REPO: {"b": "b" * 40, "c": "c" * 40}[ref]):
             m = P.make("mk", "b", "c", sets=["novel-v1"], panel={"batch": 10})
         self.assertEqual(m["panel"]["batch"], 10)
-        self.assertEqual(m["panel"]["families"]["cursor"]["model"], "gpt-5.6-sol-high")
-        self.assertEqual(m["panel"]["tiebreak"]["model"], "gemini-3.7-flash-high")
+        self.assertEqual(m["panel"]["families"]["cursor"]["model"], "grok-4.7-high")
+        self.assertEqual(m["panel"]["tiebreak"]["model"], "composer-2.5")
         self.assertEqual(m["panel"]["protocol"], "two-family")
 
     def test_null_and_builtin_keys(self):
@@ -632,16 +632,16 @@ class Panel(TempEnv):
         done = subprocess.CompletedProcess([], 1, stdout="", stderr="Error: You've hit your usage limit")
         with mock.patch.object(PN.subprocess, "run", return_value=done):
             with self.assertRaises(PN.CapReached):
-                cj("p", "m")
+                cj("p", "composer-2.5")
         ok = subprocess.CompletedProcess([], 0, stdout=json.dumps(
             {"type": "result", "is_error": False, "result": "{}", "duration_api_ms": 1200,
              "usage": {"inputTokens": 12000, "outputTokens": 40, "cacheReadTokens": 5, "cacheWriteTokens": 0}}),
             stderr="")
         with mock.patch.object(PN.subprocess, "run", return_value=ok) as m:
-            text, u = cj("p", "gpt-x")
+            text, u = cj("p", "grok-4.7-high")
         self.assertEqual((text, u["input"], u["output"]), ("{}", 12000, 40))
         cmd = m.call_args[0][0]
-        self.assertEqual(cmd[1:6], ["-p", "--trust", "--mode=ask", "--model", "gpt-x"])
+        self.assertEqual(cmd[1:6], ["-p", "--trust", "--mode=ask", "--model", "grok-4.7-high"])
         self.assertEqual(m.call_args[1]["cwd"], self.tmp)
 
 

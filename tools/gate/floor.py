@@ -21,7 +21,11 @@ Parts (each reported as PASS / FAIL / SKIP):
   ``rules.ghost_text`` must be 0 on every tile (a missing output is a hard error);
   ``promise_errors``, ``contrast_errors``, ``hierarchy_errors`` and ``hidden`` (elements an
   output hides, ``tools/gate/visible.py``, loop/STEERING.md S1) must not rise against the
-  base's outputs on the same tasks (with no base they are reported only). ``bleed``
+  base's outputs on the same tasks (with no base they are reported only). A prereg may set
+  ``floor_tolerance`` (``{"contrast": 1}``): a counted soft row may then exceed the base by at
+  most that many per set before it fails; the excess is recorded under ``tolerated``. Only
+  ``TOLERABLE`` rows (promise, contrast, hierarchy) take one, default 0 (no rise at all). Hard
+  rules (ids, bounds, aspect), ghost text and hidden elements (S1) never do. ``bleed``
   (``rules.bleed_report``: elements an output lets past the canvas within the S4 bleed policy)
   is reported per tile and in total, never a failure: only the panel judges bleed.
 
@@ -58,6 +62,23 @@ SUITES = [
 MUST_BE_ZERO = ("hard", "ghost")
 MUST_NOT_RISE = ("promise", "contrast", "hierarchy", "hidden")
 REPORT_ONLY = ("bleed",)
+TOLERABLE = ("promise", "contrast", "hierarchy")  # rows a prereg's floor_tolerance may loosen
+
+
+def tolerance_errors(tol) -> List[str]:
+    """What is wrong with a prereg's ``floor_tolerance`` (a dict row -> non-negative int)."""
+    if tol is None:
+        return []
+    if not isinstance(tol, dict):
+        return ["floor_tolerance must be an object like {\"contrast\": 1}"]
+    errs = []
+    for k, v in tol.items():
+        if k not in TOLERABLE:
+            why = ("is zero-tolerance" if k in MUST_BE_ZERO or k == "hidden" else "is not a floor row")
+            errs.append(f"floor_tolerance {k!r} {why} (tolerable: {', '.join(TOLERABLE)})")
+        elif isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            errs.append(f"floor_tolerance {k!r} must be a non-negative integer")
+    return errs
 DOCKER_LIMITS = ["--cpus", "2", "--memory", "3g", "--network", "none"]
 SKIP_COPY = {".git", ".venv", "output", "__pycache__", "tests", "tools", "worktrees"}
 
@@ -195,29 +216,40 @@ def _metrics_subprocess(src_dir: Path, out_dir: Path, kit: Optional[Path]) -> Di
         return json.loads(j.read_text())
 
 
-def compare_tiles(cand: Dict[str, dict], base: Optional[Dict[str, dict]] = None) -> dict:
-    """The tile verdict: zero rows must be 0 everywhere, rise rows must not exceed the base."""
+def compare_tiles(cand: Dict[str, dict], base: Optional[Dict[str, dict]] = None,
+                  tolerance: Optional[Dict[str, int]] = None) -> dict:
+    """The tile verdict: zero rows must be 0 everywhere, rise rows must not exceed the base by
+    more than their pre-registered ``tolerance`` (default 0)."""
+    errs = tolerance_errors(tolerance)
+    if errs:
+        raise ValueError("; ".join(errs))
+    tol = {k: int(v) for k, v in (tolerance or {}).items() if v}
     totals = {k: sum(len(m.get(k, [])) for m in cand.values()) for k in MUST_BE_ZERO + MUST_NOT_RISE + REPORT_ONLY}
     fails = [f"{k}: {totals[k]} (must be 0)" for k in MUST_BE_ZERO if totals[k]]
-    base_totals, rises = None, {}
+    base_totals, rises, tolerated = None, {}, {}
     if base is not None:
         base_totals = {k: sum(len(m.get(k, [])) for m in base.values()) for k in MUST_NOT_RISE + REPORT_ONLY}
         for k in MUST_NOT_RISE:
-            if totals[k] > base_totals[k]:
-                fails.append(f"{k}: {totals[k]} > base {base_totals[k]}")
+            rise = totals[k] - base_totals[k]
+            if rise > tol.get(k, 0):
+                fails.append(f"{k}: {totals[k]} > base {base_totals[k]}"
+                             + (f" (tolerance {tol[k]})" if tol.get(k) else ""))
+            elif rise > 0:
+                tolerated[k] = {"cand": totals[k], "base": base_totals[k], "rise": rise, "tolerance": tol[k]}
             rises[k] = sorted(n for n in cand if n in base and len(cand[n][k]) > len(base[n][k]))
     examples = {k: [f"{n}: {e}" for n, m in sorted(cand.items()) for e in m.get(k, [])][:8]
                 for k in MUST_BE_ZERO + MUST_NOT_RISE + REPORT_ONLY if totals[k]}
     # report only: per tile, how many elements bleed (S4); bleed never fails the floor
     bleed = {n: len(m.get("bleed", [])) for n, m in sorted(cand.items()) if m.get("bleed")}
     return {"pass": not fails, "tiles": len(cand), "totals": totals, "base_totals": base_totals,
-            "fails": fails, "rose_on": rises, "examples": examples, "bleed": bleed}
+            "fails": fails, "tolerance": tol, "tolerated": tolerated, "rose_on": rises, "examples": examples, "bleed": bleed}
 
 
-def check_tiles(src_dir: Path, out_dir: Path, base_out: Optional[Path] = None, kit: Optional[Path] = None) -> dict:
+def check_tiles(src_dir: Path, out_dir: Path, base_out: Optional[Path] = None, kit: Optional[Path] = None,
+                tolerance: Optional[Dict[str, int]] = None) -> dict:
     cand = _metrics_subprocess(src_dir, out_dir, kit)
     base = _metrics_subprocess(src_dir, base_out, kit) if base_out else None
-    return compare_tiles(cand, base)
+    return compare_tiles(cand, base, tolerance)
 
 
 # ----------------------------------------------------------------------------
@@ -268,7 +300,7 @@ def cmd_run(a) -> int:
 
 def cmd_tiles(a) -> int:
     r = check_tiles(Path(a.src), Path(a.out), Path(a.base_out) if a.base_out else None,
-                    Path(a.kit) if a.kit else None)
+                    Path(a.kit) if a.kit else None, json.loads(a.tolerance) if a.tolerance else None)
     print(f"TILES {'PASS' if r['pass'] else 'FAIL'} n={r['tiles']} {r['totals']}"
           + (f" base {r['base_totals']}" if r["base_totals"] else "") + (f" {r['fails']}" if r["fails"] else ""))
     if a.json:
@@ -297,6 +329,7 @@ def main(argv=None) -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--base-out")
     p.add_argument("--kit")
+    p.add_argument("--tolerance", help='JSON floor_tolerance, e.g. {"contrast": 1} (default: none)')
     p.add_argument("--json")
     p = sub.add_parser("metrics", help=argparse.SUPPRESS)
     p.add_argument("--src", required=True)
