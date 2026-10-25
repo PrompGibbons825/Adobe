@@ -37,7 +37,6 @@ FILL = 15.0  # on a roomy canvas, for using it up to the larger of 1.1x the sour
 SHRINK = 0.6  # per unit of importance and of missing share, for a headline or picture shrunk past keep (_shrunk)
 TRIVIAL = 30.0  # for a plan that is the source uniformly scaled into letterbox bands (_trivial)
 TRIVIAL_ASPECT = math.log(1.5)  # ... once the aspect ratio has changed this much
-GAP = 0.2  # per unit of importance, for copy (near) touching something it did not touch in the source
 
 
 def _prior(name: str, r: float, r0: float = 1.0) -> float:
@@ -146,7 +145,6 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         b["fill"] = FILL * min(1.0, cov / max(1e-6, min(0.55, 1.1 * src_cov)))
         b["shrunk"] = -SHRINK * _shrunk(placed, d, ctx)
     b["trivial"] = -TRIVIAL * _trivial(boxes, d, ctx)
-    b["gap"] = -GAP * _tight(placed, boxes, d, ctx, p.s)
     b["density"] = -DENSITY * _crowding(boxes, d, ctx)
     if area > 0:
         mx = sum(bx.cx * bx.area for _, bx in boxes) / area
@@ -301,33 +299,3 @@ def _trivial(boxes, d: Design, ctx: Ctx) -> float:
     span = u.w / ctx.W if ctx.W / ctx.H > d.W / d.H else u.h / max(1.0, ctx.H - top - bottom)
     return 1.0 if span < 0.75 else 0.0
 
-
-def _distance(a: Box, b: Box) -> float:
-    """The clear gap between two boxes (0 if they touch or overlap)."""
-    return max(0.0, b.x - a.r, a.x - b.r, b.y - a.b, a.y - b.b)
-
-
-def _tight(placed, boxes, d: Design, ctx: Ctx, s: float) -> float:
-    """Copy closer to another item than a clear gap of max(2% of the short
-    side, half its cap height, about 0.35 em), where the source kept them
-    apart: VLM judges misread near-touching shapes as collisions. Pairs the
-    source set close (a subhead under its headline, a caption by its picture)
-    are by design and exempt; overlaps are the overlap term's."""
-    fs = {id(r.item): max(r.fonts.values()) for r, _, _ in placed if r.fonts}
-    short, short0 = min(ctx.W, ctx.H), min(d.W, d.H)
-    total = 0.0
-    for i, (a, ba) in enumerate(boxes):
-        if not a.is_copy or id(a) not in fs:
-            continue
-        need = max(0.02 * short, 0.35 * fs[id(a)])
-        need0 = max(0.02 * short0, 0.35 * a.main_fs())
-        for j, (b, bb) in enumerate(boxes):
-            if i == j or (b.is_copy and j < i and id(b) in fs):
-                continue  # each pair of copy once
-            if ba.inter(bb) > 0:
-                continue
-            gap = _distance(ba, bb)
-            if gap >= need or _distance(a.src_box, b.src_box) < 0.75 * need0:
-                continue
-            total += min(a.importance, b.importance) * (1.0 - gap / need)
-    return total

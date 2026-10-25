@@ -1171,8 +1171,7 @@ SCALE3_XFAIL = {("fill_bg_odd_id_bleeding", "med-rect"), ("plate_text_not_split"
                 ("caption_stays_with_photo", "leaderboard"), ("caption_stays_with_photo", "fb-link"),
                 ("freetype_margin_stack", "med-rect"), ("freetype_margin_stack", "leaderboard")}  # measured 2026-10-25 (r7)
 STEP7_XFAIL: set = set()
-STEP_XFAIL = {("crowded_l3", 1200, 628, 1, 0), ("crowded_l3", 1080, 1920, 1, 0),
-              ("crowded_l3", 1080, 1920, 0, 1)}
+STEP_XFAIL = {("crowded_l3", 1200, 628, 1, 0)}  # 1080x1920 fixed by the story safe band (sprint C)
 
 
 # ----------------------------------------------------------------------------
