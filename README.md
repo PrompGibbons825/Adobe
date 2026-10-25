@@ -79,6 +79,7 @@ For images, the alpha channel gives where the visible pixels sit.
 | adapt | nearly the same aspect | the source arrangement, edges kept as edges |
 | stack | portrait, square, mild landscape | one column in reading order, rows near their source-relative height |
 | split | square to wide | hero on one side, copy stacked on the other |
+| regions | a photo filling one side edge to edge beside a flat panel carrying the copy (`regions.py`) | the two still tile the canvas, side by side on a wide one, stacked (photo on top) on a tall one; the panel fills its region, the copy is one padded column in it, the photo fills its region by cropping (its own proportions, the overflow past the canvas edges or under the opaque panel, the window kept on its subject and faces) |
 | row | banners and strips | logo, hero, copy, CTA on one line; a row of three or more parts, or one that ends in its CTA, is set like a banner (the brand holds one end, the CTA the other); any other pair stays a centred group; the hero may fill the strip's height |
 
 Each is solved by a small flexbox-like engine for the largest scale that fits
@@ -186,7 +187,8 @@ edge. Then:
 - `finalize()` enforces every hard rule on whatever was produced: same ids, same
   order, immutable fields (copy, fonts, colours, assets) from the source, image
   ratios, every painted box (rotation included) on the canvas except a photo that
-  covers the whole canvas (its crop), integer font sizes,
+  covers the whole canvas (its crop) or fills a photo region (an opaque picture
+  with at least 60% of its box on the canvas), integer font sizes,
   and only values the renderer can draw.
 
 If lockups make every layout fail, the design is planned again with their parts

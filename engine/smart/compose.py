@@ -816,7 +816,17 @@ def plan_scaled(d: Design, ctx: Ctx, hidden: List[Item], name: str = "scaled") -
                 ob = Box(ox_, oy_, o.w, o.h)
                 if o is not r and db.inter(ob) > 0 and r.item.src_box.inter(o.item.src_box) <= 0:
                     return None
-    return Plan(name=name, placed=placed, hidden=list(hidden), s=k, zone=canvas, capped=True)
+    # its panels too: drawn where the source drew them, not re-padded around their members (a panel
+    # that ran up to a photo beside it still does)
+    shown = {id(r.item) for r, _, _ in placed}
+    fixed = {}
+    for bd in d.backdrops:
+        if any(id(m) in shown for m in bd.members):
+            b = el_box(bd.el)
+            sb = Box(ox + b.x * k, oy + b.y * k, b.w * k, b.h * k).inter_box(canvas)
+            if sb is not None:
+                fixed[bd.el["id"]] = (sb.x, sb.y, sb.w, sb.h)
+    return Plan(name=name, placed=placed, hidden=list(hidden), s=k, zone=canvas, capped=True, fixed=fixed)
 
 
 def plan_adapt(d: Design, ctx: Ctx, hidden: List[Item], name: str = "adapt", insets=(0, 0, 0, 0)) -> Optional[Plan]:
@@ -1002,7 +1012,7 @@ def generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
                     for fold in ((False, True) if has_corners else (False,)):
                         yield (f"split-{side}-{frac}{'-fold' if fold else ''}", plan_split,
                                dict(hero_side=side, hero_frac=frac, fold_corners=fold))
-        if d.split is not None and 0.4 <= r <= 2.6:  # a photo / panel split keeps its two regions
+        if d.split is not None and 0.4 <= r <= 3.2:  # a photo / panel split keeps its two regions
             from .regions import plan_regions
             for ax in (("x",) if r >= 1.25 else ("y",) if r <= 0.8 else ("x", "y")):
                 yield f"regions-{ax}", plan_regions, dict(axis=ax)

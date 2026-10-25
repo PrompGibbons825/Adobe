@@ -33,7 +33,7 @@ COLLAPSE = 1.5  # times its importance, for copy set level with copy it was 1.5x
 HIERARCHY = 12.0  # for a headline that stands out 1.6x more than in the source (or less, negative)
 INFLATION = 2.0  # per unit of importance and of log-excess share (see _inflation)
 SHARE_SLACK = math.log(2.5)  # a secondary item may grow to 2.5x its share of the canvas freely
-REGIONS = 55.0  # prior for keeping a photo / panel split as two regions that tile the canvas
+REGIONS = 65.0  # prior for keeping a photo / panel split as two regions that tile the canvas
 
 
 def _prior(name: str, r: float, r0: float = 1.0) -> float:
