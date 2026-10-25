@@ -375,7 +375,7 @@ def all_of(*checks: Check) -> Check:
 
 
 def cases() -> List[Case]:
-    return _line_baseline(_base_cases() + round5_cases() + round7_cases())
+    return _line_baseline(_base_cases() + round5_cases() + round7_cases() + strip_cases())
 
 
 # An engine line built outside this suite (STEERING S15: line/jeff) carries its own baseline, its
@@ -872,6 +872,57 @@ def round5_cases() -> List[Case]:
              1080, 1080, sq_copy, targets=("med-rect", "email-header"),
              show=("headline", "cta_label"), check=label_at_least("cta_label", 0.06),
              xfail=("med-rect", "email-header")),
+    ]
+
+
+def strip_cases() -> List[Case]:
+    """Failure classes found bringing line/jeff to the floor (STEERING S15): a crowded design on
+    strips, where keeping everything made the copy unreadable; buttons whose labels sit far under
+    the target's type floor; display type composed over small labels, which a rigid group cannot
+    make legible. Every element stays visible (S1) and no text falls under the floor."""
+    STRIPS = ("leaderboard", "billboard", "skyscraper", "x-header", "half-page")
+    return [
+        Case("crowded_strip_legible",
+             "eleven pieces (logo, product, headline, subhead, body, two buttons, a badge, legal) on a "
+             "square, re-laid for strips: every text at or above the type floor, nothing hidden",
+             1080, 1080, [
+                 logo(60, 50, 260, 86),
+                 image("product", 600, 220, 400, 520),
+                 text("headline", 60, 200, 520, 200, "Golden hour, bottled", 72, "Solstice Serif", True,
+                      align="left"),
+                 text("subhead", 60, 420, 500, 80, "Sparkling botanicals with blood orange", 30, align="left"),
+                 text("body", 60, 520, 500, 110, "Small-batch infusions blended with wild honey and a "
+                      "whisper of smoked rosemary.", 22, align="left"),
+                 *button("cta", 60, 700, 300, 80, "Shop now", 26),
+                 *button("cta2", 380, 700, 300, 80, "Find a store", 26, fill=PLUM),
+                 *button("badge", 820, 60, 200, 56, "NEW", 20),
+                 text("legal", 60, 1000, 960, 40, "Enjoy responsibly. Offer valid while supplies last.", 16,
+                      align="left"),
+             ], targets=STRIPS + ("ig-square", "story"),
+             show=("headline", "subhead", "body", "cta_label", "cta2_label", "badge_label", "legal", "logo",
+                   "product")),
+        Case("tiny_button_labels",
+             "a leaderboard whose button labels are set far under a big canvas's type floor: on a "
+             "story or a 16:9 slide the labels reach the floor and the two alike buttons stay alike",
+             728, 90, [
+                 logo(20, 20, 120, 40),
+                 text("headline", 160, 22, 330, 46, "Chase the Light", 30, "Solstice Serif", True, align="left"),
+                 *button("cta", 500, 30, 100, 30, "Shop now", 9),
+                 *button("cta2", 612, 30, 100, 30, "Learn more", 9, fill=PLUM),
+             ], targets=("story", "pres-16x9", "ig-square", "fb-link", "skyscraper"),
+             show=("headline", "cta_label", "cta2_label", "logo")),
+        Case("display_over_small_labels",
+             "display type composed with small pills in one overlapping cluster: the cluster cannot "
+             "scale as one block on a strip or a large canvas without its labels going under the floor, "
+             "so it is taken apart; nothing hidden, no copy over copy",
+             1200, 628, [
+                 text("headline", 80, 120, 900, 220, "Summer Sale", 150, "Solstice Serif", True, align="left"),
+                 *button("pill1", 90, 300, 150, 40, "New", 12),
+                 *button("pill2", 260, 300, 190, 40, "Limited", 12, fill=PLUM),
+                 text("subhead", 80, 380, 800, 60, "Botanical sparkling infusions", 32, align="left"),
+                 *button("cta", 80, 480, 300, 80, "Shop now", 28),
+             ], targets=("leaderboard", "billboard", "skyscraper", "story", "pres-16x9", "a4"),
+             show=("headline", "subhead", "pill1_label", "pill2_label", "cta_label")),
     ]
 
 

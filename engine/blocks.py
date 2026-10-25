@@ -64,9 +64,10 @@ class Placed:
 # ---------------------------------------------------------------------------
 
 class TextBlock:
-    def __init__(self, unit, src_w):
+    def __init__(self, unit, src_w, floor=1):
         self.unit = unit
-        self.el = tf.flow(unit.els[0])      # free text re-flows: hand-wrapped breaks dropped
+        self.floor = floor                  # the canvas's type floor: never set smaller
+        self.el = unit.els[0]               # content never changes: hand-set breaks stay
         self.wfrac = max(0.55, min(1.0, self.el["width"] / (src_w * 0.86)))
         if getattr(unit, "_in_strip", False):
             self.wfrac = 1.0          # in a rotated strip a line uses the strip's full length
@@ -74,7 +75,7 @@ class TextBlock:
     def _fit(self, t, max_w):
         el = self.el
         box_w = max_w * self.wfrac
-        fs = max(1, round(el["font_size"] * t))
+        fs = max(self.floor, round(el["font_size"] * t))
         m = tf.measure(el, fs, box_w)
         while m["word_w"] > box_w and fs > 1:
             fs -= 1
@@ -480,13 +481,93 @@ def make_block(unit, src_w, ctx=None):
         from .analyze import norm_rot
         if abs(norm_rot(unit.els[0].get("rotation", 0))) > 1:
             if ctx is not None and getattr(ctx, "upright", False):
-                tb = TextBlock(unit, src_w)   # restructuring: the turned text is set upright and reflows
+                tb = TextBlock(unit, src_w, getattr(ctx, "floor", 1))   # restructuring: the turned text is set upright and reflows
                 tb.upright = True
                 return tb
             return GroupBlock(unit)       # a turned text moves as a rigid piece, lines kept
-        return TextBlock(unit, src_w)
+        return TextBlock(unit, src_w, getattr(ctx, "floor", 1) if ctx is not None else 1)
     if unit.kind == "image":
         return ImageBlock(unit)
     if unit.kind == "badges":
         return BadgesBlock(unit)
     return GroupBlock(unit)
+
+
+class ButtonBlock:
+    """A shape carrying its own copy (a button, a pill, a badge), rebuilt around its copy: the
+    copy is set at its scale but never under the type floor, and the shape keeps the source's
+    padding in proportion to the type. A shape has no aspect ratio to keep, so a pill can grow
+    longer instead of the whole piece swelling to make its label legible."""
+
+    def __init__(self, unit, floor=1):
+        self.unit = unit
+        self.floor = floor
+        self.shape = unit.shape_el()
+        self.texts = sorted((e for e in unit.els if e["type"] == "text"), key=lambda e: e["y"])
+        sh = self.shape
+        fs0 = max(1.0, max(t["font_size"] for t in self.texts))
+        ink = max(tf.measure(t, max(1, int(round(t["font_size"]))), t["width"])["width"] for t in self.texts)
+        hgt = sum(tf.measure(t, max(1, int(round(t["font_size"]))), t["width"])["lines"] * t["font_size"]
+                  * float(t.get("line_height", 1.2)) for t in self.texts)
+        self.px = min(1.5, max(0.5, (sh["width"] - ink) / 2 / fs0))
+        self.py = min(1.0, max(0.25, (sh["height"] - hgt) / 2 / fs0))
+        self.fs0 = fs0
+        self.rot = float(sh.get("rotation", 0) or 0) if len(self.texts) == 1 else 0.0
+
+    max_fs = None   # set by a re-stack: a label never outgrows type that was well above it
+
+    def _set(self, t, max_w):
+        fss = [max(self.floor, int(round(e["font_size"] * t))) for e in self.texts]
+        if self.max_fs is not None:
+            fss = [max(self.floor, min(f, self.max_fs)) for f in fss]
+        top = max(fss)
+        px, py = self.px * top, self.py * top
+        # a label stays on one line while it fits, giving up side padding first (alike buttons
+        # then stay alike); only then does it wrap
+        ms = [tf.measure(e, fs, 1e9) for e, fs in zip(self.texts, fss)]
+        one = max(m["width"] for m in ms)
+        while one + 0.8 * top > max_w and top > self.floor:   # smaller type before a wrapped label
+            k = max(self.floor / top, (top - 1) / top)
+            fss = [max(self.floor, int(f * k)) for f in fss]
+            top = max(fss)
+            px, py = self.px * top, self.py * top
+            ms = [tf.measure(e, fs, 1e9) for e, fs in zip(self.texts, fss)]
+            one = max(m["width"] for m in ms)
+        if one + 2 * px > max_w:
+            px = max(0.4 * top, (max_w - one) / 2)
+        inner = max(1.0, max_w - 2 * px)
+        ms = [m if m["width"] <= inner else tf.measure(e, fs, inner) for m, e, fs in zip(ms, self.texts, fss)]
+        for e, fs, m in zip(self.texts, fss, ms):   # the full line box, as the renderer occupies it
+            asc, _, desc = tf.metrics(e)
+            lh = float(e.get("line_height", 1.2))
+            m["height"] = (m["lines"] - 1) * fs * lh + max(fs * lh, (asc + desc) * fs)
+        tw = max(max(m["width"], m["word_w"]) for m in ms)
+        th = sum(m["height"] for m in ms)
+        return fss, ms, px, py, tw, th
+
+    def size(self, t, max_w):
+        fss, ms, px, py, tw, th = self._set(t, max_w)
+        b = rot_bounds(0, 0, tw + 2 * px, th + 2 * py, self.rot)
+        return b[2] - b[0], b[3] - b[1]
+
+    def place(self, P, x, y, t, max_w, align):
+        """(x, y) is the top left of the (turned) piece's bounds; a turned pill and its one label
+        turn together about their shared centre."""
+        fss, ms, px, py, tw, th = self._set(t, max_w)
+        w, h = tw + 2 * px, th + 2 * py
+        bw, bh = self.size(t, max_w)
+        bx = (x + (max_w - bw) / 2 if align == "center" else x) + (bw - w) / 2
+        y = y + (bh - h) / 2
+        sh = self.shape
+        k = h / max(1e-6, sh["height"])
+        P.set(sh["id"], x=bx, y=y, width=w, height=h)
+        if sh.get("corner_radius"):
+            P.set(sh["id"], corner_radius=min(float(sh["corner_radius"]) * k, h / 2))
+        P.vis[sh["id"]] = rot_bounds(bx, y, w, h, self.rot)
+        ty = y + py
+        for e, fs, m in zip(self.texts, fss, ms):
+            box_w = tw + 1.0
+            P.set(e["id"], x=bx + px - 0.5, y=ty, width=box_w, height=m["height"], font_size=fs, text_align="center")
+            vb = tf.visual_box(dict(e, text_align="center"), bx + px - 0.5, ty, box_w, fs, m)
+            P.vis[e["id"]] = rotate_box_about(vb, bx + w / 2, y + h / 2, self.rot)
+            ty += m["height"]

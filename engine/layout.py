@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from .analyze import norm_rot
+from .conform import type_floor
 from .blocks import GroupBlock, ImageBlock, Placed, TextBlock, make_block
 from . import textfit as tf
 
@@ -19,6 +20,7 @@ class Ctx:
         self.W, self.H = target["width"], target["height"]
         self.t_star = ((self.W * self.H) / (self.Ws * self.Hs)) ** 0.5
         self.margin = 0.06 * min(self.W, self.H) + 0.01 * max(self.W, self.H)
+        self.floor = type_floor(self.W, self.H)    # no text is set below this (S1)
         # a border that echoes the canvas edge keeps its inset; content stays inside it
         k = min(self.W, self.H) / min(self.Ws, self.Hs)
         self.border_scale = k
@@ -53,19 +55,20 @@ def grows(u, units):
     return u.role == "headline"
 
 
-def block_scale(u, t, k, boost=True, grow=False):
+def block_scale(u, t, k, boost=True, grow=False, floor=0):
+    """The scale a unit is set at. With boost, a unit carrying text is never scaled so far that
+    its smallest text falls under its role's minimum or the canvas's type floor."""
     if u.role == "hero":
         return t * k
-    if grow:                       # the headline grows with k but never shrinks below t
-        return t * max(1.0, k)
     fs = _src_fs(u)
-    if boost and fs and u.role in MIN_FS:
-        return max(t, MIN_FS[u.role] / fs)
-    return t
+    lo = max(MIN_FS.get(u.role, 0), floor) / fs if (boost and fs) else 0.0
+    if grow:                       # the headline grows with k but never shrinks below t
+        return max(t * max(1.0, k), lo)
+    return max(t, lo)
 
 
-def _stack_sizes(blocks, units, t, k, max_w, boost=True):
-    return [b.size(block_scale(u, t, k, boost, grows(u, units)), max_w) for b, u in zip(blocks, units)]
+def _stack_sizes(blocks, units, t, k, max_w, boost=True, floor=0):
+    return [b.size(block_scale(u, t, k, boost, grows(u, units), floor), max_w) for b, u in zip(blocks, units)]
 
 
 def stack(ctx: Ctx, P: Placed, units, rect, align, t_hi):
@@ -75,6 +78,16 @@ def stack(ctx: Ctx, P: Placed, units, rect, align, t_hi):
     if r is None:
         r = _stack(ctx, P, units, rect, align, t_hi, False)
     return r
+
+
+def _line_extra(b, sc, max_w):
+    """(above, below, is_text): how far a text's line box reaches past its inked box."""
+    if not isinstance(b, TextBlock):
+        return 0.0, 0.0, False
+    _, fs, _ = b._fit(sc, max_w)
+    asc, cap, desc = tf.metrics(b.el)
+    lh = float(b.el.get("line_height", 1.2))
+    return (asc - cap) * fs, max(0.0, max(fs * lh, (asc + desc) * fs) - (asc + 0.6 * desc) * fs), True
 
 
 def _stack(ctx: Ctx, P: Placed, units, rect, align, t_hi, boost):
@@ -88,9 +101,19 @@ def _stack(ctx: Ctx, P: Placed, units, rect, align, t_hi, boost):
     has_hero = any(grows(u, units) for u in units)
     k_min = 0.6 if any(u.role == "hero" for u in units) else 1.0
 
+    def need(t, k):
+        """Least gap after each block: two texts' line boxes (what the renderer occupies, larger
+        than the ink a stack aligns on) never touch."""
+        ex = [_line_extra(b, block_scale(u, t, k, boost, grows(u, units), ctx.floor), rw)
+              for b, u in zip(blocks, units)]
+        return [ex[i][1] + ex[i + 1][0] if ex[i][2] and ex[i + 1][2] else 0.0 for i in range(len(ex) - 1)]
+
+    def gaps_at(t, k):
+        return [max(g * t, n) for g, n in zip(base_gaps, need(t, k))]
+
     def total(t, k):
-        sizes = _stack_sizes(blocks, units, t, k, rw, boost)
-        return sum(s[1] for s in sizes) + sum(g * t for g in base_gaps), sizes
+        sizes = _stack_sizes(blocks, units, t, k, rw, boost, ctx.floor)
+        return sum(s[1] for s in sizes) + sum(gaps_at(t, k)), sizes
 
     # with no hero image, keep room for the headline to stand 1.4x above the rest
     k_t = 1.4 if k_min == 1.0 and has_hero else k_min
@@ -118,7 +141,7 @@ def _stack(ctx: Ctx, P: Placed, units, rect, align, t_hi, boost):
                 khi = mid
         k = klo
     tot, sizes = total(t, k)
-    gaps = [g * t for g in base_gaps]
+    gaps = gaps_at(t, k)
     slack = rh - tot
     if gaps and sum(gaps) > 0 and slack > 0:
         extra = min(slack, sum(gaps) * 1.5)
@@ -127,7 +150,7 @@ def _stack(ctx: Ctx, P: Placed, units, rect, align, t_hi, boost):
         slack -= extra
     y = ry + max(0.0, slack) / 2
     for i, (b, u) in enumerate(zip(blocks, units)):
-        b.place(P, rx, y, block_scale(u, t, k, boost, grows(u, units)), rw, align)
+        b.place(P, rx, y, block_scale(u, t, k, boost, grows(u, units), ctx.floor), rw, align)
         y += sizes[i][1] + (gaps[i] if i < len(gaps) else 0)
     return t
 
@@ -196,8 +219,9 @@ ROW_ORDER = {"logo": 0, "hero": 1, "text": 2, "headline": 2, "subhead": 2, "body
              "legal": 3, "badges": 4, "cta": 5}
 
 
-def _fit_column(texts, col_w, h_avail, fs_cap):
-    """Joint fit of a column of texts: one scale t for all (keeps hierarchy)."""
+def _fit_column(texts, col_w, h_avail, fs_cap, floor=5):
+    """Joint fit of a column of texts: one scale t for all (keeps hierarchy); no text under
+    the type floor. None if the column cannot hold them even at the floor."""
     if not texts:
         return None
     head_fs = max(u.els[0]["font_size"] for u in texts)
@@ -206,7 +230,7 @@ def _fit_column(texts, col_w, h_avail, fs_cap):
         ms, tot = [], 0.0
         for i, u in enumerate(texts):
             el = tf.flow(u.els[0])
-            fs = max(5, int(el["font_size"] * t))
+            fs = max(floor, int(el["font_size"] * t))
             m = tf.measure(el, fs, col_w)
             if m["word_w"] > col_w:
                 return None
@@ -214,16 +238,18 @@ def _fit_column(texts, col_w, h_avail, fs_cap):
             tot += m["height"] + (fs * 0.3 if i else 0)
         return ms if tot <= h_avail else None
 
-    lo, hi = 0.0, fs_cap / head_fs
+    lo, hi = 0.0, max(fs_cap, floor) / head_fs
     if layout(hi):
         return layout(hi)
+    if not layout(lo):
+        return None
     for _ in range(25):
         mid = (lo + hi) / 2
         if layout(mid):
             lo = mid
         else:
             hi = mid
-    return layout(lo) if lo > 0 else None
+    return layout(lo)
 
 
 def _rot_frame(fb, u, L, S):
@@ -439,8 +465,8 @@ def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False
             above = [out for src, out in refs if src > 1.05 * col_src and out > 0]
             if above:
                 cap = min(cap, max(7.0, 0.9 * min(above)))
-            ms = _fit_column(it["texts"], cw, hA, cap)
-            if ms is None or ms[0]["fs"] < 7:
+            ms = _fit_column(it["texts"], cw, hA, cap, ctx.floor)
+            if ms is None:
                 return None
             it.update(w=max(m["width"] for m in ms), h=sum(m["height"] for m in ms)
                       + sum(m["fs"] * 0.3 for m in ms[1:]), ms=ms, colw=cw)
@@ -536,7 +562,7 @@ def _inner_row(ctx, P, units, rect, t):
     if col_w < 0.25 * rw:
         return None
     cap = max(u.els[0]["font_size"] for u in texts) * t * 1.6
-    ms = _fit_column(texts, col_w, rh, cap)
+    ms = _fit_column(texts, col_w, rh, cap, ctx.floor)
     if ms is None:
         return None
     tw = max(m["width"] for m in ms)
@@ -995,4 +1021,254 @@ def tmpl_grid(ctx, flow, k=2, tiers=False, panel=None, align=None):
             return None
     P.meta = {"template": f"grid-{k}" + ("-tiers" if tiers else "") + (f"-panel-{panel}" if panel else ""),
               "t": tc}
+    return P
+
+
+# ---------------------------------------------------------------------------
+# rows: re-stack into rows (strips and any canvas where nothing else is legible)
+
+
+def _unit_floor_scale(u, floor):
+    """The least scale at which a unit's smallest text reaches the type floor (0 for no text)."""
+    fs = _src_fs(u)
+    return floor / fs if fs else 0.0
+
+
+def _centre_in(t, sh, tol=2.0):
+    """A text's centre lies inside a shape's own (unturned) box: both turn about their centres."""
+    cx, cy = t["x"] + t["width"] / 2, t["y"] + t["height"] / 2
+    return sh["x"] - tol <= cx <= sh["x"] + sh["width"] + tol and sh["y"] - tol <= cy <= sh["y"] + sh["height"] + tol
+
+
+def _atoms(ctx, flow):
+    """The design taken apart to its smallest readable pieces, for the last-resort re-stack: a
+    shape with the text it carries (a button, a badge) stays one piece; every other text, image
+    and shape becomes its own piece. A composition that mixes display type with small labels can
+    then give each its own size instead of scaling them as one rigid block."""
+    from .analyze import Unit
+    out = []
+    for u in flow:
+        out += _split(ctx, u)
+    return out
+
+
+def _is_button(u) -> bool:
+    """One shape carrying all the unit's other pieces, which are texts centred in it."""
+    if u.kind not in ("group", "button", "ribbon") or len(u.els) < 2:
+        return False
+    shapes = [e for e in u.els if e["type"] == "shape"]
+    return len(shapes) == 1 and all(e["type"] == "text" and _centre_in(e, shapes[0])
+                                    for e in u.els if e is not shapes[0])
+
+
+def _fits_at_floor(ctx, u) -> bool:
+    """A piece can stay whole: scaled until its smallest text reaches the floor, it still fits
+    comfortably on the canvas."""
+    s = _unit_floor_scale(u, ctx.floor)
+    b = u.bbox
+    m = min(ctx.margin, 0.12 * min(ctx.W, ctx.H) + 0.01 * max(ctx.W, ctx.H))
+    if (b[2] - b[0]) * s > ctx.W - 2 * m or (b[3] - b[1]) * s > ctx.H - 2 * m:
+        return False
+    from .blocks import GroupBlock
+    if u.kind not in ("group", "frame"):
+        return True
+    trial = Placed()                 # set as a rigid group, its texts re-fit: do they hold the floor?
+    GroupBlock(u).place_at(trial, 0.0, 0.0, s)
+    return all(p.get("font_size", ctx.floor) >= ctx.floor for p in trial.props.values())
+
+
+def _split(ctx, u, depth=0):
+    """Take a piece apart only as far as it must: along clean cuts (a card row into its cards,
+    a caption staying with its picture) while a part is still too big at the floor; down to
+    single pieces only where no clean cut exists."""
+    from .analyze import Unit
+    from .blocks import find_cut
+    if u.kind in ("text", "image") or len(u.ids) <= 1:
+        return [u]
+    if u.kind == "badges":           # a row of pills: each pill rebuilt around its own label
+        return [p for m in u.members for p in _split(ctx, m, depth + 1)]
+    if _is_button(u):
+        return _pieces(u)            # a button: rebuilt around its label, never a rigid scale
+    fss = [e["font_size"] for e in u.els if e["type"] == "text"]
+    even = not fss or max(fss) <= 2.5 * min(fss) or all(e["type"] == "text" for e in u.els)
+    # a card (a picture with its caption, type of like sizes), a type lockup (texts only) or a part
+    # a clean cut produced may stay whole; display type composed with small pills is taken apart
+    if (depth > 0 or even) and _fits_at_floor(ctx, u):
+        return [u]
+    if u.kind in ("group", "frame") and depth < 6:
+        els = list(u.els) + ([u.container] if u.kind == "frame" and u.container is not None
+                             and u.container not in u.els else [])
+        cut = find_cut(Unit(u.uid, u.role, "group", els), ctx.Ws * ctx.Hs)
+        if cut:
+            parts = []
+            for i, side in enumerate(cut[1:]):
+                kind = "group" if len(side) > 1 else ("text" if side[0]["type"] == "text" else
+                                                      "image" if side[0]["type"] == "image" else "group")
+                parts += _split(ctx, Unit(f"{u.uid}/{i}", u.role, kind, list(side)), depth + 1)
+            return parts
+    return _pieces(u)
+
+
+def _pieces(u):
+    """Single pieces: a shape with the text it carries is one (a button); all else alone."""
+    from .analyze import Unit
+    out = []
+    els = [e for m in u.members for e in m.els] if u.kind == "badges" else list(u.els)
+    if u.kind == "frame" and u.container is not None and u.container not in els:
+        els = [u.container] + els
+    texts = [e for e in els if e["type"] == "text"]
+    taken = set()
+    for sh in sorted((e for e in els if e["type"] == "shape"), key=lambda e: e["width"] * e["height"]):
+        mine = [t for t in texts if t["id"] not in taken and _centre_in(t, sh)
+                and (t.get("group_id") == sh.get("group_id") or
+                     t["width"] * t["height"] >= 0.12 * sh["width"] * sh["height"])]
+        if mine:
+            taken.update(t["id"] for t in mine)
+            taken.add(sh["id"])
+            b = Unit(f"{u.uid}:{sh['id']}", u.role, "group", [sh] + mine)
+            b.button = len(mine) == 1 and float(mine[0].get("rotation") or 0) == float(sh.get("rotation") or 0) \
+                or (not sh.get("rotation") and not any(t.get("rotation") for t in mine))
+            out.append(b)
+    for e in els:
+        if e["id"] in taken:
+            continue
+        kind = "text" if e["type"] == "text" else ("image" if e["type"] == "image" else "group")
+        out.append(Unit(f"{u.uid}:{e['id']}", u.role, kind, [e]))
+    return out
+
+
+def tmpl_rows(ctx, flow, order="reading", cap=1.0, align="center", axis="rows", atom=False):
+    """Every flow unit, packed in order into as many rows (or columns) as the canvas needs (a
+    flex-wrap), all at one scale t: texts at max(floor, size x t), wrapping at most `cap` of the
+    canvas width; groups and badges never so small their copy falls under the floor; pictures at
+    t, but never shrunk to a speck. The largest t that fits wins. A strip gets legible copy in a
+    few rows or columns instead of one row of unreadable copy (STEERING S15); nothing is hidden
+    (S1). When even the floor cannot hold everything, the floor steps down (to 60% of it, never
+    under 6 px; then 5, 4, 3 px as a last resort) rather than any element going.
+    axis: "rows" fills left to right, then wraps down; "cols" fills top to bottom, then wraps
+    right (a wide strip). order: "reading" keeps the source's reading order; "role" puts the
+    logo first and the call to action last, as banners read."""
+    # ribbons and corner pieces carrying copy are packed too: a re-stack has no free corner to
+    # promise them, and a float that hops corners on a 1 px change is no layout
+    flow = list(flow) + [u for u in ctx.model["units"] if u.role in ("ribbon", "anchored")
+                         and any(e["type"] == "text" for e in u.els) and u not in flow]
+    if atom:
+        flow = _atoms(ctx, flow)
+    floors = sorted({max(6, int(ctx.floor * k)) for k in (1.0, 0.9, 0.8, 0.7, 0.6)}, reverse=True)
+    for floor in floors + [5, 4, 3]:   # under 6 px only when nothing else keeps every element
+        # margins and gaps tighten before the type gets any smaller
+        P = _rows(ctx, flow, order, cap, align, axis, floor) or _rows(ctx, flow, order, cap, align, axis, floor, 0.5)
+        if P is not None:
+            if atom:
+                P.meta["template"] += "-atoms"
+            return P
+    return None
+
+
+def _text_lines(b, t, max_w):
+    """A text's width and the height of its line boxes (what the renderer occupies, taller than
+    the inked cap-to-descender height a stack aligns on): rows must not let line boxes touch."""
+    box_w, fs, m = b._fit(t, max_w)
+    asc, capk, desc = tf.metrics(b.el)
+    lh = float(b.el.get("line_height", 1.2))
+    return min(box_w, max(m["width"], m["word_w"])), (m["lines"] - 1) * fs * lh + max(fs * lh, (asc + desc) * fs)
+
+
+def _rows(ctx, flow, order, cap, align, axis, floor, tight=1.0):
+    from .blocks import BadgesBlock, FrameBlock, GroupBlock, ImageBlock, RestackBlock, TextBlock
+    if not flow:       # aligned pieces are packed too: a re-stack has no anchor line to keep
+        return None
+    W, H = ctx.W, ctx.H
+    m = tight * min(ctx.margin, 0.12 * min(W, H) + 0.01 * max(W, H))
+    AW, AH = W - 2 * m, H - 2 * m
+    if AW <= 0 or AH <= 0:
+        return None
+    if order == "role":
+        units = sorted(flow, key=lambda u: (ROW_ORDER.get(u.role, 3), u.bbox[1], u.bbox[0]))
+    else:
+        units = sorted(flow, key=lambda u: (round(u.cy / max(1.0, 0.04 * ctx.Hs)), u.bbox[0]))
+    blocks = []
+    from .blocks import ButtonBlock
+    for u in units:
+        if not hasattr(u, "button"):
+            u.button = _is_button(u) and len({float(e.get("rotation") or 0) for e in u.els}) == 1
+        b = ButtonBlock(u, floor) if u.button else make_block(u, ctx.Ws, ctx)
+        if isinstance(b, TextBlock):
+            b.wfrac = 1.0
+            b.floor = floor
+        blocks.append(b)
+    gap = tight * max(0.6 * floor, 0.025 * min(W, H))
+    speck = 0.18 * min(AW, AH)       # a picture's long side never under this
+    cols = axis == "cols"
+    main_len, cross_len = (AH, AW) if cols else (AW, AH)
+
+    def scale_of(u, b, t):
+        if isinstance(b, ImageBlock):
+            return max(t, speck / max(1e-6, max(b.vw, b.vh)))
+        if isinstance(b, (GroupBlock, BadgesBlock, RestackBlock, FrameBlock)):
+            return max(t, _unit_floor_scale(u, floor))
+        return t
+
+    texts = [(u.els[0]["font_size"], b) for u, b in zip(units, blocks) if isinstance(b, TextBlock)]
+
+    def pack(t):
+        # hierarchy: a button label stays no larger than any text set >= 1.25x larger than it
+        tfs = [(f0, b._fit(scale_of(None, b, t), AW * cap)[1]) for f0, b in texts]
+        for u, b in zip(units, blocks):
+            if isinstance(b, ButtonBlock):
+                above = [fs for f0, fs in tfs if f0 >= 1.25 * b.fs0]
+                b.max_fs = min(above) if above else None
+        lines, cur, cl = [], [], 0.0
+        for u, b in zip(units, blocks):
+            sc = scale_of(u, b, t)
+            w, h = _text_lines(b, sc, AW * cap) if isinstance(b, TextBlock) else b.size(sc, AW)
+            if w > AW + 0.5 or h > AH + 0.5:
+                return None
+            along = h if cols else w
+            if cur and cl + gap + along > main_len:
+                lines.append((cur, cl))
+                cur, cl = [], 0.0
+            cl += (gap if cur else 0.0) + along
+            cur.append((u, b, sc, w, h))
+        if cur:
+            lines.append((cur, cl))
+        thick = [max((it[3] if cols else it[4]) for it in ln[0]) for ln in lines]
+        return (lines, thick) if sum(thick) + gap * (len(lines) - 1) <= cross_len + 0.5 else None
+
+    hi = t_cap(ctx, AW) * 1.5
+    if pack(hi):
+        lo = hi
+    else:
+        if not pack(1e-4):
+            return None
+        lo = 1e-4
+        for _ in range(16):
+            mid = (lo + hi) / 2
+            if pack(mid):
+                lo = mid
+            else:
+                hi = mid
+    lines, thick = pack(lo)
+    P = Placed()
+    tot = sum(thick) + gap * (len(lines) - 1)
+    c = m + (cross_len - tot) / 2               # cross axis: the block of lines, centred
+    for (ln, length), th in zip(lines, thick):
+        a = m + ((main_len - length) / 2 if align == "center" or cols else 0.0)
+        for u, b, sc, w, h in ln:
+            if cols:
+                x, y = c + ((th - w) / 2 if align == "center" else 0.0), a
+            else:
+                x, y = a, c + (th - h) / 2
+            if isinstance(b, TextBlock):           # packed by line boxes, placed by cap top
+                _, fs, _ = b._fit(sc, w + 1.0)
+                asc, capk, _ = tf.metrics(b.el)
+                b.place(P, x, y + (asc - capk) * fs, sc, w + 1.0, "center" if cols and align == "center" else "left")
+            elif isinstance(b, ImageBlock):
+                b.place_vis(P, x, y, b.scale_for(sc, AW))
+            else:
+                b.place(P, x, y, sc, w, "left")
+            a += (h if cols else w) + gap
+        c += th + gap
+    P.meta = {"template": f"{axis}-{order}-c{cap}-{align}-n{len(lines)}-f{floor}", "t": lo}
+    P.restructured = True
     return P

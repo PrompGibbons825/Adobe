@@ -451,7 +451,7 @@ def finalize(ctx, P, model, float_threshold=0.0):
         elif u.role == "deco":
             place_deco(ctx, P, u)
     for u in model["units"]:
-        if u.role == "anchored":
+        if u.role == "anchored" and not all(i in P.props for i in u.ids):   # a re-stack may hold it
             place_anchored(ctx, P, u)
     for u in model["units"]:
         if u.role == "aligned" and u.els[0]["id"] not in P.props:
@@ -476,7 +476,8 @@ def finalize(ctx, P, model, float_threshold=0.0):
         for eid in u.ids:
             if eid not in P.props:
                 return None
-    pin_edges(ctx, P, model)
+    if not getattr(P, "restructured", False):   # a re-stack owns its positions; edges are the source's
+        pin_edges(ctx, P, model)
     clamp_inside(ctx, P, model)
     return P
 

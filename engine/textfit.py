@@ -89,13 +89,19 @@ def _wrap(text: str, widths: tuple, max_width: float) -> str:
 
 def measure(el: dict, fs: int, max_w: float) -> dict:
     """Wrap `el`'s content at font size fs within max_w.
-    Returns lines, widest line width, height, longest word width."""
-    text = str(el.get("content", ""))
+    Returns lines, widest line width, height, longest word width (cached: re-stacks measure the
+    same text at the same size many times)."""
     weight, style = _weight_style(el)
-    widths = _widths(el.get("font_family", ""), weight, style, float(fs), text)
+    return dict(_measure(str(el.get("content", "")), str(el.get("font_family", "") or ""), weight, style, int(fs),
+                         round(float(max_w), 2), float(el.get("letter_spacing", 0) or 0),
+                         float(el.get("line_height", 1.2) or 1.2)))
+
+
+@lru_cache(maxsize=200000)
+def _measure(text: str, family: str, weight: str, style: str, fs: int, max_w: float, ls: float, lh: float) -> dict:
+    widths = _widths(family, weight, style, float(fs), text)
     wrapped = _wrap(text, widths, max_w)
     lines = wrapped.split("\n")
-    ls = float(el.get("letter_spacing", 0) or 0)
     line_ws = []
     idx = 0
     for ln in lines:
@@ -110,7 +116,6 @@ def measure(el: dict, fs: int, max_w: float) -> dict:
         else:
             cur += w + ls
     word_w = max(word_w, cur)
-    lh = float(el.get("line_height", 1.2))
     return {
         "lines": len(lines),
         "width": max(line_ws) if line_ws else 0.0,

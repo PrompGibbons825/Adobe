@@ -17,11 +17,16 @@ from __future__ import annotations
 
 import copy
 import os
+import sys
+import traceback
 from typing import Any
 
 from .analyze import FLOW_ROLES, analyze, norm_rot
+from .conform import conform, fault_key, faults, normalize_source, num, type_floor
 from .finalize import finalize
-from .layout import Ctx, tmpl_backdrop, tmpl_card_panel, tmpl_grid, tmpl_panel, tmpl_row, tmpl_split, tmpl_stack
+from .layout import (Ctx, tmpl_backdrop, tmpl_card_panel, tmpl_grid, tmpl_panel, tmpl_row, tmpl_rows, tmpl_split,
+                     tmpl_stack)
+from .blocks import Placed
 from .score import score
 
 DEBUG = os.environ.get("CHAMELEON_DEBUG") == "1"
@@ -31,7 +36,12 @@ DROP_LEVELS = [0.0, 1.3, 3.5, 5.5]
 def _candidates(ctx, model):
     """Every candidate keeps every unit (no drops)."""
     flow = [u for u in model["units"] if u.role in FLOW_ROLES]
-    if not flow:
+    if not flow:          # nothing to flow (backgrounds and decoration only): finalize places it all
+        def empty():
+            P = Placed()
+            P.meta = {"template": "decor-only", "t": ctx.t_star}
+            return P
+        yield 0.0, empty
         return
     has_frame = any(u.kind == "frame" for u in model["units"])
     for alpha in ((0.0, 0.5, 0.9) if has_frame else (0.0,)):
@@ -60,6 +70,13 @@ def _templates_raw(ctx, flow):
     # grids: units side by side in columns (optionally under a headline tier,
     # optionally beside a full-bleed picture); a separate, fallback stage
     if getattr(ctx, "grids", False):
+        # re-stack into rows or columns (strips above all): every unit legible at the type
+        # floor, as many lines as it takes; tried only when no faithful layout keeps every promise
+        for order in ("reading", "role"):
+            for axis, caps in (("rows", (1.0, 0.6, 0.4)), ("cols", (1.0, 0.45, 0.3, 0.2))):
+                for cap in caps:
+                    for atom in (False, True):
+                        yield 0.0, lambda f=flow, o=order, c=cap, a=axis, t=atom: tmpl_rows(ctx, f, o, c, "center", a, t)
         for k in (2, 3, 4):
             for tiers in (False, True):
                 for panel in (None, "left", "right"):
@@ -128,7 +145,8 @@ def _build(source, target, P):
 
 
 def _fallback(source, target):
-    """Uniform contain-scale, centered. Never fails; used only on errors."""
+    """Uniform fit-and-centre (no distortion), full-canvas backgrounds cover. Used only when the
+    layout search raised; conform() then enforces the hard rules on it."""
     sw, sh = source["canvas"]["width"], source["canvas"]["height"]
     W, H = target["width"], target["height"]
     s = min(W / sw, H / sh)
@@ -136,10 +154,16 @@ def _fallback(source, target):
     out = []
     for el in source["elements"]:
         e = dict(el)
-        e["x"], e["y"] = ox + el["x"] * s, oy + el["y"] * s
-        e["width"], e["height"] = el["width"] * s, el["height"] * s
-        if e["type"] == "text":
-            e["font_size"] = max(1, int(el["font_size"] * s))
+        full = el["x"] <= 0 and el["y"] <= 0 and el["x"] + el["width"] >= sw and el["y"] + el["height"] >= sh
+        if full and e["type"] in ("image", "shape"):
+            e.update(x=0.0, y=0.0, width=W, height=H)
+            if e["type"] == "image":
+                e["fit"] = "cover"
+        else:
+            e["x"], e["y"] = ox + el["x"] * s, oy + el["y"] * s
+            e["width"], e["height"] = el["width"] * s, el["height"] * s
+            if e["type"] == "text":
+                e["font_size"] = max(1, int(el["font_size"] * s))
         out.append(e)
     return {"canvas": {"width": W, "height": H}, "elements": out}
 
@@ -176,82 +200,103 @@ def _unwrap(source):
 
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
-    return _resize(_unwrap(source), target_canvas)
+    """Content never changes (hard rule): hand-set line breaks stay, so _unwrap is not applied."""
+    src = normalize_source(source)
+    tgt = {"width": max(1.0, num((target_canvas or {}).get("width"), 1.0)),
+           "height": max(1.0, num((target_canvas or {}).get("height"), 1.0))}
+    for k in ("width", "height"):
+        if float(tgt[k]).is_integer():
+            tgt[k] = int(tgt[k])
+    resize.last_faults = []
+    if not src["elements"]:
+        return {"canvas": dict(tgt), "elements": [copy.deepcopy(e) for e in src["_other"]]}
+    try:
+        out = _resize(src, tgt)
+    except Exception:  # never let one odd design take the run down; reported, not hidden
+        traceback.print_exc(file=sys.stderr)
+        resize.last_choice = ({"template": "fallback"}, 0.0, {})
+        out = conform(src, _fallback(src, tgt), tgt)
+    return out
 
 
 def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
+    """Every candidate keeps every element. Candidates are ranked first by how many of the engine's
+    promises their conformed output breaks (small print, glyphs past the canvas, copy over copy,
+    a label off its button: ``conform.faults``), then by score. A legible layout always beats an
+    illegible one, however well the illegible one scores."""
     resize.last_choice = ({"template": "fallback"}, 0.0, {})
     resize.last_model = None
     resize.last_P = None
-    try:
-        tight = analyze(source)
-        readings = [(tight, 0)]
-        loose = analyze(source, compose=False)
-        n = _broken(tight, loose)
-        if n:
-            readings.append((loose, n))
-        best, best_s, best_br, best_meta, best_model = None, -1e18, None, None, None
-        from .blocks import find_cut
-        passes = []
-        for model, broken in readings:
-            passes.append((model, broken, False))
-            carea = model["canvas"][0] * model["canvas"][1]
-            if any(u.kind == "group" and u.role in FLOW_ROLES and find_cut(u, carea) for u in model["units"]):
-                passes.append((model, broken, True))     # compositions may re-stack
-        # grids restructure the design: tried only when no faithful layout
-        # can make every text legible
-        stages = [False, True]
-        for grids, (model, broken, restack) in [(g, p) for g in stages for p in passes]:
-            if grids and best_br is not None and best_br.get("readability", 0.0) >= -5.0:
-                break
-            ctx = Ctx(model, target_canvas)
-            ctx.restack = restack
-            ctx.grids = grids
-            ctx.upright = grids
-            for th, make in _candidates(ctx, model):
-                try:
-                    P = make()
-                    if P is None:
-                        continue
-                    if finalize(ctx, P, model) is None:
-                        continue
-                    s, br = score(ctx, P, model)
-                    if broken:
-                        br["grouping"] = -BREAK_COST * broken
-                        s += br["grouping"]
-                    if getattr(P, "lifted", 0):
-                        br["grouping"] = br.get("grouping", 0.0) - BREAK_COST * P.lifted
-                        s -= BREAK_COST * P.lifted
-                    if getattr(P, "rotated", 0):
-                        br["rotate"] = -ROTATE_COST * P.rotated
-                        s += br["rotate"]
-                    if getattr(P, "restacked", 0):
-                        br["restack"] = -RESTACK_COST * P.restacked
-                        s += br["restack"]
-                        P.meta["template"] += " restack"
-                except Exception:  # one bad candidate never kills the run
-                    if DEBUG:
-                        import traceback
-                        traceback.print_exc()
+    resize.last_errors = []
+    W, H = target_canvas["width"], target_canvas["height"]
+    tight = analyze(source)
+    readings = [(tight, 0)]
+    loose = analyze(source, compose=False)
+    n = _broken(tight, loose)
+    if n:
+        readings.append((loose, n))
+    best = None    # (key, P, score, breakdown, meta, model, output)
+    from .blocks import find_cut
+    passes = []
+    for model, broken in readings:
+        passes.append((model, broken, False))
+        carea = model["canvas"][0] * model["canvas"][1]
+        if any(u.kind == "group" and u.role in FLOW_ROLES and find_cut(u, carea) for u in model["units"]):
+            passes.append((model, broken, True))     # compositions may re-stack
+    # grids restructure the design: tried only when no faithful layout keeps every promise
+    stages = [False, True]
+    for grids, (model, broken, restack) in [(g, p) for g in stages for p in passes]:
+        if grids and best is not None and best[0][:2] == (0, 0.0) and best[3].get("readability", 0.0) >= -5.0:
+            break
+        ctx = Ctx(model, target_canvas)
+        ctx.restack = restack
+        ctx.grids = grids
+        ctx.upright = grids
+        for th, make in _candidates(ctx, model):
+            try:
+                P = make()
+                if P is None:
                     continue
+                if finalize(ctx, P, model) is None:
+                    continue
+                s, br = score(ctx, P, model)
+            except Exception as ex:  # one bad candidate is skipped, and said so
+                resize.last_errors.append(f"{type(ex).__name__}: {ex}")
+                print(f"chameleon: candidate skipped: {type(ex).__name__}: {ex}", file=sys.stderr)
                 if DEBUG:
-                    print(f"    {('loose ' if broken else '') + P.meta['template']:<34} score={s:7.2f} "
-                          + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
-                if s > best_s:
-                    best, best_s, best_br, best_model = P, s, br, model
-                    best_meta = dict(P.meta, frame_modes=dict(getattr(P, "frame_modes", {})))
-                    if broken:
-                        best_meta["template"] = "loose-" + best_meta["template"]
-        if best is None:
-            return _fallback(source, target_canvas)
-        if DEBUG:
-            print(f"  -> {best_meta['template']} score={best_s:.2f}")
-        resize.last_choice = (best_meta, best_s, best_br)
-        resize.last_P = best
-        resize.last_model = best_model
-        return _build(source, target_canvas, best)
-    except Exception:
-        if DEBUG:
-            import traceback
-            traceback.print_exc()
-        return _fallback(source, target_canvas)
+                    traceback.print_exc()
+                continue
+            if broken:
+                br["grouping"] = -BREAK_COST * broken
+                s += br["grouping"]
+            if getattr(P, "lifted", 0):
+                br["grouping"] = br.get("grouping", 0.0) - BREAK_COST * P.lifted
+                s -= BREAK_COST * P.lifted
+            if getattr(P, "rotated", 0):
+                br["rotate"] = -ROTATE_COST * P.rotated
+                s += br["rotate"]
+            if getattr(P, "restacked", 0):
+                br["restack"] = -RESTACK_COST * P.restacked
+                s += br["restack"]
+                P.meta["template"] += " restack"
+            out = conform(source, _build(source, target_canvas, P), target_canvas)
+            fl = faults(source, out, W, H)
+            key = (*fault_key(fl, type_floor(W, H)), -s)
+            if DEBUG:
+                print(f"    {('loose ' if broken else '') + P.meta['template']:<34} faults={fl[:2]} score={s:7.2f} "
+                      + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
+            if best is None or key < best[0]:
+                meta = dict(P.meta, frame_modes=dict(getattr(P, "frame_modes", {})))
+                if broken:
+                    meta["template"] = "loose-" + meta["template"]
+                best = (key, P, s, br, meta, model, out, fl)
+    if best is None:
+        raise RuntimeError("no candidate layout placed every element")
+    key, P, s, br, meta, model, out, fl = best
+    if DEBUG:
+        print(f"  -> {meta['template']} faults={len(fl)} score={s:.2f} {fl[:3]}")
+    resize.last_choice = (meta, s, br)
+    resize.last_P = P
+    resize.last_model = model
+    resize.last_faults = fl
+    return out
