@@ -14,12 +14,11 @@ they cannot fit. The caller searches for the largest ``s`` that fits.
 from __future__ import annotations
 
 import math
-import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from .analyze import Item
-from .items import INF, Ctx, Real, realize
+from .items import BUDGET, INF, Budget, BudgetExceeded, Ctx, Real, realize  # noqa: F401 (re-exported)
 
 Placement = Tuple[Real, float, float]
 RHYTHM = 1.0  # a gap in a column is at most this times the smaller of the rows it separates
@@ -48,50 +47,6 @@ def _oh_stack(parts, offsets, w: float, h: float):
     return (l, t, r, b)
 
 
-class BudgetExceeded(RuntimeError):
-    """The resize ran past its hard work or time limit."""
-
-
-class Budget:
-    """Work meter for one resize, counted in node measurements.
-
-    Nested flex rows search their children's narrowest width by bisection, so
-    each level of nesting multiplies the work by about the number of probes:
-    a deep enough design (rows of copy in a panel in a row ...) never finishes
-    and its memo grows without bound. Past ECONOMY measurements (several times
-    what any ordinary design needs) the layout switches to economy mode for
-    the rest of the resize: rooms are rounded down to a grid, items reuse a
-    size already found for a larger room, a nested block is not width-searched
-    and scales are probed on a 2% grid, and generate() skips the display and
-    measure refinements. The threshold is a count, not a clock, so which
-    designs switch is the same on every machine, and a design under it lays
-    out exactly as before. Past LIMIT measurements, or SECONDS of wall time as
-    a last guard, the search stops (BudgetExceeded) and the candidates found
-    so far are the field."""
-
-    ECONOMY = 600_000
-    LIMIT = 6_000_000
-    SECONDS = 60.0
-    GRID = 0.25  # economy: room is rounded down to this times the readable size
-    TOLERANCE = 1.02  # economy: the scale search stops within 2% instead of 0.4%
-
-    def __init__(self):
-        self.start()
-
-    def start(self) -> None:
-        self.work = 0
-        self.economy = False
-        self.deadline = time.monotonic() + self.SECONDS
-
-    def tick(self) -> None:
-        self.work += 1
-        if not self.economy and self.work > self.ECONOMY:
-            self.economy = True
-        if self.work > self.LIMIT or (self.work & 1023 == 0 and time.monotonic() > self.deadline):
-            raise BudgetExceeded(f"layout work budget spent ({self.work} measurements)")
-
-
-BUDGET = Budget()
 
 
 def _step(ctx: Ctx) -> float:
@@ -121,23 +76,18 @@ class Node:
 
     def measure(self, s: float, ctx: Ctx, max_w: float, max_h: float, relax: float) -> Optional[Laid]:
         """The node's size at scale ``s`` within max_w x max_h, or None if it
-        does not fit. Every call is one unit of the resize's work budget. In
-        economy mode (see Budget) the room is rounded down to the economy grid
+        does not fit. In economy mode (see Budget) the room is rounded down to the economy grid
         and the answer kept on the node, so nested searches stop re-measuring
         the same subtree at widths a hair apart. Rounding down only ever offers
         less room, so what fits still fits."""
         if not BUDGET.economy:
-            BUDGET.tick()
-            laid = self._measure(s, ctx, max_w, max_h, relax)
-            _remember(self, s, ctx, relax, max_w, max_h, laid is not None)
-            return laid
+            return self._measure(s, ctx, max_w, max_h, relax)
         max_w, max_h = _grid(max_w, ctx), _grid(max_h, ctx)
         if isinstance(self, Leaf) and not self.fill:
             return self._economy_measure(s, ctx, max_w, max_h, relax)
         key = (s, max_w, max_h, relax, _ctx_key(ctx))
         memo = self.__dict__.setdefault("_memo", {})
         if key not in memo:
-            BUDGET.tick()
             memo[key] = self._measure(s, ctx, max_w, max_h, relax)
         return memo[key]
 
@@ -179,7 +129,6 @@ class Leaf(Node):
                     return None
             elif laid.w <= max_w + 0.01 and max_w <= w and laid.h <= max_h + 0.01 and max_h <= h:
                 return laid
-        BUDGET.tick()
         laid = self._measure(s, ctx, max_w, max_h, relax)
         seen.append((max_w, max_h, laid))
         return laid
@@ -407,45 +356,13 @@ def _economy_width(node: Node, s, ctx, max_h, relax) -> Optional[float]:
     return hi
 
 
-def _remember(node: Node, s, ctx, relax, w: float, h: float, fits: bool) -> None:
-    """Keep the Pareto frontier of the rooms ``node`` was measured in, per
-    scale: the least rooms it fitted and the largest it did not."""
-    front = node.__dict__.setdefault("_rooms", {}).setdefault((s, relax, _ctx_key(ctx)), ([], []))
-    ok, bad = front
-    if fits:
-        if any(x <= w and y <= h for x, y in ok):
-            return
-        ok[:] = [(x, y) for x, y in ok if not (w <= x and h <= y)] + [(w, h)]
-    else:
-        if any(x >= w and y >= h for x, y in bad):
-            return
-        bad[:] = [(x, y) for x, y in bad if not (w >= x and h >= y)] + [(w, h)]
-
-
-def _fits(node: Node, s, ctx, w: float, h: float, relax) -> bool:
-    """Whether ``node`` fits w x h. A node that fitted in less room on both
-    sides fits, one that failed in more room on both sides fails: neither is
-    measured again. This is what makes a width search inside a width search
-    affordable: the inner search, asked again for a parent's next probe,
-    finds most of its answers already known. (Assumes fitting is monotone in
-    the room, as every search here already does.)"""
-    front = node.__dict__.get("_rooms", {}).get((s, relax, _ctx_key(ctx)))
-    if front is not None:
-        ok, bad = front
-        if any(x <= w and y <= h for x, y in ok):
-            return True
-        if any(x >= w and y >= h for x, y in bad):
-            return False
-    return node.measure(s, ctx, w, h, relax) is not None
-
-
 def _bisect_width(node: Node, s, ctx, max_w, max_h, relax) -> Optional[float]:
-    if not _fits(node, s, ctx, max_w, max_h, relax):
+    if node.measure(s, ctx, max_w, max_h, relax) is None:
         return None
     lo, hi = 1.0, max_w
     for _ in range(14):
         mid = (lo + hi) / 2.0
-        if not _fits(node, s, ctx, mid, max_h, relax):
+        if node.measure(s, ctx, mid, max_h, relax) is None:
             lo = mid
         else:
             hi = mid

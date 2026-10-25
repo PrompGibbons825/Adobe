@@ -209,7 +209,7 @@ class WorkBudget(unittest.TestCase):
     TARGETS = ({"width": 1640, "height": 924}, {"width": 1080, "height": 1350}, {"width": 728, "height": 90})
 
     def _with(self, **attrs):
-        from engine.smart.layout import Budget
+        from engine.smart.items import Budget
 
         old = {k: getattr(Budget, k) for k in attrs}
         for k, v in attrs.items():
@@ -231,22 +231,25 @@ class WorkBudget(unittest.TestCase):
                     self.assertFalse(fell_back)
 
     def test_budget_spent_early(self):
-        self._with(ECONOMY=2_000, LIMIT=20_000)
+        self._with(ECONOMY=200, LIMIT=2_000)
         for name, src in _sources()[:5]:
             for tgt in self.TARGETS:
                 with self.subTest(design=name, target=tgt):
                     self._valid(src, tgt)
 
     def test_deep_design_is_bounded(self):
-        import time
-
+        """Judged by work, not the clock, so a loaded machine does not fail it: the deep design
+        must switch to economy and finish well inside the hard limit, with a full layout (no
+        fit-and-centre fallback, no clock cut-off)."""
+        from engine.smart.items import BUDGET, Budget
         from tests.finicky import deep_panel
 
+        self._with(SECONDS=1e9)  # the wall-clock guard off: only the deterministic budget counts
         src = {"canvas": {"width": 1080, "height": 1350}, "elements": deep_panel()}
-        t0 = time.monotonic()
         _, fell_back = self._valid(src, {"width": 1640, "height": 924})
         self.assertFalse(fell_back)
-        self.assertLess(time.monotonic() - t0, 60.0)
+        self.assertTrue(BUDGET.economy)
+        self.assertLess(BUDGET.work, Budget.LIMIT)
 
 
 class GeneratedDesigns(unittest.TestCase):

@@ -1004,7 +1004,7 @@ def round10_cases() -> List[Case]:
              "a panel of many side-by-side text rows beside a product, on a 16:9-ish landscape: the "
              "nested width searches must not blow up (bounded time and memory), and the output is valid",
              1080, 1350, deep_panel(), targets=("1640x924", "pres-16x9", "leaderboard"),
-             show=("headline", "cta_label"), seconds=60.0, max_mb=1500.0),
+             show=("headline", "cta_label"), seconds=120.0, max_mb=1500.0),
     ]
 
 

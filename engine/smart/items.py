@@ -10,6 +10,7 @@ ribbon's bounding box.
 from __future__ import annotations
 
 import math
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
@@ -783,6 +784,54 @@ def _display(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: fl
     return None
 
 
+class BudgetExceeded(RuntimeError):
+    """The resize ran past its hard work or time limit."""
+
+
+class Budget:
+    """Work meter for one resize, counted in items actually sized (memo misses
+    of realize(), where the time goes).
+
+    Nested flex rows search their children's narrowest width by bisection, so
+    each level of nesting multiplies the work by about the number of probes:
+    a deep enough design (rows of copy in a panel in a row ...) never finishes
+    and its memo grows without bound. Past ECONOMY items sized (well over what
+    any ordinary design needs) the layout switches to economy mode for
+    the rest of the resize: rooms are rounded down to a grid, items reuse a
+    size already found for a larger room, a nested block is not width-searched
+    and scales are probed on a 2% grid, and generate() skips the display and
+    measure refinements. The threshold is a count, not a clock, so which
+    designs switch is the same on every machine, and a design under it lays
+    out exactly as before. Past LIMIT, or SECONDS of wall time as
+    a last guard, the search stops (BudgetExceeded) and the candidates found
+    so far are the field."""
+
+    ECONOMY = 150_000
+    LIMIT = 300_000
+    SECONDS = 60.0
+    GRID = 0.25  # economy: room is rounded down to this times the readable size
+    TOLERANCE = 1.02  # economy: the scale search stops within 2% instead of 0.4%
+
+    def __init__(self):
+        self.start()
+
+    def start(self) -> None:
+        self.work = 0
+        self.economy = False
+        self.armed = False  # the hard limit applies only while candidates are searched
+        self.deadline = time.monotonic() + self.SECONDS
+
+    def tick(self) -> None:
+        self.work += 1
+        if not self.economy and self.work > self.ECONOMY:
+            self.economy = True
+        if self.armed and (self.work > self.LIMIT or (self.work & 255 == 0 and time.monotonic() > self.deadline)):
+            raise BudgetExceeded(f"layout work budget spent ({self.work} items sized)")
+
+
+BUDGET = Budget()
+
+
 _REALIZED: "OrderedDict[tuple, Optional[Real]]" = OrderedDict()
 REALIZED_MAX = 150_000  # least recently used sizes are forgotten past this many (memory stays bounded)
 
@@ -805,6 +854,7 @@ def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF
            ctx.cta_min if it.role == "cta" else 0.0)
     r = _REALIZED.get(key, _MISS)
     if r is _MISS:
+        BUDGET.tick()
         r = _REALIZED[key] = _realize(it, s, ctx, max_w, max_h, relax, k, mode, nowrap)
         if len(_REALIZED) > REALIZED_MAX:
             _REALIZED.popitem(last=False)
