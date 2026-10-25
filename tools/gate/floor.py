@@ -28,6 +28,19 @@ Parts (each reported as PASS / FAIL / SKIP):
   rules (ids, bounds, aspect), ghost text and hidden elements (S1) never do. ``bleed``
   (``rules.bleed_report``: elements an output lets past the canvas within the S4 bleed policy)
   is reported per tile and in total, never a failure: only the panel judges bleed.
+  The must-not-rise rows compare the two engines on the tiles where **both** outputs pass the
+  hard rules: a tile one side crashed on carries no soft-row counts for that side, so it would
+  otherwise move the other side's count for free.
+
+**Profiles** (a prereg's ``floor_profile``, default ``default``):
+
+* ``default``: everything above; what a change on one engine line is held to.
+* ``whole-engine``: one whole engine against another (a line head against main, STEERING S15).
+  ``tests.run`` (the finicky suite) and ``unittest`` encode our own engine's choices, and the
+  soft rows (promise, contrast, hierarchy) are checks written around our engine's outputs, so a
+  different engine must not be blocked by them: the suites part runs ``tools.stress`` only, and
+  the soft rows are counted and reported (``reported``), never a failure. Hard rules, ghost
+  text, stress, Docker, metamorphic and hidden elements (must not rise) still decide.
 
 A task dir holds brief-format ``<name>.json`` tasks (``source`` + ``target_canvas``); an output
 dir holds ``<name>.json`` or ``<name>_output.json``. The floor never decides which directories
@@ -63,6 +76,17 @@ MUST_BE_ZERO = ("hard", "ghost")
 MUST_NOT_RISE = ("promise", "contrast", "hierarchy", "hidden")
 REPORT_ONLY = ("bleed",)
 TOLERABLE = ("promise", "contrast", "hierarchy")  # rows a prereg's floor_tolerance may loosen
+PROFILES = {
+    "default": {"suites": [n for n, _ in SUITES], "report_rows": ()},
+    "whole-engine": {"suites": ["stress"], "report_rows": TOLERABLE},
+}
+
+
+def profile_errors(name) -> List[str]:
+    """What is wrong with a prereg's ``floor_profile``."""
+    if name is None or name in PROFILES:
+        return []
+    return [f"unknown floor_profile {name!r} (known: {', '.join(PROFILES)})"]
 
 
 def tolerance_errors(tol) -> List[str]:
@@ -103,6 +127,12 @@ def stage(engine_root: Path, dest: Path) -> Path:
             shutil.copy2(p, dest / p.name)
     for d in ("tests", "tools"):
         shutil.copytree(GATE_ROOT / d, dest / d, ignore=shutil.ignore_patterns("__pycache__", "eval"))
+    # The gate's measuring code (tools/rules.py) imports helpers from engine.smart. An engine
+    # built differently (another line, e.g. line/jeff) has no engine/smart, so the gate's own
+    # copy goes in beside it: the candidate's resize() never imports it, the measurements do.
+    if not (dest / "engine" / "smart").exists() and (GATE_ROOT / "engine" / "smart").is_dir():
+        shutil.copytree(GATE_ROOT / "engine" / "smart", dest / "engine" / "smart",
+                        ignore=shutil.ignore_patterns("__pycache__"))
     (dest / "output").mkdir(exist_ok=True)
     return dest
 
@@ -217,39 +247,51 @@ def _metrics_subprocess(src_dir: Path, out_dir: Path, kit: Optional[Path]) -> Di
 
 
 def compare_tiles(cand: Dict[str, dict], base: Optional[Dict[str, dict]] = None,
-                  tolerance: Optional[Dict[str, int]] = None) -> dict:
+                  tolerance: Optional[Dict[str, int]] = None, report_rows=()) -> dict:
     """The tile verdict: zero rows must be 0 everywhere, rise rows must not exceed the base by
-    more than their pre-registered ``tolerance`` (default 0)."""
+    more than their pre-registered ``tolerance`` (default 0), counted on the tiles where both
+    sides' outputs pass the hard rules. Rows in ``report_rows`` (a ``whole-engine`` profile)
+    are counted and reported under ``reported``, never a failure."""
     errs = tolerance_errors(tolerance)
+    bad = set(report_rows) - set(TOLERABLE)
+    if bad:
+        errs.append(f"report_rows {sorted(bad)} are not soft rows (soft: {', '.join(TOLERABLE)})")
     if errs:
         raise ValueError("; ".join(errs))
     tol = {k: int(v) for k, v in (tolerance or {}).items() if v}
     totals = {k: sum(len(m.get(k, [])) for m in cand.values()) for k in MUST_BE_ZERO + MUST_NOT_RISE + REPORT_ONLY}
     fails = [f"{k}: {totals[k]} (must be 0)" for k in MUST_BE_ZERO if totals[k]]
-    base_totals, rises, tolerated = None, {}, {}
+    base_totals, rises, tolerated, reported, paired = None, {}, {}, {}, None
     if base is not None:
         base_totals = {k: sum(len(m.get(k, [])) for m in base.values()) for k in MUST_NOT_RISE + REPORT_ONLY}
+        both = [n for n in cand if n in base and not cand[n].get("hard") and not base[n].get("hard")]
+        paired = {"tiles": len(both)}
         for k in MUST_NOT_RISE:
-            rise = totals[k] - base_totals[k]
-            if rise > tol.get(k, 0):
-                fails.append(f"{k}: {totals[k]} > base {base_totals[k]}"
-                             + (f" (tolerance {tol[k]})" if tol.get(k) else ""))
+            c, b = (sum(len(side[n].get(k, [])) for n in both) for side in (cand, base))
+            paired[k] = {"cand": c, "base": b}
+            rise = c - b
+            if k in report_rows:
+                if rise > 0:
+                    reported[k] = {"cand": c, "base": b, "rise": rise}
+            elif rise > tol.get(k, 0):
+                fails.append(f"{k}: {c} > base {b}" + (f" (tolerance {tol[k]})" if tol.get(k) else ""))
             elif rise > 0:
-                tolerated[k] = {"cand": totals[k], "base": base_totals[k], "rise": rise, "tolerance": tol[k]}
-            rises[k] = sorted(n for n in cand if n in base and len(cand[n][k]) > len(base[n][k]))
+                tolerated[k] = {"cand": c, "base": b, "rise": rise, "tolerance": tol[k]}
+            rises[k] = sorted(n for n in both if len(cand[n][k]) > len(base[n][k]))
     examples = {k: [f"{n}: {e}" for n, m in sorted(cand.items()) for e in m.get(k, [])][:8]
                 for k in MUST_BE_ZERO + MUST_NOT_RISE + REPORT_ONLY if totals[k]}
     # report only: per tile, how many elements bleed (S4); bleed never fails the floor
     bleed = {n: len(m.get("bleed", [])) for n, m in sorted(cand.items()) if m.get("bleed")}
     return {"pass": not fails, "tiles": len(cand), "totals": totals, "base_totals": base_totals,
-            "fails": fails, "tolerance": tol, "tolerated": tolerated, "rose_on": rises, "examples": examples, "bleed": bleed}
+            "fails": fails, "tolerance": tol, "tolerated": tolerated, "reported": reported, "paired": paired,
+            "rose_on": rises, "examples": examples, "bleed": bleed}
 
 
 def check_tiles(src_dir: Path, out_dir: Path, base_out: Optional[Path] = None, kit: Optional[Path] = None,
-                tolerance: Optional[Dict[str, int]] = None) -> dict:
+                tolerance: Optional[Dict[str, int]] = None, report_rows=()) -> dict:
     cand = _metrics_subprocess(src_dir, out_dir, kit)
     base = _metrics_subprocess(src_dir, base_out, kit) if base_out else None
-    return compare_tiles(cand, base, tolerance)
+    return compare_tiles(cand, base, tolerance, report_rows)
 
 
 # ----------------------------------------------------------------------------
