@@ -129,13 +129,14 @@ typographic **rhythm**:
 Margins follow the source's breathing room but are never thinner than a
 banner's (about 5% of the canvas's length, at most 0.3 of its short side).
 On a story or reel (1.6 or more times taller than wide, not an ad unit) copy,
-logo, button and corner items also stay out of the platform UI: the account
-bar over the top 14% and the reply box over the bottom 20%. Backgrounds and
-decoration still run under them. On a roomy canvas (short side 400 px or more)
-a hero keeps at least 70% of its source share of the canvas, and any other
-picture that covered 8% of the source 60% (a cut-out, which cannot be cropped,
-no more than 70% of the largest share it could show whole): the copy gives way
-first, so a product never shrinks to a thumbnail. Texts that shared a font
+logo, button and corner items also keep clear of the very edges the platform UI
+covers (the top 5% and the bottom 6%; a deeper band made stories look small in a
+blind comparison). Backgrounds and decoration still run under it. On a roomy
+canvas (short side 400 px or more) a hero is held at no less than about half of
+its source share of the canvas and pays below 70%, and any other picture that
+covered 8% of the source pays below 60% (a cut-out, which cannot be cropped, is
+asked for no more than 70% of the largest share it could show whole): the copy
+gives way first, so a product never shrinks to a thumbnail. Texts that shared a font
 size, family and role in the source share one size in every layout, the
 smallest any of them was set at (Adobe's copyfit rule: each old size maps to
 one new size). The headline is exempt, since display type is sized on its own.
