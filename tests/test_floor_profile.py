@@ -91,5 +91,19 @@ class WholeEngineProfile(unittest.TestCase):
             self.assertEqual(P.make("mk3", "b", "c", sets=["novel-v1"], floor=[])["floor"], [])
 
 
+class StageForeignEngine(unittest.TestCase):
+    def test_an_engine_without_engine_smart_gets_the_gates_measuring_helpers(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            root = Path(a)
+            (root / "engine").mkdir()
+            (root / "engine" / "__init__.py").write_text("")
+            (root / "engine" / "resize.py").write_text("def resize(s, t):\n    return s\n")
+            F.stage(root, Path(b))
+            self.assertTrue((Path(b) / "engine" / "smart" / "analyze.py").is_file())
+            self.assertEqual((Path(b) / "engine" / "resize.py").read_text(), "def resize(s, t):\n    return s\n")
+
+
 if __name__ == "__main__":
     unittest.main()

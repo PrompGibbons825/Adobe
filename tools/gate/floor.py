@@ -127,6 +127,12 @@ def stage(engine_root: Path, dest: Path) -> Path:
             shutil.copy2(p, dest / p.name)
     for d in ("tests", "tools"):
         shutil.copytree(GATE_ROOT / d, dest / d, ignore=shutil.ignore_patterns("__pycache__", "eval"))
+    # The gate's measuring code (tools/rules.py) imports helpers from engine.smart. An engine
+    # built differently (another line, e.g. line/jeff) has no engine/smart, so the gate's own
+    # copy goes in beside it: the candidate's resize() never imports it, the measurements do.
+    if not (dest / "engine" / "smart").exists() and (GATE_ROOT / "engine" / "smart").is_dir():
+        shutil.copytree(GATE_ROOT / "engine" / "smart", dest / "engine" / "smart",
+                        ignore=shutil.ignore_patterns("__pycache__"))
     (dest / "output").mkdir(exist_ok=True)
     return dest
 
