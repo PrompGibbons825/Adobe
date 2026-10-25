@@ -36,8 +36,6 @@
    "story"
   ],
   "crowded_l3": [
-   "large-leader",
-   "leaderboard",
    "mobile-banner"
   ],
   "freetype_margin_narrow": [
@@ -81,7 +79,6 @@
    "ig-square",
    "leaderboard",
    "med-rect",
-   "mobile-banner",
    "story"
   ],
   "product_cards": [
@@ -136,13 +133,9 @@
   "thin_rules_and_lines": [
    "mobile-banner"
   ],
-  "two_ctas": [
-   "mobile-banner"
-  ],
   "type_wordmark": [
    "billboard",
-   "li-banner",
-   "skyscraper"
+   "li-banner"
   ],
   "unbreakable_words": [
    "mobile-banner",
@@ -171,7 +164,8 @@
   "step/band_stays_band_on_squares@970x250+01",
   "step/caption_stays_with_photo@1200x628+01",
   "step/caption_stays_with_photo@1200x628+10",
-  "step/crowded_l3@300x250+01",
+  "step/crowded_l3@300x250+10",
+  "step/crowded_l3@728x90+01",
   "step/freetype_margin_stack@728x90+01",
   "step/tiny_items_kept_on_small_canvases@1200x628+01",
   "step/tiny_items_kept_on_small_canvases@1200x628+10",
@@ -179,7 +173,8 @@
  ],
  "other": [],
  "added": {
-  "step/crowded_l3@300x250+01": "one pixel flips the winner between two candidates with scores within ~0.1 (the line's critic is an argmax; the type floor moved the tie). Not a rule failure; a continuity gap of argmax selection, recorded instead of hidden.",
-  "step/band_stays_band_on_squares@970x250+01": "one pixel flips the winner between two candidates with scores within ~0.1 (the line's critic is an argmax; the type floor moved the tie). Not a rule failure; a continuity gap of argmax selection, recorded instead of hidden."
+  "step/band_stays_band_on_squares@970x250+01": "one pixel flips the winner between two candidates with scores within ~0.1 (the line's critic is an argmax; the type floor moved the tie). Not a rule failure; a continuity gap of argmax selection, recorded instead of hidden.",
+  "step/crowded_l3@300x250+10": "one pixel flips the winner between two candidates with scores within ~0.1 (the line's critic is an argmax; the type floor moved the tie). Not a rule failure; a continuity gap of argmax selection, recorded instead of hidden.",
+  "step/crowded_l3@728x90+01": "one pixel flips the winner between two candidates with scores within ~0.1 (the line's critic is an argmax; the type floor moved the tie). Not a rule failure; a continuity gap of argmax selection, recorded instead of hidden."
  }
 }
