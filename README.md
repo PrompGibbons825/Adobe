@@ -268,6 +268,26 @@ python -m tools.audit --n 40 --seed 1 --sheet audit.png        # layout quality 
   `tests/test_engine.py` runs a dozen of them (on a seed the audit does not use)
   through the hard rules.
 
+- `tools/unseen.py` is the unseen suite: eight families of medium-to-hard designs
+  built on real Crello photos, cut-outs and the Solstice kit (a person on a
+  full-bleed photo, half photo / half colour panel, products with badges and a
+  price, a photo collage, an event poster, a sale promo with sticker and ribbon,
+  a glass card over a photo, a Level-3-dense poster with a missing asset), plus
+  real Crello pairs. Every tile must pass six named checks: hard rules, nothing
+  hidden, legible type, copy contrast on photos, no cut or covered face, no
+  overlap or flattened hierarchy. `--split dev` is for development; the holdout
+  seeds and pairs are run only to check.
+
+## Prior art this engine builds on
+
+- No-drop demotion instead of hiding, and growth into blank space: ideas from
+  Jeffrey Yu's independent engine for this challenge.
+- Photo importance map in the manner of smartcrop.js (MIT), spectral-residual
+  saliency (Hou and Zhang, 2007), YuNet face detection (OpenCV Zoo, MIT).
+- One new size per old size: Adobe's copyfit patent (US11436404).
+- Penalties for trivial scaling and near-touching shapes: published VLM layout
+  rubrics (One Figure, Every Canvas; PosterOmni; UI-Lens; "VLMs are blind").
+
 ## Repo layout
 
 ```
