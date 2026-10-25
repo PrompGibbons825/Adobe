@@ -296,7 +296,7 @@ def _room(a: Box, b: Box) -> float:
 
 
 def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design, ctx: Ctx,
-                 zone: Box, side: Optional[str] = None) -> List[Placement]:
+                 zone: Box, side: Optional[str] = None, vside: Optional[str] = None) -> List[Placement]:
     """Rows top to bottom with their measured gaps; the height left over is
     shared between the top margin, each gap and the bottom margin in
     proportion to the room the source left there (``_room``; the margins are
@@ -320,6 +320,12 @@ def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design,
         share = [slack * r / sum(room) for r in room]
     else:  # nothing to go by: centre the column
         share = [slack / 2.0] + [0.0] * (len(parts) - 1) + [slack / 2.0]
+    if vside == "top":  # the column keeps to the top (a photo's subject below it): its top margin goes under it
+        share[-1] += share[0]
+        share[0] = 0.0
+    elif vside == "bottom":
+        share[0] += share[-1]
+        share[-1] = 0.0
     bw = max(p.w for p in parts)
     if side in ("start", "end"):
         bx = zone.x if side == "start" else zone.r - bw
@@ -479,7 +485,7 @@ def _zone(d: Design, ctx: Ctx, insets) -> Tuple[Box, float, float]:
 
 
 def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", insets=(0, 0, 0, 0),
-               force_align: Optional[str] = None) -> Optional[Plan]:
+               force_align: Optional[str] = None, vside: Optional[str] = None) -> Optional[Plan]:
     vis = _visible(d, hidden)
     floaters = [it for it in vis if it.corner]
     body = [it for it in vis if not it.corner]
@@ -499,7 +505,7 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
             return None
         if tall_ad:  # a tall ad unit read at a glance: the button is the column's second focal point
             s, laid, relax = _with_bold_cta(root, d, ctx, zone, lo, hi, (s, laid, relax), TALL_CTA)
-        placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, side=force_align)
+        placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, side=force_align, vside=vside)
         fl, bad, clash, new_zone = _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax)
         if not clash:
             return Plan(name=name, placed=placed, hidden=list(hidden) + bad, s=s, zone=zone, floaters=fl,
@@ -815,6 +821,9 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
     from . import assets as _assets
 
     busy_bg = any(b.get("type") == "image" and _assets.info(b.get("asset_id")).busy > 0.3 for b in d.backgrounds)
+    from . import vision as _vision
+
+    subject_bg = _vision.photo_subject(d)  # a photo with a subject (a face): copy may keep to one end
     head = next((it for it in d.items if it.role == "headline" and it.is_copy), None)
     words = str(lead_text(head).get("content", "")).split() if head is not None else []
     emphasis = () if not words else EMPHASIS if len(words) <= DISPLAY_WORDS else EMPHASIS[:1]
@@ -822,9 +831,12 @@ def generate(d: Design, ctx: Ctx) -> List[Plan]:
     def archetypes(force_all: bool):
         if r <= 2.2 or force_all:
             yield "stack", plan_stack, {}
-            if busy_bg:  # copy over a photo: also try it against either side
+            if busy_bg or subject_bg:  # copy over a photo: also try it against either side
                 yield "stack-start", plan_stack, dict(force_align="start")
                 yield "stack-end", plan_stack, dict(force_align="end")
+            if subject_bg and ctx.H > 1.05 * ctx.W:  # or at the top or bottom of a tall canvas
+                yield "stack-top", plan_stack, dict(vside="top")
+                yield "stack-bottom", plan_stack, dict(vside="bottom")
         if r >= 0.95:
             for side in ("left", "right"):
                 for frac in (0.34, 0.48):

@@ -26,8 +26,10 @@ docker run --rm --network none \
   -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output my-chameleon-engine
 ```
 
-No model, no network, no extra dependencies: the engine uses only what the starter
-already installs (skia and numpy through cr-renderer, and Pillow). A task takes
+No network at run time. Besides what the starter installs (skia and numpy through
+cr-renderer, and Pillow), the engine uses OpenCV (`opencv-python-headless`) and one
+small face-detection model committed to the repo (YuNet, 230 KB, MIT, in
+`engine/smart/models/`); nothing is downloaded at run time. A task takes
 about 0.3 s at the median and under 2 s at the 95th percentile; the first task
 in a run also pays a few seconds of one-time font and library loading.
 
@@ -145,17 +147,31 @@ the source. Those eight are shared out first: identical layouts count once and n
 archetype takes more than two places, so variants of one plan cannot crowd out a
 different one.
 
+**Photos** (`vision.py`). A background photo is looked at once, small: an
+importance map in the manner of smartcrop.js (edges, skin tone, saturation) plus
+spectral-residual saliency, and faces from YuNet (OpenCV's Haar cascade if it
+cannot load), padded to the head (never cut) and to head and shoulders. Every
+candidate pays for copy, logo or button set over a face or on the busy part of the
+picture (an item left out pays as much, so copy moves off the subject but is never
+dropped for it), and over a photo with a subject the column is also offered at
+either side, or at the top or bottom of a tall canvas. A canvas-covering photo is
+then cropped by bleed: drawn at its own aspect, scaled to cover the canvas, and slid
+so no head is cut, what the source showed stays in view, and the subject sits on
+the third line opposite the copy. A flat or diffuse picture (a gradient, a
+texture) keeps the plain centre crop, so designs on one do not change.
+
 **5. Check, emit and enforce the rules** (`__init__.py`)
 
 The winning plan must pass two hard checks on its finished output: no copy drawn
 over copy that the source did not draw that way, and no glyph past the canvas
 edge. Then:
 
-- backgrounds are redrawn full-bleed, panels around their members, decoration in
-  its corner;
+- backgrounds are redrawn full-bleed (a photo with a subject by its focal crop),
+  panels around their members, decoration in its corner;
 - `finalize()` enforces every hard rule on whatever was produced: same ids, same
   order, immutable fields (copy, fonts, colours, assets) from the source, image
-  ratios, every painted box (rotation included) on the canvas, integer font sizes,
+  ratios, every painted box (rotation included) on the canvas except a photo that
+  covers the whole canvas (its crop), integer font sizes,
   and only values the renderer can draw.
 
 If lockups make every layout fail, the design is planned again with their parts
