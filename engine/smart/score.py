@@ -144,7 +144,7 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
     if roomy:  # room to grow into (small ad units keep their density logic)
         b["fill"] = FILL * min(1.0, cov / max(1e-6, min(0.55, 1.1 * src_cov)))
         b["shrunk"] = -SHRINK * _shrunk(placed, d, ctx)
-    b["trivial"] = -TRIVIAL * _trivial(boxes, d, ctx)
+        b["trivial"] = -TRIVIAL * _trivial(boxes, d, ctx)
     b["density"] = -DENSITY * _crowding(boxes, d, ctx)
     if area > 0:
         mx = sum(bx.cx * bx.area for _, bx in boxes) / area
