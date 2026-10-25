@@ -43,12 +43,11 @@ def render(design: dict, max_side: int = 480) -> Image.Image:
 
 
 def resize_explained(src: dict, tgt: dict):
-    """resize(), plus the name of the plan that won (or FALLBACK)."""
-    try:
-        d, ctx, plans = plan_design(src, tgt)
-        return finalize(src, {"canvas": tgt, "elements": emit(plans[0], d, ctx)}, tgt), plans[0].name
-    except Exception:  # noqa: BLE001 - resize() falls back the same way
-        return resize(src, tgt), "FALLBACK"
+    """resize(), plus the name of the template that won (line/jeff: engine/smart here is only the
+    measuring library, so the engine's own resize() runs and reports its choice)."""
+    out = resize(json.loads(json.dumps(src)), dict(tgt))
+    choice = getattr(resize, "last_choice", None)
+    return out, (choice[0].get("template", "?") if choice else "?")
 
 
 def tile(im: Image.Image, label: str, cell: int) -> Image.Image:

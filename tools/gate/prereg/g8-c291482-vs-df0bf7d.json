@@ -1,0 +1,72 @@
+{
+ "id": "g8-c291482-vs-df0bf7d",
+ "hypothesis": "G6 panel power, setup track: df0bf7d vs c291482 on fresh novel-v6 (99 designs, 2 tier-1 + 1 tier-2 targets each), expect ACCEPT. Changed from g7 before any novel-v6 run: (1) novel-v6 instead of novel-v5, because novel-v5 has only 20 designs with a tier-1 tile (min_win_designs is 20), so the win test could not have power there; (2) floor [] (as the fit-centre check): this run validates the panel's power. On novel-v5 df0bf7d crashes (OOM) on one task, a real engine defect the floor correctly rejects (g7); a crashed tile is left out of the judging here. Same S14 panel, rule and sentinel pool (crello-v1) as g7.",
+ "base": {
+  "commit": "c29148215a67a3c7934de458a5dbb54d5cbd56f5",
+  "label": "c291482 (10-06)"
+ },
+ "candidate": {
+  "commit": "df0bf7d1951d163b573c1133ac1454f9c953c973",
+  "label": "df0bf7d"
+ },
+ "sets": [
+  "novel-v6"
+ ],
+ "null": false,
+ "floor": [],
+ "rule": {},
+ "panel": {
+  "protocol": "two-family",
+  "families": {
+   "claude": {
+    "cli": "claude",
+    "model": "claude-sonnet-5-5"
+   },
+   "cursor": {
+    "cli": "agent",
+    "model": "grok-4.7-high"
+   }
+  },
+  "tiebreak": {
+   "cli": "agent",
+   "model": "composer-2.5"
+  },
+  "batch": 8,
+  "concurrency": 4,
+  "agent_concurrency": 2,
+  "agent_daily_cap": 200,
+  "view": 1024,
+  "timeout": 900,
+  "retries": 1,
+  "min_sentinels": 8,
+  "small_sentinels": 0.5,
+  "sentinel_kinds": [
+   "p_crop",
+   "p_onart",
+   "fit_centre"
+  ],
+  "report_kinds": [
+   "p_mis20",
+   "p_lowcon",
+   "p_hide_one",
+   "p_clip_letter",
+   "p_edge_touch",
+   "p_typescale"
+  ],
+  "sentinel_screen": true,
+  "sentinel_min_diff": 0.006,
+  "sentinel_fit_min_diff": 0.12,
+  "sentinel_small_min_diff": 0.0005,
+  "prompt": "v2",
+  "balance": true,
+  "orders": 1,
+  "mat": true
+ },
+ "anchors": {
+  "parity_designs": 30
+ },
+ "created": "2026-10-25T06:16:37Z",
+ "sentinel_sets": [
+  "crello-v1"
+ ]
+}

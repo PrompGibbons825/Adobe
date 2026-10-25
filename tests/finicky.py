@@ -13,6 +13,7 @@ each other (``together``).
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 from dataclasses import dataclass, field
@@ -49,13 +50,18 @@ class Case:
     together: Tuple[Tuple[str, str], ...] = ()
     check: Optional[Check] = None
     background: bool = True
+    bg_fit: str = "cover"  # the source background's fit
+    # Targets on which the current engine is KNOWN to fail this case (a failure class found by the
+    # loop, not fixed yet). The suite reports them as XFAIL and stays green; once the engine
+    # passes one, the run reports XPASS and fails, so the mark is removed with the fix.
+    xfail: Tuple[str, ...] = ()
 
     @property
     def source(self) -> dict:
         els = [dict(e) for e in self.elements]
         if self.background:
             els.insert(0, {"id": "bg", "type": "image", "x": 0, "y": 0, "width": self.W, "height": self.H,
-                           "z_index": 0, "asset_id": "solstice_bg_gradient.png", "fit": "cover"})
+                           "z_index": 0, "asset_id": "solstice_bg_gradient.png", "fit": self.bg_fit})
         return {"canvas": {"width": self.W, "height": self.H}, "elements": els}
 
     def target(self, name: str) -> dict:
@@ -98,6 +104,24 @@ def full_bleed(*ids: str) -> Check:
                 if x0 > 0.5 or y0 > 0.5 or x1 < tgt["width"] - 0.5 or y1 < tgt["height"] - 0.5:
                     errs.append(f"{e['id']}: no longer full-bleed ({x0:.0f},{y0:.0f},{x1:.0f},{y1:.0f})")
         return errs
+    return check
+
+
+def focal_on_canvas(pid: str, fx: float, fy: float) -> Check:
+    """A photo positioned past the canvas (bleed, S4/S5) keeps its subject, at (fx, fy) of the
+    photo's box, on the canvas. A box kept on the canvas is cropped by the renderer, not by the
+    engine, and is not checked here (S5 tightens this once the engine chooses crop windows)."""
+    def check(src, out, tgt):
+        e = next((x for x in out["elements"] if x["id"] == pid), None)
+        if e is None or float(e.get("opacity", 1)) <= 0:
+            return []
+        x0, y0, x1, y1 = _box(e)
+        if x0 >= -0.6 and y0 >= -0.6 and x1 <= tgt["width"] + 0.6 and y1 <= tgt["height"] + 0.6:
+            return []
+        px, py = x0 + fx * (x1 - x0), y0 + fy * (y1 - y0)
+        if not (0 <= px <= tgt["width"] and 0 <= py <= tgt["height"]):
+            return [f"{pid}: bled so far its subject ({px:.0f},{py:.0f}) is off the canvas"]
+        return []
     return check
 
 
@@ -230,6 +254,116 @@ def framed(panel: str, members: Tuple[str, ...], least: float = 4.0) -> Check:
     return check
 
 
+def never_stretched(*ids: str, tol: float = 0.05) -> Check:
+    """An image with fit "fill" is drawn stretched to its box, so its box must keep the source
+    box's aspect ratio (within tol). A full-bleed background that must cover a different shape
+    has to become fit "cover" (cropped) instead."""
+    def check(src, out, tgt):
+        so = {e["id"]: e for e in src["elements"]}
+        errs = []
+        for e in out["elements"]:
+            if e["id"] in ids and e.get("fit") == "fill" and float(e.get("opacity", 1)) > 0:
+                a0 = so[e["id"]]["width"] / so[e["id"]]["height"]
+                a1 = e["width"] / max(1e-6, e["height"])
+                if abs(a1 / a0 - 1) > tol:
+                    errs.append(f"{e['id']}: fit fill stretched, aspect {a0:.2f} -> {a1:.2f}")
+        return errs
+    return check
+
+
+def stays_band(*ids: str) -> Check:
+    """A band that ran edge to edge in the source still runs edge to edge (one axis, both
+    sides) on the target: it does not shrink into a floating card or an L shape."""
+    def check(src, out, tgt):
+        errs = []
+        for e in out["elements"]:
+            if e["id"] in ids and float(e.get("opacity", 1)) > 0:
+                x0, y0, x1, y1 = _box(e)
+                W, H = tgt["width"], tgt["height"]
+                across = x0 <= 0.5 and x1 >= W - 0.5
+                down = y0 <= 0.5 and y1 >= H - 0.5
+                if not (across or down):
+                    errs.append(f"{e['id']}: band became a card ({x0:.0f},{y0:.0f},{x1:.0f},{y1:.0f})")
+        return errs
+    return check
+
+
+def at_least_share(pid: str, share: float) -> Check:
+    """This element's longer side is at least `share` of the target's shorter side."""
+    def check(src, out, tgt):
+        e = next(x for x in out["elements"] if x["id"] == pid)
+        if float(e.get("opacity", 1)) <= 0:
+            return []
+        side = max(e["width"], e["height"])
+        need = share * min(tgt["width"], tgt["height"])
+        return [f"{pid}: {side:.0f} px, wants {need:.0f}"] if side < need else []
+    return check
+
+
+def label_at_least(pid: str, share: float) -> Check:
+    """A text's font size is at least `share` of the target's shorter side."""
+    def check(src, out, tgt):
+        e = next(x for x in out["elements"] if x["id"] == pid)
+        need = share * min(tgt["width"], tgt["height"])
+        return [f"{pid}: font {e['font_size']:.0f}, wants {need:.0f}"] if e["font_size"] < need else []
+    return check
+
+
+def style_survives(*ids: str) -> Check:
+    """Every property of a text except its geometry, size and layer is what the source had
+    (colour, weight, style, alignment, line height, letter spacing, content, font)."""
+    skip = {"x", "y", "width", "height", "font_size", "z_index", "opacity", "letter_spacing", "rotation"}
+
+    def check(src, out, tgt):
+        so = {e["id"]: e for e in src["elements"]}
+        errs = []
+        for e in out["elements"]:
+            if e["id"] in ids and e["id"] in so:
+                for k in sorted((set(so[e["id"]]) | set(e)) - skip):
+                    if so[e["id"]].get(k) != e.get(k):
+                        errs.append(f"{e['id']}: {k} {so[e['id']].get(k)!r} -> {e.get(k)!r}")
+                s_ = so[e["id"]]  # letter spacing is in px, so it scales with the type
+                r0 = float(s_.get("letter_spacing") or 0) / max(1.0, float(s_["font_size"]))
+                r1 = float(e.get("letter_spacing") or 0) / max(1.0, float(e["font_size"]))
+                if abs(r1 - r0) > 0.01 + 0.15 * abs(r0):
+                    errs.append(f"{e['id']}: letter spacing {r0:.3f} em -> {r1:.3f} em")
+                if float(s_.get("rotation") or 0) != float(e.get("rotation") or 0):
+                    errs.append(f"{e['id']}: rotation {s_.get('rotation')!r} -> {e.get('rotation')!r}")
+        return errs
+    return check
+
+
+def margin_clear(grow: float = 0.05) -> Check:
+    """Safe if the renderer sets text a few percent taller than we measured (FreeType vs CoreText):
+    with every shown text's height grown by `grow`, texts that did not overlap in the source still
+    do not overlap each other, no text leaves the canvas, and a button label stays on its button."""
+    def grown(e):
+        b = drawn_box(e)
+        return b.x, b.y, b.r, b.b + grow * b.h
+
+    def hit(a, b):
+        return min(a[2], b[2]) - max(a[0], b[0]) > 0.5 and min(a[3], b[3]) - max(a[1], b[1]) > 0.5
+
+    def check(src, out, tgt):
+        so = {e["id"]: e for e in src["elements"]}
+        shown = [e for e in out["elements"] if e["type"] == "text" and float(e.get("opacity", 1)) > 0
+                 and float(e.get("font_size", 2) or 2) > 1 and e["id"] in so]
+        errs = []
+        for i, a in enumerate(shown):
+            ga = grown(a)
+            if ga[3] > tgt["height"] + 0.5:
+                errs.append(f"{a['id']}: grown by {grow:.0%} it leaves the canvas bottom")
+            for b in shown[i + 1:]:
+                if hit(ga, grown(b)) and not hit(grown(so[a["id"]]), grown(so[b["id"]])):
+                    errs.append(f"{a['id']}/{b['id']}: touch once text runs {grow:.0%} taller")
+            plate = next((x for x in out["elements"] if x["id"] == a["id"].replace("_label", "_bg")
+                          and x["id"] != a["id"]), None)
+            if plate is not None and float(plate.get("opacity", 1)) > 0 and ga[3] > plate["y"] + plate["height"] + 0.5:
+                errs.append(f"{a['id']}: grown by {grow:.0%} it leaves its button")
+        return errs
+    return check
+
+
 def all_of(*checks: Check) -> Check:
     def check(src, out, tgt):
         return [e for c in checks for e in c(src, out, tgt)]
@@ -241,6 +375,27 @@ def all_of(*checks: Check) -> Check:
 
 
 def cases() -> List[Case]:
+    return _line_baseline(_base_cases() + round5_cases() + round7_cases())
+
+
+# An engine line built outside this suite (STEERING S15: line/jeff) carries its own baseline, its
+# first run's failures, in tests/line_xfail.json. It replaces the in-code xfail marks, which describe
+# main's engine. "No new failures" then holds against that baseline.
+LINE_XFAIL = Path(__file__).with_name("line_xfail.json")
+
+
+def _line_xfail() -> Optional[dict]:
+    return json.loads(LINE_XFAIL.read_text()) if LINE_XFAIL.is_file() else None
+
+
+def _line_baseline(cs: List[Case]) -> List[Case]:
+    base = _line_xfail()
+    if base is None:
+        return cs
+    return [dataclasses.replace(c, xfail=tuple(base["cases"].get(c.name, ()))) for c in cs]
+
+
+def _base_cases() -> List[Case]:
     return [
         Case("unbreakable_words",
              "a word wider than a narrow column: the renderer never breaks inside a word, so the type "
@@ -366,6 +521,33 @@ def cases() -> List[Case]:
                  text("headline", 90, 680, 900, 140, "Chase the Light", 76, "Solstice Serif", True),
                  *button("cta", 340, 860, 400, 90, "Shop now", 28),
              ], show=("headline", "cta_label"), show_roomy=("logo", "product")),
+
+        Case("source_bleeds_decor",
+             "Adobe's Level 2 move: a decorative circle that bleeds off the top-left corner in the source "
+             "(at -100,-100, 64% on canvas) and one fully inside: either may bleed in the output by about "
+             "the same proportion (S4), neither may push copy, and the badge and CTA never bleed",
+             1080, 1080, [
+                 shape("deco_circle_1", -100, -100, 500, 500, "rgba(255,255,255,0.18)", kind="ellipse"),
+                 shape("deco_circle_2", 700, 700, 300, 300, "rgba(240,178,66,0.25)", kind="ellipse"),
+                 logo(380, 60, 320, 110),
+                 image("product", 290, 260, 500, 500),
+                 text("headline", 90, 780, 900, 140, "Golden Hour Sparkle", 72, "Solstice Serif", True),
+                 *button("badge", 40, 40, 220, 56, "NEW FLAVOUR", 18, fill="rgba(43,27,46,1)"),
+                 *button("cta", 330, 950, 420, 90, "Shop now", 28),
+             ], show=("headline", "cta_label"), show_roomy=("logo",)),
+
+        Case("focal_photo_background",
+             "a full-bleed photo background with its subject off-centre (upper right, at 72%/30% of the "
+             "photo) and copy in the quiet lower left: the photo keeps covering the canvas, and if the "
+             "engine frames it by bleeding the box past the canvas (S4/S5) the subject stays on it",
+             1200, 1500, [
+                 text("headline", 80, 980, 700, 180, "Into the long light", 72, "Solstice Serif", True,
+                      align="left"),
+                 text("subhead", 80, 1170, 640, 70, "Botanical sparkling, made for evenings.", 28, align="left"),
+                 *button("cta", 80, 1300, 360, 90, "Discover", 28),
+             ], targets=("story", "ig-square", "fb-link", "leaderboard", "billboard", "skyscraper"),
+             show=("headline", "cta_label"),
+             check=all_of(full_bleed("bg"), focal_on_canvas("bg", 0.72, 0.30))),
 
         Case("no_background",
              "nothing paints the canvas (the renderer leaves it white) and copy is dark: hidden copy has "
@@ -606,6 +788,346 @@ def cases() -> List[Case]:
                  text("legal", 60, 1310, 960, 30, "Please drink responsibly. See solstice.com/terms.", 12,
                       color="rgba(255,255,255,0.6)", z=6),
              ], targets=STRIPS + TALL + SMALL, show=("headline", "cta_label"), show_roomy=("logo",)),
+    ]
+
+
+def round5_cases() -> List[Case]:
+    """Failure classes named by the gate in rounds 1-4 (loop/weaknesses.md). Several are known
+    failures of the engine (``xfail``); each is a general class, built from the brand kit."""
+    wide_copy = [
+        logo(1250, 90, 300, 100),
+        text("headline", 100, 120, 1000, 200, "Taste the longest day", 96, "Solstice Serif", True, align="left"),
+        text("subhead", 100, 340, 1000, 80, "Three botanical infusions, until the equinox.", 32,
+             color="rgba(255,255,255,0.85)", align="left"),
+        *button("cta", 100, 480, 420, 90, "Shop now", 30),
+    ]
+    sq_copy = [
+        logo(390, 70),
+        image("product", 340, 200, 400, 520),
+        text("headline", 90, 760, 900, 130, "Golden Hour", 84, "Solstice Serif", True),
+        *button("cta", 340, 930, 400, 90, "Shop now", 28),
+    ]
+    band_src = [
+        shape("band", 0, 380, 1080, 320, "rgba(40,20,70,0.92)", z=1),
+        logo(390, 60),
+        text("headline", 90, 410, 900, 160, "Summer sale", 96, "Solstice Serif", True, z=5),
+        text("subhead", 140, 580, 800, 70, "Up to 40% off every infusion", 34, z=5),
+        *button("cta", 340, 780, 400, 90, "Shop now", 28),
+    ]
+    return [
+        Case("fill_background_wide",
+             "a full-bleed background with fit 'fill' (the Crello export default) on a wide design: "
+             "re-laid on any other shape it is cropped, never stretched",
+             1600, 700, wide_copy, targets=("ig-square", "story", "pinterest", "skyscraper", "half-page",
+                                           "leaderboard", "billboard", "med-rect"),
+             show=("headline", "cta_label"), bg_fit="fill",
+             check=all_of(never_stretched("bg"), full_bleed("bg")),
+             ),  # passes today (cropped as cover); kept as a guard
+
+        Case("fill_background_square",
+             "a square design whose background is fit 'fill', to strips and tall formats",
+             1080, 1080, sq_copy, targets=("story", "leaderboard", "billboard", "skyscraper", "fb-link",
+                                           "mobile-banner", "a4"),
+             show=("headline", "cta_label"), bg_fit="fill",
+             check=all_of(never_stretched("bg"), full_bleed("bg")),
+             ),
+
+        Case("band_stays_band_on_squares",
+             "a full-width colour band behind the copy: on a square or a small rectangle it stays a band "
+             "(edge to edge), not an L shape or a floating card",
+             1080, 1350, band_src, targets=("ig-square", "med-rect", "fb-link", "pres-16x9", "email-header",
+                                            "ig-portrait"),
+             show=("headline", "cta_label"), check=stays_band("band"),
+             xfail=("fb-link", "pres-16x9", "email-header")),
+
+        Case("tiny_items_kept_on_small_canvases",
+             "a discount sticker and a legal line are small in the source but part of the offer: on a "
+             "square and on 300x250 they are kept (smaller type allowed), not hidden",
+             1080, 1080, [
+                 logo(390, 50, 300, 100),
+                 image("product", 320, 190, 440, 520),
+                 text("headline", 90, 740, 900, 120, "Summer Sale", 80, "Solstice Serif", True),
+                 *button("sticker", 800, 190, 180, 180, "-40%", 40, fill=PLUM, radius=90),
+                 *button("cta", 340, 890, 400, 80, "Shop now", 28),
+                 text("legal", 90, 1010, 900, 30, "Offer ends 31 August. Terms apply.", 14,
+                      color="rgba(255,255,255,0.75)", z=5),
+             ], targets=("ig-square", "med-rect", "fb-link", "half-page", "ig-portrait"),
+             show=("headline", "cta_label", "sticker_label", "legal"),
+             xfail=("med-rect",)),
+
+        Case("product_not_a_thumbnail",
+             "one big product and a short headline: on 300x250 and square formats the product keeps a "
+             "real share of the canvas instead of shrinking to a thumbnail beside the copy",
+             1080, 1350, [
+                 logo(390, 50, 300, 100),
+                 image("product", 240, 200, 600, 780),
+                 text("headline", 90, 1020, 900, 110, "Golden Hour", 84, "Solstice Serif", True),
+                 *button("cta", 340, 1180, 400, 90, "Shop now", 28),
+             ], targets=("med-rect", "ig-square", "fb-link", "half-page", "email-header"),
+             show=("headline", "cta_label", "product"), check=at_least_share("product", 0.5)),
+
+        Case("button_label_not_minimum_on_small",
+             "a call to action on 300x250: the label is set at a size a person can read (at least 6% "
+             "of the short side), not the renderer's minimum",
+             1080, 1080, sq_copy, targets=("med-rect", "email-header"),
+             show=("headline", "cta_label"), check=label_at_least("cta_label", 0.06),
+             xfail=("med-rect", "email-header")),
+    ]
+
+
+def round7_cases() -> List[Case]:
+    """Failure classes from rounds 5-6 (research note 15, loop/weaknesses.md): fill-fit images that
+    are not the first element, group splits, FreeType text-height margin, text style that must
+    survive. Built from the brand kit, no sealed data. Cases failing on the engine are xfail."""
+    fill_art = {"fit": "fill"}
+    return [
+        Case("fill_bg_odd_id_bleeding",
+             "Crello-style background: a fill-fit image with its own id and a layer above zero, a few "
+             "px past the canvas on every side; on any shape it is cropped to cover, never stretched",
+             1080, 1350, [
+                 image("backdrop", -4, -4, 1088, 1358, "solstice_bg_gradient.png", z=0, fit="fill"),
+                 logo(390, 70),
+                 text("headline", 90, 600, 900, 130, "Golden Hour", 84, "Solstice Serif", True),
+                 *button("cta", 340, 800, 400, 90, "Shop now", 28),
+             ], targets=("ig-square", "story", "leaderboard", "skyscraper", "pres-16x9", "med-rect", "a4"),
+             background=False, show=("headline", "cta_label"), check=never_stretched("backdrop")),
+
+        Case("fill_bg_with_fill_panel",
+             "a fill-fit background and a fill-fit photo panel: neither is stretched on any target "
+             "(a photo may be cropped or scaled uniformly, never squashed)",
+             1600, 900, [
+                 image("backdrop", 0, 0, 1600, 900, "solstice_bg_gradient.png", z=0, fit="fill"),
+                 image("photo", 100, 120, 640, 660, "solstice_bottle.png", z=2, fit="fill"),
+                 text("headline", 820, 260, 700, 160, "Golden Hour", 84, "Solstice Serif", True, align="left"),
+                 *button("cta", 820, 520, 380, 90, "Shop now", 28),
+             ], targets=("ig-square", "story", "leaderboard", "skyscraper", "fb-link", "med-rect"),
+             background=False, show=("headline", "cta_label"),
+             check=all_of(never_stretched("backdrop", "photo"), full_bleed("backdrop"))),
+
+        Case("fill_bg_tall_source",
+             "a tall story with a fill-fit background re-laid for wide strips and a square",
+             1080, 1920, [
+                 image("backdrop", 0, 0, 1080, 1920, "solstice_bg_gradient.png", z=0, fit="fill"),
+                 logo(390, 120),
+                 text("headline", 90, 800, 900, 260, "Summer is here", 100, "Solstice Serif", True),
+                 *button("cta", 340, 1400, 400, 100, "Shop now", 30),
+             ], targets=("leaderboard", "billboard", "mobile-banner", "ig-square", "pres-16x9", "fb-cover"),
+             background=False, show=("headline", "cta_label"),
+             check=all_of(never_stretched("backdrop"), full_bleed("backdrop"))),
+
+        Case("plate_text_not_split",
+             "a headline set on a rounded plate: wherever the plate shows, the headline stays on it with "
+             "padding (the pair is one unit, not two things placed separately)",
+             1080, 1080, [
+                 logo(390, 60, 300, 100),
+                 image("product", 340, 200, 400, 420),
+                 shape("plate", 140, 660, 800, 200, "rgba(43,27,46,0.9)", z=3, kind="rectangle", corner_radius=40),
+                 text("headline", 180, 690, 720, 140, "Golden Hour", 80, "Solstice Serif", True, z=5),
+                 *button("cta", 340, 920, 400, 90, "Shop now", 28),
+             ], targets=SPREAD, show=("headline", "cta_label"), together=(("plate", "headline"),),
+             check=framed("plate", ("headline",), least=2.0)),
+
+        Case("caption_stays_with_photo",
+             "a photo with a caption set right under it, plus a separate headline: the caption keeps "
+             "reading straight after its photo (they are never split across the layout)",
+             1080, 1350, [
+                 image("photo", 200, 140, 680, 640, "solstice_bottle.png"),
+                 text("caption", 200, 800, 680, 50, "Citrus and elderflower, bottled at dusk", 28, align="left"),
+                 text("headline", 90, 960, 900, 130, "Golden Hour", 84, "Solstice Serif", True),
+                 *button("cta", 340, 1150, 400, 90, "Shop now", 28),
+             ], targets=SPREAD, show=("headline", "cta_label"), show_roomy=("photo",),
+             together=(("photo", "caption"),), xfail=("fb-link", "leaderboard", "mobile-banner", "billboard")),
+
+        Case("freetype_margin_stack",
+             "stacked copy set tight (headline, subhead, label, button): if the renderer sets text 5% "
+             "taller than measured, nothing touches its neighbour, leaves the canvas or leaves its button",
+             1080, 1350, [
+                 logo(390, 60, 300, 100),
+                 text("headline", 90, 240, 900, 270, "Taste the longest day of summer", 88, "Solstice Serif", True),
+                 text("subhead", 90, 530, 900, 110, "Three botanical infusions, until the equinox.", 36),
+                 text("tag", 90, 650, 900, 50, "LIMITED RUN", 26, letter_spacing=3),
+                 *button("cta", 340, 780, 400, 80, "Shop now", 30),
+             ], targets=SPREAD + ("pres-16x9", "ig-portrait"), show=("headline", "cta_label"),
+             check=margin_clear(0.05)),
+
+        Case("freetype_margin_narrow",
+             "wrapping copy in narrow and short formats keeps 5% of slack under every text",
+             1200, 628, [
+                 logo(60, 40, 240, 80),
+                 text("headline", 60, 150, 620, 220, "Fresh drinks for long evenings outside", 64, "Solstice Serif",
+                      True, align="left"),
+                 text("body", 60, 400, 620, 100, "Small batch, seasonal, always cold.", 30, align="left"),
+                 *button("cta", 60, 530, 320, 70, "Order now", 28),
+             ], targets=("med-rect", "mobile-banner", "skyscraper", "half-page", "fb-link", "ig-square", "email-header"),
+             show=("headline", "cta_label"), check=margin_clear(0.05), xfail=("email-header",)),
+
+        Case("text_style_survives",
+             "every non-size text property (colour, weight, italic, alignment, line height, letter "
+             "spacing) is carried through unchanged on every target",
+             1080, 1350, [
+                 logo(390, 60, 300, 100),
+                 text("headline", 90, 240, 900, 240, "Golden Hour in the garden", 84, "Solstice Serif", True,
+                      align="left", line_height=1.05, letter_spacing=-1, color="rgba(255,236,200,1)"),
+                 text("body", 90, 520, 900, 140, "Citrus, elderflower and a little honey.", 34, align="right",
+                      line_height=1.5, font_style="italic", color="rgba(255,255,255,0.9)"),
+                 text("tag", 90, 700, 900, 50, "NEW SEASON", 24, align="center", letter_spacing=4,
+                      font_weight="bold", color=GOLD),
+                 *button("cta", 340, 860, 400, 90, "Shop now", 28),
+             ], targets=SPREAD, show=("headline", "cta_label"),
+             check=style_survives("headline", "body", "tag", "cta_label")),
+    ]
+
+
+# ----------------------------------------------------------------------------
+# relations: two runs of the engine that must agree (loop/weaknesses.md, r1). Not about one
+# output's quality but about the engine being a well-behaved function of its input.
+
+
+@dataclass
+class Relation:
+    name: str
+    probe: str
+    kind: str  # "scale": design and target both k times larger; "step": target one pixel wider/taller
+    source: dict
+    target: dict
+    k: int = 2
+    xfail: bool = False
+
+
+def _scaled(src: dict, k: float) -> dict:
+    out = json.loads(json.dumps(src))
+    out["canvas"] = {"width": src["canvas"]["width"] * k, "height": src["canvas"]["height"] * k}
+    for e in out["elements"]:
+        for f in ("x", "y", "width", "height", "font_size", "letter_spacing", "corner_radius"):
+            if isinstance(e.get(f), (int, float)):
+                e[f] = e[f] * k
+    return out
+
+
+def relations() -> List[Relation]:
+    by = {c.name: c for c in cases()}
+    pick = ("explicit_newlines", "letter_spaced_caps", "crowded_l3", "band_stays_band_on_squares",
+            "tiny_items_kept_on_small_canvases")
+    out: List[Relation] = []
+    for n in pick:
+        c = by[n]
+        for t in ("ig-square", "story", "med-rect", "leaderboard", "fb-link"):
+            out.append(Relation(f"scale2x/{n}@{t}",
+                                "design and target both doubled: the same layout, doubled",
+                                "scale", c.source, c.target(t), 2, xfail=(n, t) in SCALE_XFAIL))
+    for n in ("explicit_newlines", "crowded_l3", "band_stays_band_on_squares", "tiny_items_kept_on_small_canvases"):
+        c = by[n]
+        for (w, h) in ((1080, 1080), (300, 250), (728, 90), (1200, 628), (1080, 1920), (970, 250)):
+            for dw, dh in ((1, 0), (0, 1)):
+                out.append(Relation(f"step/{n}@{w}x{h}+{dw}{dh}",
+                                    "one pixel more of width or height must not flip the layout",
+                                    "step", c.source, {"width": w, "height": h}, 1,
+                                    xfail=(n, w, h, dw, dh) in STEP_XFAIL))
+    r7 = ("fill_bg_odd_id_bleeding", "plate_text_not_split", "caption_stays_with_photo", "freetype_margin_stack")
+    for n in r7:  # r7: scale invariance at 3x, and a continuity step, on the new cases
+        c = by[n]
+        for t in ("ig-square", "story", "med-rect", "leaderboard", "fb-link"):
+            out.append(Relation(f"scale3x/{n}@{t}", "design and target both tripled: the same layout, tripled",
+                                "scale", c.source, c.target(t), 3, xfail=(n, t) in SCALE3_XFAIL))
+        for (w, h) in ((1080, 1080), (300, 250), (728, 90), (1200, 628), (1080, 1920), (970, 250)):
+            for dw, dh in ((1, 0), (0, 1)):
+                out.append(Relation(f"step/{n}@{w}x{h}+{dw}{dh}",
+                                    "one pixel more of width or height must not flip the layout",
+                                    "step", c.source, {"width": w, "height": h}, 1,
+                                    xfail=(n, w, h, dw, dh) in STEP7_XFAIL))
+    base = _line_xfail()
+    if base is not None:
+        out = [dataclasses.replace(r, xfail=r.name in base["relations"]) for r in out]
+    return out
+
+
+# Measured failures of the engine on 2026-10-24 (absolute-pixel thresholds, hard cut-offs).
+SCALE_XFAIL = {("explicit_newlines", "med-rect"), ("explicit_newlines", "leaderboard"),
+               ("letter_spaced_caps", "med-rect"), ("letter_spaced_caps", "leaderboard"),
+               ("crowded_l3", "med-rect"), ("crowded_l3", "leaderboard"), ("crowded_l3", "fb-link"),
+               ("band_stays_band_on_squares", "med-rect"),
+               ("tiny_items_kept_on_small_canvases", "med-rect"),
+               ("tiny_items_kept_on_small_canvases", "leaderboard")}
+SCALE3_XFAIL = {("fill_bg_odd_id_bleeding", "med-rect"), ("plate_text_not_split", "med-rect"),
+                ("plate_text_not_split", "leaderboard"), ("caption_stays_with_photo", "med-rect"),
+                ("caption_stays_with_photo", "leaderboard"), ("caption_stays_with_photo", "fb-link"),
+                ("freetype_margin_stack", "med-rect"), ("freetype_margin_stack", "leaderboard")}  # measured 2026-10-25 (r7)
+STEP7_XFAIL: set = set()
+STEP_XFAIL = {("crowded_l3", 1200, 628, 1, 0), ("crowded_l3", 1080, 1920, 1, 0),
+              ("crowded_l3", 1080, 1920, 0, 1)}
+
+
+# ----------------------------------------------------------------------------
+# bleed probes (loop/STEERING.md S4): hand-made outputs, no engine. Each says whether the
+# hard rules must accept it (allowed bleed) or reject it (forbidden or excessive bleed).
+
+
+@dataclass
+class BleedProbe:
+    name: str
+    source: dict
+    target: dict
+    moves: Dict[str, dict]  # id -> fields of that element in the output
+    allowed: bool
+
+    @property
+    def output(self) -> dict:
+        """The source re-set on the target: each element kept where it was (scaled to fit the
+        target), then the probe's moves applied."""
+        W, H = self.target["width"], self.target["height"]
+        sw, sh = self.source["canvas"]["width"], self.source["canvas"]["height"]
+        k = min(W / sw, H / sh)
+        els = []
+        for e in self.source["elements"]:
+            o = dict(e, x=e["x"] * k, y=e["y"] * k, width=e["width"] * k, height=e["height"] * k)
+            if e["type"] == "text":
+                o["font_size"] = max(1, int(e["font_size"] * k))
+            if e["id"] == "bg":
+                o.update(x=0, y=0, width=W, height=H)
+            els.append(dict(o, **self.moves.get(e["id"], {})))
+        for o in els:  # nothing else may leave the canvas by accident
+            if o["id"] not in self.moves and o["id"] != "bg":
+                o["x"] = min(max(0.0, o["x"]), W - o["width"])
+                o["y"] = min(max(0.0, o["y"]), H - o["height"])
+        return {"canvas": dict(self.target), "elements": els}
+
+
+def bleed_probes() -> List[BleedProbe]:
+    sq = {"canvas": {"width": 1080, "height": 1080}, "elements": [
+        {"id": "bg", "type": "image", "x": 0, "y": 0, "width": 1080, "height": 1080, "z_index": 0,
+         "asset_id": "solstice_bg_gradient.png", "fit": "cover"},
+        shape("deco_bled", -100, -100, 500, 500, "rgba(255,255,255,0.18)", kind="ellipse"),
+        shape("deco_inside", 760, 700, 260, 260, "rgba(240,178,66,0.25)", kind="ellipse"),
+        image("panel", 600, 300, 400, 500, asset="solstice_bg_gradient.png"),
+        logo(380, 60, 320, 110),
+        image("product", 120, 300, 400, 400),
+        text("headline", 90, 780, 900, 120, "Golden Hour", 72, "Solstice Serif", True),
+        *button("cta", 330, 950, 420, 90, "Shop now", 28),
+    ]}
+    photo = {"canvas": {"width": 1200, "height": 1500}, "elements": [
+        {"id": "bg", "type": "image", "x": 0, "y": 0, "width": 1200, "height": 1500, "z_index": 0,
+         "asset_id": "solstice_bg_gradient.png", "fit": "cover"},
+        text("headline", 80, 1000, 700, 160, "Into the long light", 64, "Solstice Serif", True, align="left"),
+    ]}
+    cut = dict(sq, elements=[dict(e, x=-80) if e["id"] == "product" else e for e in sq["elements"]])
+    story, lb, wide = {"width": 1080, "height": 1920}, {"width": 728, "height": 90}, {"width": 1600, "height": 400}
+    P = BleedProbe
+    return [
+        P("decor_bled_in_source_keeps_bleeding", sq, wide,
+          {"deco_bled": dict(x=-40, y=-50, width=250, height=250)}, True),
+        P("plain_decor_bleeds_a_little", sq, wide, {"deco_inside": dict(x=1500, y=200, width=160, height=160)}, True),
+        P("photo_cover_crop_framed", photo, story, {"bg": dict(x=-228, y=0, width=1536, height=1920)}, True),
+        P("photo_cover_crop_on_a_strip", photo, lb, {"bg": dict(x=0, y=-400, width=728, height=910)}, True),
+        P("image_panel_against_an_edge", sq, wide, {"panel": dict(x=1400, y=0, width=320, height=400)}, True),
+        P("cutout_that_bled_in_source", cut, wide, {"product": dict(x=-20, y=40, width=110, height=110)}, True),
+        P("text_past_the_edge", sq, wide, {"headline": dict(x=-40)}, False),
+        P("logo_past_the_edge", sq, wide, {"logo": dict(x=1500, y=10, width=200, height=69)}, False),
+        P("button_past_the_edge", sq, wide, {"cta_bg": dict(x=1450, y=300, width=210, height=45),
+                                              "cta_label": dict(x=1450, y=311, width=210, height=22)}, False),
+        P("cutout_past_the_edge", sq, wide, {"product": dict(x=-60, y=40, width=200, height=200)}, False),
+        P("decor_mostly_off", sq, wide, {"deco_inside": dict(x=1530, y=200, width=160, height=160)}, False),
+        P("panel_mostly_off", sq, wide, {"panel": dict(x=1480, y=0, width=320, height=400)}, False),
+        P("decor_bled_much_further", sq, wide, {"deco_bled": dict(x=-180, y=-180, width=250, height=250)}, False),
     ]
 
 

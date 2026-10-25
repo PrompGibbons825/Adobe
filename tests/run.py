@@ -14,8 +14,8 @@ import argparse
 import sys
 import time
 
-from tests.finicky import cases, malformed
-from tests.harness import evaluate, run
+from tests.finicky import bleed_probes, cases, malformed, relations
+from tests.harness import evaluate, probe_errors, relation_errors, run
 from tools.rules import hard_rule_errors, render_image
 
 
@@ -30,7 +30,7 @@ def main() -> int:
     from PIL import Image
 
     tiles = []
-    bad = total = 0
+    bad = total = xf = 0
     t0 = time.time()
     for case in cases():
         if a.only and not any(w in case.name for w in a.only):
@@ -40,7 +40,15 @@ def main() -> int:
         for target in case.targets:
             out, errs = evaluate(case, target, render_check=not a.no_render)
             total += 1
-            if errs:
+            if target in case.xfail:
+                if errs:
+                    xf += 1
+                    print(f"XFAIL {case.name} @ {target}: " + "; ".join(errs[:2]))
+                else:
+                    bad += 1
+                    print(f"XPASS {case.name} @ {target}: fixed, remove it from xfail")
+                errs = []
+            elif errs:
                 bad += 1
                 print(f"FAIL {case.name} @ {target}: " + "; ".join(errs[:5]) + (" ..." if len(errs) > 5 else ""))
             if a.sheet:
@@ -58,7 +66,29 @@ def main() -> int:
         if errs:
             bad += 1
             print(f"FAIL malformed/{name}: " + "; ".join(errs[:5]))
-    print(f"\n{total - bad}/{total} passed in {time.time() - t0:.0f}s")
+    for p in bleed_probes():
+        if a.only and not any(w in p.name for w in a.only):
+            continue
+        total += 1
+        errs = probe_errors(p)
+        if errs:
+            bad += 1
+            print(f"FAIL bleed/{p.name}: " + "; ".join(errs[:5]))
+    for r in relations():
+        if a.only and not any(w in r.name for w in a.only):
+            continue
+        total += 1
+        errs = relation_errors(r)
+        if r.xfail and errs:
+            xf += 1
+            print(f"XFAIL relation/{r.name}: " + "; ".join(errs[:2]))
+        elif r.xfail:
+            bad += 1
+            print(f"XPASS relation/{r.name}: fixed, remove it from the xfail sets")
+        elif errs:
+            bad += 1
+            print(f"FAIL relation/{r.name}: " + "; ".join(errs[:5]))
+    print(f"\n{total - bad - xf}/{total} passed, {xf} known failures (xfail), {time.time() - t0:.0f}s")
     if a.sheet and tiles:
         _save_sheet(tiles, a.sheet, Image)
     return 1 if bad else 0

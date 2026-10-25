@@ -93,6 +93,24 @@ class Terms(unittest.TestCase):
         self.assertFalse(T._inside(dict(e, rotation=90), 100, 30))
 
 
+class BleedInTerms(unittest.TestCase):
+    """loop/STEERING.md S4: allowed bleed is no cut in the proxy; forbidden bleed still is."""
+
+    def test_allowed_bleed_is_not_cut_art(self):
+        from tests.finicky import bleed_probes
+
+        ps = {p.name: p for p in bleed_probes()}
+        for name, allowed in (("image_panel_against_an_edge", True), ("photo_cover_crop_framed", True),
+                              ("panel_mostly_off", False)):
+            with self.subTest(probe=name):
+                p = ps[name]
+                t = T.terms(T.measure(p.source), T.measure(p.output))
+                if allowed:
+                    self.assertEqual(t["cut_art"], 0.0)
+                else:
+                    self.assertGreater(t["cut_art"], 0.1)
+
+
 class Fit(unittest.TestCase):
     def _synthetic(self, n=400, seed=0):
         rng = np.random.default_rng(seed)
@@ -183,6 +201,10 @@ class Perturb(unittest.TestCase):
         self.assertEqual(len(moved), 1)
         self.assertAlmostEqual(abs(moved[0]), 20.0)
         self.assertTrue(set(P.SENTINELS) <= set(P.PERTURBATIONS))
+        self.assertTrue(set(P.SMALL_DEFECTS) <= set(P.PERTURBATIONS))
+        clip = P.perturb("p_clip_letter", self.out, random.Random(0))
+        head = max((e for e in clip["elements"] if e["type"] == "text"), key=lambda e: e["font_size"])
+        self.assertAlmostEqual(drawn_box(head).r, W + 0.5 * head["font_size"], delta=1.0)
         with self.assertRaises(ValueError):
             P.perturb("p_nope", self.out)
 

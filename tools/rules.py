@@ -3,9 +3,12 @@
 Two tiers:
 
 * ``hard_rule_errors``  the brief's structural rules. Any output, including the
-  safe fallback, must pass these: every id exactly once, everything on the
-  canvas, image proportions kept, copy and fonts untouched, and only values the
-  reference renderer can draw.
+  safe fallback, must pass these: every id exactly once, nothing past the
+  canvas except allowed bleed (``tools/bleed.py``, loop/STEERING.md S4: never
+  text, logos, buttons, badges or cutouts; photos, image panels and decoration
+  only while they keep 60% on the canvas), image proportions kept, copy and
+  fonts untouched, and only values the reference renderer can draw.
+* ``bleed_report``      the allowed bleed, reported (one line per element), never an error.
 * ``promise_errors``    what the layout engine promises on top (the fallback for
   impossible content does not): no small print, no copy over copy, no text
   drawn past the canvas edge, button labels inside their button.
@@ -24,9 +27,10 @@ from typing import Dict, List, Optional
 
 from engine.smart.analyze import normalize
 from engine.smart.color import normalize as normalize_colour, parse_rgba
-from engine.smart.geom import Box, el_box, rotated_aabb
+from engine.smart.geom import Box, el_box
 from engine.smart.items import Ctx
 from engine.smart.textfit import drawn_box, new_text_overlaps
+from tools import bleed
 
 ASSETS = Path(__file__).resolve().parents[1] / "brand_kit" / "assets"
 FONTS = ASSETS.parent / "fonts"
@@ -47,6 +51,7 @@ def hard_rule_errors(src: dict, out: dict, tgt: dict) -> List[str]:
     if sorted(map(str, sid)) != sorted(map(str, oid)) or len(set(oid)) != len(oid):
         errs.append("ids differ from the source")
     so = {e["id"]: e for e in src["elements"]}
+    off: List[dict] = []
     for e in out.get("elements", []):
         s = so.get(e.get("id"), {})
         eid = e.get("id")
@@ -59,10 +64,8 @@ def hard_rule_errors(src: dict, out: dict, tgt: dict) -> List[str]:
             continue
         if e["width"] < 0 or e["height"] < 0:
             errs.append(f"{eid}: negative size")
-        b = Box(e["x"], e["y"], e["width"], e["height"])
-        vb = b.union(rotated_aabb(b, float(e.get("rotation", 0) or 0)))
-        if vb.x < -TOL or vb.y < -TOL or vb.r > W + TOL or vb.b > H + TOL:
-            errs.append(f"{eid}: off-canvas ({vb.x:.1f},{vb.y:.1f},{vb.r:.1f},{vb.b:.1f})")
+        if e["width"] >= 0 and e["height"] >= 0:
+            off.append(e)
         for k in ("content", "font_family", "asset_id", "shape_type"):
             if k in s and e.get(k) != s.get(k):
                 errs.append(f"{eid}: {k} changed")
@@ -70,7 +73,14 @@ def hard_rule_errors(src: dict, out: dict, tgt: dict) -> List[str]:
             errs += _text_safety(e, s)
         if e.get("type") == "image":
             errs += _image_ratio(e, s, W, H)
+    errs += bleed.check(src, dict(out, elements=off), tgt)[0]
     return errs
+
+
+def bleed_report(src: dict, out: dict, tgt: dict) -> List[str]:
+    """Allowed bleed (S4), one line per element past the canvas. Report only: a little bleed
+    may cost on the auto grader, so the gate shows it per tile, but only the panel judges it."""
+    return bleed.check(src, out, tgt)[1]
 
 
 def _text_safety(e: dict, s: dict) -> List[str]:

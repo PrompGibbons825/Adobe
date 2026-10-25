@@ -234,6 +234,12 @@ def measure(design: dict, limit: int = LIMIT) -> dict:
     PAD = max(16, int(0.25 * max(W, H)))
     canvas = {"width": W, "height": H}
 
+    from tools import bleed  # engine-free, like this module
+
+    try:
+        roles = bleed.roles(design, kit_dir() / "assets")
+    except Exception:  # noqa: BLE001  a malformed design: no bleed allowance, as before S4
+        roles = {}
     alpha, off = {}, {}
     for e in els:
         pad = PAD if (e.get("type") == "text" or not _inside(e, W, H)) else 0
@@ -263,6 +269,12 @@ def measure(design: dict, limit: int = LIMIT) -> dict:
         rec = {"type": e.get("type"), "area": area / float(W * H), "off": round(off[i], 4), "vis": round(vis[i], 4)}
         rec["solid"] = round(float(masks[i].sum()) / area, 4) if area else 0.0
         rec["bg"] = bool(area > 0.85 * W * H)
+        if str(i) in roles:  # S4 bleed policy: this design's own role and on-canvas box share
+            ne = native[i]
+            rec["role"] = roles[str(i)]
+            rec["share"] = round(bleed.share_on_canvas(ne, Wn, Hn), 4)
+            rec["covers"] = bool(ne.get("type") == "image" and bleed.covers(ne, Wn, Hn))
+            rec["bleeds"] = bool(bleed.bleeds(ne, Wn, Hn))
         rec["live"] = bool(area > 0 and vis[i] >= 0.2)
         if area:
             ys, xs = np.where(m)
@@ -390,6 +402,17 @@ def _near_miss_rate(rep: dict, ids: List[str]) -> float:
     return near / len(best)
 
 
+def _allowed_bleed(s: dict, o: dict) -> bool:
+    """The element's off-canvas part is bleed the S4 policy allows (tools/bleed.py), judged from
+    the source's role and both on-canvas shares. Reports measured before S4 have no roles: no
+    allowance."""
+    if "role" not in s or "share" not in s or "share" not in o or s["role"] == "text":
+        return False
+    from tools import bleed
+
+    return bleed.verdict(s["role"], s["share"], o["share"], o.get("covers", False), s.get("bleeds", False)) is None
+
+
 def terms(src: dict, out: dict) -> Dict[str, float]:
     """The 26 source-relative penalty terms (each >= 0; 0 means no worse than the source)."""
     t = {k: 0.0 for k in TERMS}
@@ -451,9 +474,10 @@ def terms(src: dict, out: dict) -> Dict[str, float]:
     for k in ("coll_text_art", "coll_text_text", "coll_art", "spill"):
         t[k] = min(3.0, t[k])
 
-    # cut off at the canvas edge (decoration that bled in the source may keep bleeding)
+    # cut off at the canvas edge (decoration that bled in the source may keep bleeding, and
+    # allowed bleed under loop/STEERING.md S4 is not a cut: only the panel judges it)
     for i in ids:
-        if not O[i]["live"]:
+        if not O[i]["live"] or _allowed_bleed(S[i], O[i]):
             continue
         d = max(0.0, O[i]["off"] - S[i]["off"])
         if d > 0.002:

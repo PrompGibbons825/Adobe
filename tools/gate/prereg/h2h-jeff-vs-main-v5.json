@@ -1,0 +1,78 @@
+{
+ "id": "h2h-jeff-vs-main-v5",
+ "hypothesis": "S11/S15 head-to-head: line/jeff head (9bef46a, Jeffrey engine at step L) vs main engine (df0bf7d). Whole-engine floor (floor_profile whole-engine): hard rules and ghost text on every sealed tile, hidden elements not rising, stress 0 rule failures, Docker run of input/, metamorphic. tests.run (our finicky suite) and unittest are not part of it: they encode our own engine choices and must not block a different engine; soft rows promise/contrast/hierarchy are reported only. novel-v5 (never run for this pair), crello-v1 sentinel pool, S14 panel.",
+ "base": {
+  "commit": "df0bf7d1951d163b573c1133ac1454f9c953c973",
+  "label": "main (df0bf7d)"
+ },
+ "candidate": {
+  "commit": "9bef46aafff158c1e71775b9acad3edd4de1ccfc",
+  "label": "line/jeff"
+ },
+ "sets": [
+  "novel-v5"
+ ],
+ "null": false,
+ "floor": [
+  "suites",
+  "docker",
+  "metamorphic",
+  "tiles"
+ ],
+ "rule": {},
+ "panel": {
+  "protocol": "two-family",
+  "families": {
+   "claude": {
+    "cli": "claude",
+    "model": "claude-sonnet-5-5"
+   },
+   "cursor": {
+    "cli": "agent",
+    "model": "grok-4.7-high"
+   }
+  },
+  "tiebreak": {
+   "cli": "agent",
+   "model": "composer-2.5"
+  },
+  "batch": 8,
+  "concurrency": 4,
+  "agent_concurrency": 2,
+  "agent_daily_cap": 200,
+  "view": 1024,
+  "timeout": 900,
+  "retries": 1,
+  "min_sentinels": 8,
+  "small_sentinels": 0.5,
+  "sentinel_kinds": [
+   "p_crop",
+   "p_onart",
+   "fit_centre"
+  ],
+  "report_kinds": [
+   "p_mis20",
+   "p_lowcon",
+   "p_hide_one",
+   "p_clip_letter",
+   "p_edge_touch",
+   "p_typescale"
+  ],
+  "sentinel_screen": true,
+  "sentinel_min_diff": 0.006,
+  "sentinel_fit_min_diff": 0.12,
+  "sentinel_small_min_diff": 0.0005,
+  "prompt": "v2",
+  "balance": true,
+  "orders": 1,
+  "mat": true
+ },
+ "anchors": {
+  "parity_designs": 30
+ },
+ "created": "2026-10-25T08:13:30Z",
+ "floor_profile": "whole-engine",
+ "sentinel_sets": [
+  "crello-v1"
+ ]
+}

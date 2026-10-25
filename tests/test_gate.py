@@ -93,6 +93,13 @@ class FloorVerdict(unittest.TestCase):
         self.assertFalse(floor.compare_tiles({"a": self._m(ghost=1), "b": self._m()}, base)["pass"])
         self.assertTrue(floor.compare_tiles({"a": self._m(contrast=3), "b": self._m()}, None)["pass"])
 
+    def test_bleed_is_reported_per_tile_never_a_failure(self):
+        base = {"a": self._m(), "b": self._m()}
+        r = floor.compare_tiles({"a": self._m(bleed=2), "b": self._m()}, base)
+        self.assertTrue(r["pass"])
+        self.assertEqual(r["totals"]["bleed"], 2)
+        self.assertEqual(r["bleed"], {"a": 2})
+
     def test_missing_output_is_a_hard_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             src, out = Path(tmp) / "src", Path(tmp) / "out"

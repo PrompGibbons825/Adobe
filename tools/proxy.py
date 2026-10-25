@@ -278,7 +278,12 @@ def aggregate(out_path: str, src_task_path: str) -> dict:
     pen["collisions"] = min(1.0, sum(c[3] for c in rep["collisions"]))
 
     # 5. cut off / off-canvas ink
-    pen["offcanvas"] = min(1.0, sum(f for _, f in rep["offcanvas"]))
+    # allowed bleed (loop/STEERING.md S4, tools/bleed.py) is not a cut: only the panel judges it
+    from tools import bleed
+
+    full = json.loads(Path(out_path).read_text())
+    ok = bleed.allowed_ids(src, full, full["canvas"], ASSETS)
+    pen["offcanvas"] = min(1.0, sum(f for i, f in rep["offcanvas"] if str(i) not in ok))
 
     # 6. faithfulness: element retention + font-size order preserved
     src_fs = {e["id"]: e["font_size"] for e in src["elements"] if e["type"] == "text"}
