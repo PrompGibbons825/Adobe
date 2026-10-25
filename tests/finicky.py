@@ -385,10 +385,10 @@ def nothing_hidden() -> Check:
     return check
 
 
-def clear_of_story_ui(*ids: str, top: float = 0.10, bottom: float = 0.12) -> Check:
+def clear_of_story_ui(*ids: str, top: float = 0.05, bottom: float = 0.06) -> Check:
     """On a story-shaped target (9:16, 1.6 or more times taller than wide and not an ad unit) these
-    elements stay out of the platform UI: the account bar over the top 10% and the reply box over
-    the bottom 12% (the engine's STORY_UI)."""
+    elements stay out of the platform UI: the account bar over the top 5% and the reply box over
+    the bottom 6% (the engine's STORY_UI)."""
     def check(src, out, tgt):
         W, H = tgt["width"], tgt["height"]
         if H < 1.6 * W or min(W, H) < 400:
@@ -1307,9 +1307,7 @@ SCALE_XFAIL = {("explicit_newlines", "med-rect"), ("explicit_newlines", "leaderb
                ("crowded_l3", "med-rect"), ("crowded_l3", "leaderboard"),
                ("band_stays_band_on_squares", "med-rect"),
                ("tiny_items_kept_on_small_canvases", "med-rect"),
-               ("tiny_items_kept_on_small_canvases", "leaderboard"),
-               # sprint 7pm (A+C): the story's headline lands 4% lower at 2x, a near tie with the safe band
-               ("tiny_items_kept_on_small_canvases", "story")}
+               ("tiny_items_kept_on_small_canvases", "leaderboard")}
 SCALE3_XFAIL = {("fill_bg_odd_id_bleeding", "med-rect"), ("plate_text_not_split", "med-rect"),
                 ("plate_text_not_split", "leaderboard"), ("caption_stays_with_photo", "med-rect"),
                 ("caption_stays_with_photo", "leaderboard"), ("caption_stays_with_photo", "fb-link"),
@@ -1317,9 +1315,7 @@ SCALE3_XFAIL = {("fill_bg_odd_id_bleeding", "med-rect"), ("plate_text_not_split"
 STEP7_XFAIL: set = set()
 STEP_XFAIL = {# S1 (sprint A): kept at the squeeze floor, a split with the ribbon folded into the copy
               # fits at 300x250 but leaves the product a speck at 300x251, so the plain split wins there
-              ("crowded_l3", 300, 250, 0, 1),
-              # sprint 7pm (A+C): one px wider moves the story's headline 4%, a near tie with the safe band
-              ("tiny_items_kept_on_small_canvases", 1080, 1920, 1, 0)}
+              ("crowded_l3", 300, 250, 0, 1)}
 
 
 # ----------------------------------------------------------------------------

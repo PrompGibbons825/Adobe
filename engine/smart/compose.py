@@ -50,8 +50,9 @@ ROW_GAP = 0.25  # a banner row's gaps widen to fill it, up to this share of the 
 WIDE_MEASURE = 1.8  # on a much wider canvas, copy is also tried this much wider than its source measure
 WIDER = 1.5  # ... when the target's aspect ratio is this many times the source's
 STORY_TALL = 1.6  # a canvas this many times taller than wide, not an ad unit, is a story or reel ...
-STORY_UI = (0.10, 0.12)  # ... whose platform UI covers this share of its top and of its bottom (kept as
-# light as Adobe's own reference story, whose copy runs from about 10% to 89% of the height)
+STORY_UI = (0.05, 0.06)  # ... whose platform UI covers this share of its top and of its bottom: only the
+# very edges (a blind panel preferred stories that fill the canvas; at 10%/12% they read as small with a
+# dead band at the bottom, and 14%/20% was worse)
 KEEP_HERO = 0.7  # on a roomy canvas a hero keeps at least this share of its source share of the canvas ...
 KEEP_PICTURE = 0.6  # ... and any other picture that covered PICTURE_SHARE of the source this much
 PICTURE_SHARE = 0.08
