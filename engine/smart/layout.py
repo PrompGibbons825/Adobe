@@ -101,7 +101,7 @@ class Node:
 class Leaf(Node):
     def __init__(self, item: Item, mode: str = "stack", k: float = 1.0, fill: bool = False,
                  max_w_frac: float = 1.0, cap_rel: float = 1.6, cap_floor: float = 0.0, min_rel: float = 0.0,
-                 nowrap: bool = False):
+                 nowrap: bool = False, min_abs: float = 0.0):
         self.item = item
         self.nowrap = nowrap  # buttons: keep the label on one line
         self.mode = mode
@@ -111,6 +111,8 @@ class Leaf(Node):
         self.cap_rel = cap_rel  # fill images never exceed max(cap_rel * s, cap_floor) x source size
         self.cap_floor = cap_floor
         self.min_rel = min_rel  # ... and must reach at least min_rel * s (or as wide as max_w allows)
+        self.min_abs = min_abs  # ... and at least this times its source size (a picture is no thumbnail)
+        self.cap_floor = max(cap_floor, min_abs)
         # text can trade width for lines; a button can trade padding for width
         self.flex = item.kind == "text" or (item.kind == "group" and item.container is not None
                                             and item.centered_label)
@@ -146,9 +148,10 @@ class Leaf(Node):
             r = realize(it, s, ctx, max_w * self.max_w_frac, max_h, k=grow)
             if r is None:
                 return None
-            if r.scale < self.min_rel * s * 0.999:  # too small, unless the width cannot hold more
+            need = max(self.min_rel * s, self.min_abs)
+            if r.scale < need * 0.999:  # too small, unless the width cannot hold more
                 widest = realize(it, s, ctx, max_w * self.max_w_frac, INF, k=grow)
-                if widest is None or r.scale < min(self.min_rel * s, widest.scale) * 0.999:
+                if widest is None or r.scale < min(need, widest.scale) * 0.999:
                     return None
         else:
             r = realize(it, s, ctx, max_w, max_h, relax=relax, k=self.k, mode=self.mode, nowrap=self.nowrap)

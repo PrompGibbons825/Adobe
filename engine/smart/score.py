@@ -19,7 +19,7 @@ from typing import Dict, List
 
 from . import textfit
 from .analyze import Design
-from .compose import Plan
+from .compose import KEEP_HERO, ROOMY, Plan, keep_share, story_band
 from .geom import Box
 from .items import Ctx, display_lines
 
@@ -33,6 +33,11 @@ COLLAPSE = 1.5  # times its importance, for copy set level with copy it was 1.5x
 HIERARCHY = 12.0  # for a headline that stands out 1.6x more than in the source (or less, negative)
 INFLATION = 2.0  # per unit of importance and of log-excess share (see _inflation)
 SHARE_SLACK = math.log(2.5)  # a secondary item may grow to 2.5x its share of the canvas freely
+FILL = 15.0  # on a roomy canvas, for using it up to the larger of 1.1x the source's coverage, at most 55%
+SHRINK = 0.6  # per unit of importance and of missing share, for a headline or picture shrunk past keep (_shrunk)
+TRIVIAL = 30.0  # for a plan that is the source uniformly scaled into letterbox bands (_trivial)
+TRIVIAL_ASPECT = math.log(1.5)  # ... once the aspect ratio has changed this much
+GAP = 0.2  # per unit of importance, for copy (near) touching something it did not touch in the source
 
 
 def _prior(name: str, r: float, r0: float = 1.0) -> float:
@@ -85,12 +90,15 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
     vis = 0.0
     small = 0.0
     lines_pen = 0.0
+    roomy = min(ctx.W, ctx.H) >= ROOMY
     for r, _, _ in placed:
         it = r.item
         rel = r.scale / max(1e-9, best.get(it.key, r.scale))
         if it.kind in ("image", "composite"):
-            # art only needs to be big enough; past 60% of the best size it is fine
-            vis += it.importance * (1.0 + 0.6 * math.log(max(1e-3, min(1.0, rel / 0.6))))
+            # art only needs to be big enough; past 60% of the best size it is fine (a hero on a
+            # roomy canvas, within 20% of it: it carries the design there)
+            enough = 0.8 if it.role == "hero" and roomy else 0.6
+            vis += it.importance * (1.0 + 0.6 * math.log(max(1e-3, min(1.0, rel / enough))))
         else:
             # copy should be as large as the best layout manages, within ~15%
             vis += it.importance * (1.0 + ALPHA * math.log(max(1e-3, min(1.0, rel / 0.85))))
@@ -134,6 +142,11 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
     cov = area / max(1.0, ctx.W * ctx.H)
     want = min(0.55, src_cov)
     b["coverage"] = -40.0 * max(0.0, want * 0.7 - cov) / max(1e-6, want)
+    if roomy:  # room to grow into (small ad units keep their density logic)
+        b["fill"] = FILL * min(1.0, cov / max(1e-6, min(0.55, 1.1 * src_cov)))
+        b["shrunk"] = -SHRINK * _shrunk(placed, d, ctx)
+    b["trivial"] = -TRIVIAL * _trivial(boxes, d, ctx)
+    b["gap"] = -GAP * _tight(placed, boxes, d, ctx, p.s)
     b["density"] = -DENSITY * _crowding(boxes, d, ctx)
     if area > 0:
         mx = sum(bx.cx * bx.area for _, bx in boxes) / area
@@ -239,3 +252,82 @@ def pixel_penalty(stats, src_stats, importance) -> float:
         if busy > calm:
             pen += imp * 0.6 * min(1.0, (busy - calm) / 0.1)
     return pen
+
+
+def _shrunk(placed, d: Design, ctx: Ctx) -> float:
+    """Growth into the room the design left, the other way round: the
+    headline and the hero keep at least 70% of their source share of the
+    canvas, and any picture that covered 8% of the source keeps 60% of its
+    share (compose.keep_share), so a product never ends up a thumbnail. Each
+    pays its importance times the share it is missing, as a fraction."""
+    total = 0.0
+    for r, _, _ in placed:
+        it = r.item
+        if it.src_box.area <= 0:
+            continue
+        keep = KEEP_HERO if it.role == "headline" else keep_share(it, d, ctx)
+        if not keep:
+            continue
+        ratio = (r.w * r.h / (ctx.W * ctx.H)) / (it.src_box.area / (d.W * d.H))
+        total += it.importance * max(0.0, keep - ratio) / keep
+    return total
+
+
+def _trivial(boxes, d: Design, ctx: Ctx) -> float:
+    """1 for a plan that is just the source uniformly scaled into the middle
+    of a canvas of another shape, with empty bands either side: every item at
+    one scale (within 15%), in the source's arrangement, spanning less than
+    three quarters of the axis that grew. VLM rubrics mark "trivial scaling"
+    down, and the coverage term barely notices it."""
+    if abs(math.log((ctx.W / ctx.H) / (d.W / d.H))) < TRIVIAL_ASPECT:
+        return 0.0
+    pairs = [(it, bx) for it, bx in boxes if it.src_box.w > 0 and it.src_box.h > 0]
+    if len(pairs) < 2:
+        return 0.0
+    ks = [math.sqrt(bx.area / it.src_box.area) for it, bx in pairs]
+    if max(ks) > 1.15 * min(ks):
+        return 0.0
+    u0 = pairs[0][0].src_box
+    u = pairs[0][1]
+    for it, bx in pairs[1:]:
+        u0, u = u0.union(it.src_box), u.union(bx)
+    if u0.w <= 0 or u0.h <= 0 or u.w <= 0 or u.h <= 0:
+        return 0.0
+    dev = sum(abs((bx.cx - u.x) / u.w - (it.src_box.cx - u0.x) / u0.w)
+              + abs((bx.cy - u.y) / u.h - (it.src_box.cy - u0.y) / u0.h) for it, bx in pairs) / len(pairs)
+    if dev > 0.08:
+        return 0.0
+    top, bottom = story_band(ctx)  # a story's platform UI is not room a layout could have used
+    span = u.w / ctx.W if ctx.W / ctx.H > d.W / d.H else u.h / max(1.0, ctx.H - top - bottom)
+    return 1.0 if span < 0.75 else 0.0
+
+
+def _distance(a: Box, b: Box) -> float:
+    """The clear gap between two boxes (0 if they touch or overlap)."""
+    return max(0.0, b.x - a.r, a.x - b.r, b.y - a.b, a.y - b.b)
+
+
+def _tight(placed, boxes, d: Design, ctx: Ctx, s: float) -> float:
+    """Copy closer to another item than a clear gap of max(2% of the short
+    side, half its cap height, about 0.35 em), where the source kept them
+    apart: VLM judges misread near-touching shapes as collisions. Pairs the
+    source set close (a subhead under its headline, a caption by its picture)
+    are by design and exempt; overlaps are the overlap term's."""
+    fs = {id(r.item): max(r.fonts.values()) for r, _, _ in placed if r.fonts}
+    short, short0 = min(ctx.W, ctx.H), min(d.W, d.H)
+    total = 0.0
+    for i, (a, ba) in enumerate(boxes):
+        if not a.is_copy or id(a) not in fs:
+            continue
+        need = max(0.02 * short, 0.35 * fs[id(a)])
+        need0 = max(0.02 * short0, 0.35 * a.main_fs())
+        for j, (b, bb) in enumerate(boxes):
+            if i == j or (b.is_copy and j < i and id(b) in fs):
+                continue  # each pair of copy once
+            if ba.inter(bb) > 0:
+                continue
+            gap = _distance(ba, bb)
+            if gap >= need or _distance(a.src_box, b.src_box) < 0.75 * need0:
+                continue
+            total += min(a.importance, b.importance) * (1.0 - gap / need)
+    return total

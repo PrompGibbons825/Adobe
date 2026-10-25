@@ -375,6 +375,51 @@ def margin_clear(grow: float = 0.05) -> Check:
     return check
 
 
+def clear_of_story_ui(*ids: str, top: float = 0.14, bottom: float = 0.20) -> Check:
+    """On a story-shaped target (9:16, 1.6 or more times taller than wide and not an ad unit) these
+    elements stay out of the platform UI: the account bar over the top 14% and the reply box over
+    the bottom 20%."""
+    def check(src, out, tgt):
+        W, H = tgt["width"], tgt["height"]
+        if H < 1.6 * W or min(W, H) < 400:
+            return []
+        errs = []
+        for e in out["elements"]:
+            if e["id"] in ids and float(e.get("opacity", 1)) > 0:
+                b = drawn_box(e) if e.get("type") == "text" else el_visual_box(e)
+                if b.y < (top - 0.01) * H or b.b > (1 - bottom + 0.01) * H:  # 1% for transparent margins
+                    errs.append(f"{e['id']}: y {b.y:.0f}-{b.b:.0f} under the story UI "
+                                f"(safe {top * H:.0f}-{(1 - bottom) * H:.0f})")
+        return errs
+    return check
+
+
+def keeps_share(pid: str, keep: float = 0.6) -> Check:
+    """On a roomy target this picture keeps at least ``keep`` of its source share of the canvas
+    (a product never shrinks to a thumbnail)."""
+    def check(src, out, tgt):
+        W, H = tgt["width"], tgt["height"]
+        if min(W, H) < 400:
+            return []
+        s = next(x for x in src["elements"] if x["id"] == pid)
+        e = next(x for x in out["elements"] if x["id"] == pid)
+        if float(e.get("opacity", 1)) <= 0:
+            return [f"{pid}: hidden"]
+        cw, ch = src["canvas"]["width"], src["canvas"]["height"]
+        ratio = (e["width"] * e["height"] / (W * H)) / (s["width"] * s["height"] / (cw * ch))
+        return [f"{pid}: keeps {ratio:.2f} of its share, wants {keep}"] if ratio < keep - 0.02 else []
+    return check
+
+
+def same_font(*ids: str) -> Check:
+    """Texts that shared a font size in the source share one in the output (copyfit)."""
+    def check(src, out, tgt):
+        sizes = {e["id"]: e["font_size"] for e in out["elements"]
+                 if e["id"] in ids and float(e.get("opacity", 1)) > 0}
+        return [f"sizes differ: {sizes}"] if len(set(sizes.values())) > 1 else []
+    return check
+
+
 def all_of(*checks: Check) -> Check:
     def check(src, out, tgt):
         return [e for c in checks for e in c(src, out, tgt)]
@@ -386,7 +431,7 @@ def all_of(*checks: Check) -> Check:
 
 
 def cases() -> List[Case]:
-    return _base_cases() + round5_cases() + round7_cases() + round10_cases()
+    return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_c_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -1005,6 +1050,52 @@ def round10_cases() -> List[Case]:
              "nested width searches must not blow up (bounded time and memory), and the output is valid",
              1080, 1350, deep_panel(), targets=("1640x924", "pres-16x9", "leaderboard"),
              show=("headline", "cta_label"), seconds=120.0, max_mb=1500.0),
+    ]
+
+
+def sprint_c_cases() -> List[Case]:
+    """Tier-1 formats that look designed (sprint lane C): a story keeps its copy out of the
+    platform UI, a large product does not shrink to a thumbnail on a roomy canvas, and texts set
+    at one size in the source stay at one size."""
+    return [
+        Case("story_ui_clear",
+             "a square post with its logo at the very top and its button at the very bottom: on a "
+             "story, copy, logo and button stay out of the account bar (top 14%) and the reply box "
+             "(bottom 20%); the background still runs under them",
+             1080, 1080, [
+                 logo(390, 30, 300, 90),
+                 text("headline", 90, 170, 900, 160, "Golden hour, bottled", 72, "Solstice Serif", True),
+                 image("product", 390, 360, 300, 450),
+                 text("subhead", 140, 830, 800, 50, "Sparkling botanicals, small batches", 30),
+                 *button("cta", 390, 960, 300, 90, "Shop now", 30),
+             ], targets=("story", "1080x2340", "ig-square", "pinterest"),
+             show=("headline", "cta_label"), show_roomy=("logo", "product"),
+             check=clear_of_story_ui("logo", "headline", "subhead", "cta_bg", "cta_label")),
+
+        Case("product_not_thumbnail",
+             "a product covering a fifth of a portrait post, above a two-line headline, a subhead and "
+             "a button: on roomy targets it keeps at least 60% of its share of the canvas",
+             1080, 1350, [
+                 logo(390, 50),
+                 image("product", 340, 190, 400, 600),
+                 text("headline", 90, 830, 900, 180, "The taste of a long summer evening", 64,
+                      "Solstice Serif", True),
+                 text("subhead", 140, 1040, 800, 50, "Sparkling botanicals, crafted in small batches.", 28),
+                 *button("cta", 390, 1150, 300, 90, "Discover", 28),
+             ], targets=ROOMY, show=("headline", "cta_label"), show_roomy=("product",),
+             check=keeps_share("product", 0.6)),
+
+        Case("copyfit_twins",
+             "two feature lines set at one size in the source, one short and one long: wherever both "
+             "show they keep one size, so the type system stays consistent",
+             1080, 1080, [
+                 logo(390, 60),
+                 text("headline", 90, 220, 900, 200, "Chase the Light", 96, "Solstice Serif", True),
+                 text("feat1", 140, 520, 800, 50, "Wild honey", 34),
+                 text("feat2", 140, 590, 800, 50, "Blood orange, smoked rosemary and a whisper of sea salt", 34),
+                 *button("cta", 390, 800, 300, 90, "Shop now", 30),
+             ], targets=("ig-square", "story", "fb-link", "yt-thumb", "pres-16x9", "half-page"),
+             show=("headline", "cta_label"), check=same_font("feat1", "feat2")),
     ]
 
 
