@@ -174,15 +174,17 @@ def render_set(s: dict, roots: Dict[str, Path], private: Path, transform: Option
 # ---- floor -----------------------------------------------------------------------------------
 
 def run_floor(parts: List[str], roots: Dict[str, Path], sets: List[dict], private: Path,
-              cand_is_engine: bool, tolerance: Optional[Dict[str, int]] = None) -> dict:
+              cand_is_engine: bool, tolerance: Optional[Dict[str, int]] = None,
+              profile: str = "default") -> dict:
     from tools.gate import floor
 
     cache = private / "floor.json"
     if cache.exists():
         return json.loads(cache.read_text())
-    rep: dict = {"parts": {}}
+    prof = floor.PROFILES[profile]
+    rep: dict = {"parts": {}, "profile": profile}
     if "suites" in parts and cand_is_engine:
-        r = floor.run_suites(roots["cand"])
+        r = floor.run_suites(roots["cand"], only=prof["suites"])
         rep["parts"]["suites"] = {"pass": r["pass"], "failed": [k for k, v in r["parts"].items() if not v["pass"]]}
     if "docker" in parts and cand_is_engine:
         r = floor.run_docker(roots["cand"])
@@ -201,13 +203,15 @@ def run_floor(parts: List[str], roots: Dict[str, Path], sets: List[dict], privat
         for s in sets:
             src = private / "tasks" / s["version"]
             co, bo = private / "out" / s["version"] / "cand", private / "out" / s["version"] / "base"
-            r = floor.check_tiles(src, co, bo, s["kit"], tolerance)
+            kw = {"report_rows": prof["report_rows"]} if prof["report_rows"] else {}
+            r = floor.check_tiles(src, co, bo, s["kit"], tolerance, **kw)
             ok &= r["pass"]
             # aggregates only: no tile names, no messages (they can quote sealed content)
             sets_rep[s["version"]] = {"pass": r["pass"], "tiles": r["tiles"], "totals": r["totals"],
                                       "base_totals": r["base_totals"],
                                       "fails": [f.split(":")[0] for f in r["fails"]],
-                                      "tolerated": r.get("tolerated") or {}}
+                                      "tolerated": r.get("tolerated") or {},
+                                      "reported": r.get("reported") or {}, "paired": r.get("paired")}
             hidden["cand"] += r["totals"].get("hidden", 0)
             hidden["base"] += (r["base_totals"] or {}).get("hidden", 0)
         rep["parts"]["tiles"] = {"pass": ok, "sets": sets_rep, "tolerance": dict(tolerance or {})}
@@ -315,6 +319,10 @@ def verdict_line(rep: dict) -> str:
           for k, v in (s.get("tolerated") or {}).items()]
     tol = ((fl.get("parts") or {}).get("tiles") or {}).get("tolerance")
     ts = (f" tolerated {', '.join(tl)}" if tl else "") + (f" (tolerance {json.dumps(tol, sort_keys=True)})" if tol else "")
+    rl = [f"{k} +{v['rise']}" for s in ((fl.get("parts") or {}).get("tiles") or {}).get("sets", {}).values()
+          for k, v in (s.get("reported") or {}).items()]
+    if fl.get("profile") and fl["profile"] != "default":
+        ts += f" profile {fl['profile']}" + (f" (reported {', '.join(rl)})" if rl else "")
     parts.append(f"floor {'PASS' if fl.get('pass') else 'FAIL' if fl else 'n/a'}{hs}{ts}")
     pr = rep.get("proxy")
     if pr:
@@ -394,7 +402,7 @@ def run(prereg_path: Path, resume: bool = False, judge: Optional[Callable] = Non
     # floor
     parts = p.get("floor", P.FLOOR_PARTS)
     fl = run_floor(parts, roots, sets, private, cand_is_engine=not p["candidate"].get("builtin") and not transform,
-                   tolerance=p.get("floor_tolerance"))
+                   tolerance=p.get("floor_tolerance"), profile=p.get("floor_profile") or "default")
     rep["floor"] = fl
     _say(f"floor {'PASS' if fl['pass'] else 'FAIL'} {json.dumps({k: v['pass'] for k, v in fl['parts'].items()})}")
     if not fl["pass"]:
