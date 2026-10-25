@@ -29,7 +29,7 @@ from typing import Dict, List, Optional
 from engine.smart.analyze import normalize
 from engine.smart.color import normalize as normalize_colour, parse_rgba
 from engine.smart.geom import Box, el_box
-from engine.smart.items import Ctx
+from engine.smart.items import Ctx, min_floor
 from engine.smart.textfit import drawn_box, new_text_overlaps
 from tools import bleed
 
@@ -122,7 +122,9 @@ def _image_ratio(e: dict, s: dict, W: float, H: float) -> List[str]:
 def promise_errors(src: dict, out: dict, tgt: dict) -> List[str]:
     errs: List[str] = []
     W, H = tgt["width"], tgt["height"]
-    floor = Ctx(W=W, H=H, W0=1, H0=1).judge_floor
+    # S1: the explicit absolute minimum (items.min_floor); only a plan that cannot keep every
+    # element at the usual judge floor sets secondary copy under it
+    floor = min_floor(W, H)
     texts = [e for e in out["elements"] if _visible_text(e)]
     for e in texts:
         if e["font_size"] < floor:
@@ -134,6 +136,40 @@ def promise_errors(src: dict, out: dict, tgt: dict) -> List[str]:
     for a, b, area, _ in new_text_overlaps(out["elements"], src_norm):
         errs.append(f"copy over copy: {a} x {b} ({area:.0f} px2)")
     errs += _labels_in_buttons(src, out)
+    return errs
+
+
+def hidden_errors(src: dict, out: dict) -> List[str]:
+    """S1 (loop/STEERING.md): no element is hidden. Reports each source element the output
+    leaves unshown the way the engine hides things: opacity 0, text set at 1 px, or art shrunk
+    to a speck (longer side under 3 px where the source's was at least 6 px). Exempt: an image
+    whose asset is not in the brand kit (showing it would paint the renderer's grey placeholder)
+    and an element with nothing to show in the source (zero size, off the canvas, opacity 0,
+    empty text). Box-level cover is not judged here (tools/gate/visible.py does that)."""
+    from engine.smart import assets
+
+    W0, H0 = float(src["canvas"]["width"]), float(src["canvas"]["height"])
+    got = {e.get("id"): e for e in out.get("elements", [])}
+    errs: List[str] = []
+    for s in src["elements"]:
+        w, h = float(s.get("width", 0) or 0), float(s.get("height", 0) or 0)
+        x, y = float(s.get("x", 0) or 0), float(s.get("y", 0) or 0)
+        if float(1 if s.get("opacity") is None else s["opacity"]) <= 0 or w < 1 or h < 1 or \
+                x >= W0 or y >= H0 or x + w <= 0 or y + h <= 0:
+            continue
+        if s.get("type") == "image" and not assets.info(s.get("asset_id")).found:
+            continue
+        if s.get("type") == "text" and not str(s.get("content", "")).strip():
+            continue
+        e = got.get(s.get("id"))
+        if e is None:
+            continue  # a missing id is a hard-rule error, reported there
+        if float(1 if e.get("opacity") is None else e["opacity"]) <= 0:
+            errs.append(f"{s['id']}: hidden (opacity 0)")
+        elif e.get("type") == "text" and int(e.get("font_size", 12)) <= 1 < float(s.get("font_size", 12) or 12):
+            errs.append(f"{s['id']}: hidden (text at 1 px)")
+        elif e.get("type") != "text" and max(float(e["width"]), float(e["height"])) < 3 <= max(w, h):
+            errs.append(f"{s['id']}: hidden (a speck, {e['width']:.1f}x{e['height']:.1f} px)")
     return errs
 
 

@@ -10,9 +10,9 @@ from .color import normalize as normalize_colour
 from .compose import Plan, display_room, generate
 from .geom import Box, el_box, rotated_aabb
 from .items import BUDGET, Ctx, forget_realized
-from .layout import PANEL_PAD, panel_pads
+from .layout import PANEL_PAD, BudgetExceeded, panel_pads
 from .regions import legal_bleed
-from .score import prune_relaxed, score_plans
+from .score import keep_everything_first, prune_relaxed, score_plans
 from .textfit import TextStyle, letter_spacing
 from . import vision
 
@@ -36,20 +36,32 @@ def plan_design(source: dict, target: dict):
         d = analyze(source, lockups=lockups)
         W, H = float(target["width"]), float(target["height"])
         ctx = Ctx(W=W, H=H, W0=d.W, H0=d.H, display_room=display_room(d, W, H))
-        BUDGET.armed = True  # the budget cuts the candidate search short, never what follows it
-        try:
-            plans = prune_relaxed(generate(d, ctx))
-        finally:
-            BUDGET.armed = False
-        if plans:
-            score_plans(plans, d, ctx)
-            vision.rank(plans, d, ctx, _decor_rects(d, ctx))  # copy off the faces and subject of a photo
-            plans.sort(key=lambda p: -p.score)
-            plans[:] = _diverse(plans, RERANK)
-            _pixel_rerank(plans, d, ctx, RERANK)
-            if _promote_passing(plans, source, d, ctx):
-                return d, ctx, plans
-            reason = "every candidate draws copy over copy or past the canvas"
+        # S1: the search first stops at plans that keep every element; only if none of those
+        # passes the hard checks is it run to the end, where plans may leave something out
+        for settle in (True, False):
+            BUDGET.armed = True  # the budget cuts the candidate search short, never what follows it
+            try:
+                plans = prune_relaxed(generate(d, ctx, settle=settle))
+            except BudgetExceeded:
+                if settle:
+                    raise
+                break  # nothing more within the budget: as if the full search found nothing new
+            finally:
+                BUDGET.armed = False
+            if plans:
+                score_plans(plans, d, ctx)
+                vision.rank(plans, d, ctx, _decor_rects(d, ctx))  # copy off the faces and subject of a photo
+                _bury(plans, d, ctx)  # art a redrawn panel would paint over
+                plans.sort(key=lambda p: -p.score)
+                keep_everything_first(plans)
+                plans[:] = _diverse(plans, RERANK)
+                _pixel_rerank(plans, d, ctx, RERANK)
+                keep_everything_first(plans)
+                if _promote_passing(plans, source, d, ctx):
+                    return d, ctx, plans
+                reason = "every candidate draws copy over copy or past the canvas"
+            if not plans or all(p.lost() for p in plans):
+                break  # the full search already ran (or the budget is spent)
         if not any(it.lockup for it in d.items):
             break
     raise RuntimeError(reason)
@@ -101,6 +113,38 @@ def _diverse(plans, top: int, per_kind: int = 2):
         else:
             rest.append(p)
     return head + rest
+
+
+def _bury(plans, d: Design, ctx: Ctx) -> None:
+    """Charge a plan for art that a panel, redrawn around its members, would paint over: an
+    opaque panel stretched over a picture stacked below it hides the picture as surely as
+    leaving it out (a photo beside a colour panel, laid out in one column, with the panel
+    framing the logo above the photo and the copy below it)."""
+    from .regions import panel_alpha
+
+    solid = [bd for bd in d.backdrops if panel_alpha(bd.el) >= 0.95]
+    if not solid:
+        return
+    for p in plans:
+        pen = 0.0
+        for bd in solid:
+            if bd.el["id"] in p.fixed:
+                continue
+            o = _backdrop(bd, p, d, ctx)
+            if float(o.get("opacity", 1) or 0) <= 0:
+                continue
+            pb, z = el_box(o), int(bd.el.get("z_index", 0) or 0)
+            mine = {id(m) for m in bd.members}
+            for r, x, y in p.placed + p.floaters:
+                it = r.item
+                if id(it) in mine or it.kind not in ("image", "composite") or r.w * r.h <= 0:
+                    continue
+                if min(int(e.get("z_index", 0) or 0) for e in it.els) < z and \
+                        pb.inter(Box(x, y, r.w, r.h)) > 0.5 * r.w * r.h:
+                    pen += 2.0 * it.importance
+        if pen:
+            p.breakdown["buried"] = -pen
+            p.score -= pen
 
 
 def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
@@ -174,8 +218,24 @@ def emit(plan: Plan, d: Design, ctx: Ctx) -> List[dict]:
         if e["id"] not in out:
             out[e["id"]] = _proportional(e, d, ctx)
     els = [out[e["id"]] for e in d.elements]
+    _keep_hairlines(els, d)
     _tuck_hidden_text(els)
     return els
+
+
+def _keep_hairlines(els: List[dict], d: Design) -> None:
+    """A rule or sliver of art at least 1 px thick in the source stays at least 1 px thick:
+    scaled under a pixel it no longer paints (loop/STEERING.md S1)."""
+    for e in els:
+        if e.get("type") == "text" or float(e.get("opacity", 1.0)) <= 0:
+            continue
+        s = d.by_id.get(e["id"])
+        if s is None:
+            continue
+        for k, pos in (("width", "x"), ("height", "y")):
+            if as_number(s.get(k), 0.0) >= 1.0 and 0.0 < e.get(k, 0.0) < 1.0:
+                e[pos] -= (1.0 - e[k]) / 2.0
+                e[k] = 1.0
 
 
 def _decor_rects(d: Design, ctx: Ctx) -> list:
@@ -204,7 +264,7 @@ def _backdrop(bd, plan: Plan, d: Design, ctx: Ctx) -> dict:
     mine, others = [], []
     for r, x, y in plan.placed + plan.floaters:
         (mine if id(r.item) in members else others).append((r, Box(x, y, r.w, r.h)))
-    if not mine:
+    if not mine:  # nothing it frames is on the canvas (a missing asset): nothing to frame
         return _hidden(bd.el, d, ctx)
     u = mine[0][1]
     for _, b in mine[1:]:
@@ -230,10 +290,8 @@ def _backdrop(bd, plan: Plan, d: Design, ctx: Ctx) -> dict:
     box = box.inter_box(Box(0, 0, ctx.W, ctx.H)) or box
     if not free(box):  # padding would run into a neighbour: hug the members instead
         tight = u.expanded(0.25 * floor)
-        if free(tight):
-            box = tight
-        else:
-            return _hidden(bd.el, d, ctx)
+        # S1: a panel is never hidden; with no room for any padding it frames its members exactly
+        box = tight if free(tight) else u
     o = _strip(bd.el)
     o.update(x=box.x, y=box.y, width=box.w, height=box.h)
     if o.get("corner_radius"):

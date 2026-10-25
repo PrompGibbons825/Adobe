@@ -86,8 +86,21 @@ Each is solved by a small flexbox-like engine for the largest scale that fits
 little further, and no design grows past the point where its headline reaches the
 canvas's display size, so nothing outgrows the headline; a design of copy alone on
 a canvas taller than wide may go 1.4× past it, as a typographic poster does),
-then retried with low-importance items dropped: legal, watermark, ribbon, a set
-of badges, the subhead; a row of product cards gives way one card at a time.
+and **nothing is left out** to make it fit. When everything does not fit, the
+layout climbs a demotion ladder instead, stopping at the first rung where every
+element is placed:
+1. type relaxes further toward the legibility floor (stickers and captions stay on
+   their art at the floor rather than leaving it);
+2. small secondary items (badges, ribbon, small print, watermark) move out of the
+   column into the margins and corners, a set of badges queued in one line along
+   the edge; a corner item with no room in its corner joins the column instead;
+3. on strips the copy re-stacks into two or three columns side by side, and small
+   print runs as one line along the foot of the strip;
+4. last, secondary copy (small print, badges, a subhead) may go under the usual
+   floor down to an explicit minimum (70% of it, never under 7 px); headline and
+   CTA stay at the usual floor.
+Only content that cannot fit even then (a crowded poster on a 320×50) still has
+low-importance items left out, least important first, as a repair of last resort.
 
 When a design reflows, a short headline is also offered as **display type**, the
 way Adobe's reference output sets it: 1.35× and 1.7× larger than the rest of the
@@ -116,7 +129,8 @@ typographic **rhythm**:
 Margins follow the source's breathing room but are never thinner than a
 banner's (about 5% of the canvas's length, at most 0.3 of its short side).
 Headline and CTA are never dropped. Copy never goes below a legibility floor
-(cap height of about 7 px when the canvas is viewed at 1024 px). When a label
+(cap height of about 7 px when the canvas is viewed at 1024 px), except secondary
+copy on the ladder's last rung. When a label
 is held up at the floor, its button gets a tighter pill rather than a bigger one.
 On a strip (3:1 or wider) the call to action is the banner's second focal point,
 in a column of its own, so its label is set at no less than 45% of the strip's
@@ -128,7 +142,8 @@ than 5% of the rest of the layout's scale. The bolder button is scored at the si
 it would have had, so it never decides what else stays;
 a round button or sticker stays round, and a sticker (a button-like group on a
 picture, not a text lockup) whose label would have to be blown up past twice its
-art's scale to stay legible is left off the art. An ellipse that bleeds off the
+art's scale to stay legible is set at the floor on the art instead (when it would
+otherwise be left out). An ellipse that bleeds off the
 canvas is a corner ornament, never a panel.
 
 **4. Score like the rubric** (`score.py`, `pixels.py`)
@@ -181,8 +196,9 @@ fit-and-centre layout, so a run never crashes.
 
 ### Notes on specific decisions
 
-- **Dropped elements stay in the JSON** with their ids and `opacity: 0`, stacked
-  under everything. The reference renderer ignores `opacity` on text, so dropped
+- **Nothing is hidden** (a panel is redrawn hugging its members when there is no
+  room for its padding). In the last-resort repair, a left-out element stays in
+  the JSON with its id and `opacity: 0`, stacked under everything. The reference renderer ignores `opacity` on text, so dropped
   copy is also set at 1 px and tucked under the largest opaque element; a rendered
   check confirms it paints nothing.
 - **Missing assets:** a small image whose file is not in the brand kit is dropped

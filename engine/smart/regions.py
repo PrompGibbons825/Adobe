@@ -398,12 +398,13 @@ def plan_regions(d, ctx, hidden, name: str = "regions", insets=(0, 0, 0, 0), axi
     photo = Real(item=sp.photo, w=P.w, h=P.h, scale=max(P.w / max(1.0, src.w), P.h / max(1.0, src.h)),
                  emit_fn=emit)
     photo._oh = (0.0, 0.0, 0.0, 0.0)  # its footprint is its region: what runs past is cropped or under the panel
-    fl, bad = [], []
-    if floaters:
+    fl = []
+    if floaters:  # corner items keep their corners, clear of the copy; none is left out (S1)
         fl, bad, _, _ = _settle_floaters(placed, floaters, s, ctx, Box(0, 0, W, H), mx, my, relax)
         gap = 0.6 * ctx.base_fs
-        if any(collides(Box(fx, fy, fr.w, fr.h), Box(x, y, r.w, r.h), gap) for fr, fx, fy in fl for r, x, y in placed):
+        if bad or any(collides(Box(fx, fy, fr.w, fr.h), Box(x, y, r.w, r.h), gap)
+                      for fr, fx, fy in fl for r, x, y in placed):
             return None
-    return Plan(name=name, placed=[(photo, P.x, P.y)] + placed, hidden=list(hidden) + bad, s=s, zone=zone,
+    return Plan(name=name, placed=[(photo, P.x, P.y)] + placed, hidden=list(hidden), s=s, zone=zone,
                 floaters=fl, relax=relax, capped=s >= hi * 0.999,
                 fixed={sp.panel.el["id"]: (Q.x, Q.y, Q.w, Q.h)})

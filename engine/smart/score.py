@@ -61,17 +61,29 @@ def _prior(name: str, r: float, r0: float = 1.0) -> float:
 
 
 def _core_hidden(p: Plan) -> int:
-    return sum(1 for h in p.hidden if h.role in ("headline", "cta", "logo", "hero"))
+    return p.core_lost()
+
+
+def _loss(p: Plan):
+    return (_core_hidden(p), p.lost())
 
 
 def prune_relaxed(plans: List[Plan]) -> List[Plan]:
     """Type below the legibility floor is a last resort: drop such a plan when a
-    plan at full legibility keeps at least as many core items on the canvas."""
-    full = [_core_hidden(p) for p in plans if p.relax >= 1.0]
+    plan at full legibility keeps at least as much on the canvas (core items
+    first, then every element: S1, keeping an element beats setting it larger)."""
+    full = [_loss(p) for p in plans if p.relax >= 1.0]
     if not full:
         return plans
     best = min(full)
-    return [p for p in plans if p.relax >= 1.0 or _core_hidden(p) < best]
+    return [p for p in plans if p.relax >= 1.0 or _loss(p) < best]
+
+
+def keep_everything_first(plans: List[Plan]) -> None:
+    """S1 (loop/STEERING.md): a plan that leaves an element out ranks after every plan
+    that shows them all, whatever its score; among the rest, fewer core items lost first
+    (a product shrunk to a speck is worse than a row of badges left out), then fewer lost."""
+    plans.sort(key=_loss)  # stable: the score order holds within each class
 
 
 def score_plans(plans: List[Plan], d: Design, ctx: Ctx) -> None:
