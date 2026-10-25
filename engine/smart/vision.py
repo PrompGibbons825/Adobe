@@ -65,6 +65,7 @@ class Vision:
     people: Tuple[Frac, ...]  # head and shoulders: copy keeps off
     focal: Tuple[float, float]  # the subject's centre
     subject: bool  # a concentrated subject (or a face): worth cropping for
+    extent: Frac = (0.0, 0.0, 1.0, 1.0)  # where the subject is (the heads, or the weightiest part)
 
     def mass(self, f: Frac) -> float:
         """Mean importance over a fractional region."""
@@ -133,17 +134,22 @@ def _vision(rgba) -> Optional[Vision]:
     integral = np.zeros((sh + 1, sw + 1), dtype=np.float64)
     integral[1:, 1:] = imp.astype(np.float64).cumsum(0).cumsum(1)
 
+    extent = (0.0, 0.0, 1.0, 1.0)
     if faces:
         wts = [(f[2] - f[0]) * (f[3] - f[1]) for f in faces]
         fx = sum((f[0] + f[2]) / 2 * w for f, w in zip(faces, wts)) / sum(wts)
         fy = sum((f[1] + f[3]) / 2 * w for f, w in zip(faces, wts)) / sum(wts)
         subject = True
+        extent = (min(h[0] for h in heads), min(h[1] for h in heads), max(h[2] for h in heads),
+                  max(h[3] for h in heads))
     else:
         thr = float(np.quantile(imp, 0.85))
         ys, xs = np.nonzero(imp >= thr)
         if len(xs) < 4 or float(imp.max()) < 0.15:
             fx, fy, subject = 0.5, 0.5, False
         else:
+            extent = (float(np.quantile(xs, 0.05)) / sw, float(np.quantile(ys, 0.05)) / sh,
+                      float(np.quantile(xs, 0.95) + 1) / sw, float(np.quantile(ys, 0.95) + 1) / sh)
             bw = (np.quantile(xs, 0.95) - np.quantile(xs, 0.05) + 1) / sw
             bh = (np.quantile(ys, 0.95) - np.quantile(ys, 0.05) + 1) / sh
             wt = imp[ys, xs]
@@ -152,7 +158,7 @@ def _vision(rgba) -> Optional[Vision]:
             # concentrated, and standing out from the rest of the picture
             subject = bw * bh < FLAT and float(imp[ys, xs].mean()) > 2.0 * float(imp.mean()) + 0.05
     return Vision(size=(iw, ih), imp=imp, integral=integral, faces=tuple(faces), heads=heads, people=people,
-                  focal=(fx, fy), subject=bool(subject))
+                  focal=(fx, fy), subject=bool(subject), extent=extent)
 
 
 def _pad(f: Frac, l: float, t: float, r: float, b: float) -> Frac:
@@ -414,7 +420,10 @@ def _cover_box(v: Vision, W: float, H: float, copy: Tuple[Rect, ...], shown: Fra
         else:
             target = 0.5
         focal = v.focal[0] if horiz else v.focal[1]
-        sc = sc - 0.5 * np.abs((focal - T) / win - target)  # the subject on its third line
+        s0, s1 = (v.extent[0], v.extent[2]) if horiz else (v.extent[1], v.extent[3])
+        held = min(centre + win, s1) - max(centre, s0) >= 0.9 * (s1 - s0)
+        if not held:  # the centre crop cuts the subject: put it on its third line (else leave it be)
+            sc = sc - 0.5 * np.abs((focal - T) / win - target)
         for hd in v.heads:  # never cut a head
             h0, h1 = (hd[0], hd[2]) if horiz else (hd[1], hd[3])
             cut = np.maximum(0.0, T - h0) + np.maximum(0.0, h1 - (T + win))
