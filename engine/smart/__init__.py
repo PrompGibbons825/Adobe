@@ -58,6 +58,15 @@ def plan_design(source: dict, target: dict):
                 plans[:] = _diverse(plans, RERANK)
                 _pixel_rerank(plans, d, ctx, RERANK + _quiet_extras(plans, RERANK))
                 keep_everything_first(plans)
+                if plans:
+                    from .repair import maybe_repair
+
+                    def _rescore_one(trial):
+                        score_plans([trial], d, ctx)
+                        vision.rank([trial], d, ctx, _decor_rects(d, ctx))
+                        _pixel_rerank([trial], d, ctx, 1)
+
+                    maybe_repair(plans, d, ctx, source, lambda pl, dd, cc: emit(pl, dd, cc), _rescore_one)
                 if _promote_passing(plans, source, d, ctx):
                     return d, ctx, plans
                 reason = "every candidate draws copy over copy or past the canvas"

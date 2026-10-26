@@ -9,7 +9,12 @@ Read-only: nothing here changes a pixel. A photo is only *looked at*, small:
   * faces, from YuNet (OpenCV zoo, MIT, models/face_detection_yunet_2023mar.onnx),
     or OpenCV's bundled Haar cascade with a skin and two-eye check when YuNet
     cannot load. Each face is padded to the head (never cut) and to head and
-    shoulders (copy keeps off it).
+    shoulders (copy keeps off it);
+  * U2-Netp saliency (Apache-2.0, models/u2netp.onnx) merged into the importance
+    map for cropping and copy penalties;
+  * PP-OCRv4 text detection only (Apache-2.0, models/ch_PP-OCRv4_det_infer.onnx):
+    baked-in text on a photo is treated like a face (never cropped through or
+    covered by live copy).
 
 A background photo that covers the canvas is then cropped by *bleed*
 (``cover_box``): drawn at its own aspect, scaled to cover the canvas, and slid
@@ -63,6 +68,7 @@ class Vision:
     faces: Tuple[Frac, ...]  # detected faces
     heads: Tuple[Frac, ...]  # faces padded to the whole head: never cut
     people: Tuple[Frac, ...]  # head and shoulders: copy keeps off
+    baked: Tuple[Frac, ...]  # text baked into the raster: never crop through or cover
     focal: Tuple[float, float]  # the subject's centre
     subject: bool  # a concentrated subject (or a face): worth cropping for
     extent: Frac = (0.0, 0.0, 1.0, 1.0)  # where the subject is (the heads, or the weightiest part)
@@ -107,12 +113,12 @@ def _analyze(path: str, mtime: int, size: int) -> Optional[Vision]:
     except Exception:
         return None
     try:
-        return _vision(rgba)
+        return _vision(rgba, path)
     except Exception:  # never let a picture break a resize
         return None
 
 
-def _vision(rgba) -> Optional[Vision]:
+def _vision(rgba, path: str = "") -> Optional[Vision]:
     from PIL import Image
 
     iw, ih = rgba.size
@@ -124,9 +130,27 @@ def _vision(rgba) -> Optional[Vision]:
     alpha = arr[..., 3]
     rgb = arr[..., :3]
     imp = _importance(rgb, alpha)
+    from . import vision_models as _vm
+
+    u2 = _vm.u2_saliency(rgb, alpha, sh, sw)
+    if u2 is not None:
+        imp = np.maximum(imp, 0.68 * u2)
     faces = _faces(rgba) if alpha.mean() > 0.9 else []
     heads = tuple(_pad(f, 0.25, 0.45, 0.25, 0.25) for f in faces)
     people = tuple(_pad(f, 0.5, 0.45, 0.5, 0.8) for f in faces)
+    baked: Tuple[Frac, ...] = ()
+    if path:
+        try:
+            st = os.stat(path)
+            raw_baked = _vm.baked_text(path, st.st_mtime_ns, st.st_size)
+            baked = tuple(f for f in raw_baked if (f[2] - f[0]) * (f[3] - f[1]) >= 0.003
+                          and not any(_iou(f, h) > 0.25 for h in heads))
+        except OSError:
+            baked = ()
+    for f in baked:
+        x0, y0, x1, y1 = (int(round(v)) for v in (f[0] * sw, f[1] * sh, f[2] * sw, f[3] * sh))
+        imp[max(0, y0):max(0, y1), max(0, x0):max(0, x1)] = np.maximum(
+            imp[max(0, y0):max(0, y1), max(0, x0):max(0, x1)], 0.92)
     for f in heads:  # the faces are what matters most in the picture
         x0, y0, x1, y1 = (int(round(v)) for v in (f[0] * sw, f[1] * sh, f[2] * sw, f[3] * sh))
         imp[max(0, y0):max(0, y1), max(0, x0):max(0, x1)] = np.maximum(
@@ -158,7 +182,7 @@ def _vision(rgba) -> Optional[Vision]:
             # concentrated, and standing out from the rest of the picture
             subject = bw * bh < FLAT and float(imp[ys, xs].mean()) > 2.0 * float(imp.mean()) + 0.05
     return Vision(size=(iw, ih), imp=imp, integral=integral, faces=tuple(faces), heads=heads, people=people,
-                  focal=(fx, fy), subject=bool(subject), extent=extent)
+                  baked=baked, focal=(fx, fy), subject=bool(subject), extent=extent)
 
 
 def _pad(f: Frac, l: float, t: float, r: float, b: float) -> Frac:
@@ -428,6 +452,10 @@ def _cover_box(v: Vision, W: float, H: float, copy: Tuple[Rect, ...], shown: Fra
             h0, h1 = (hd[0], hd[2]) if horiz else (hd[1], hd[3])
             cut = np.maximum(0.0, T - h0) + np.maximum(0.0, h1 - (T + win))
             sc = sc - np.where(cut > 1e-4, 4.0 + 20.0 * cut / max(1e-6, h1 - h0), 0.0)
+        for bd in v.baked:  # or text baked into the asset
+            h0, h1 = (bd[0], bd[2]) if horiz else (bd[1], bd[3])
+            cut = np.maximum(0.0, T - h0) + np.maximum(0.0, h1 - (T + win))
+            sc = sc - np.where(cut > 1e-4, 3.0 + 16.0 * cut / max(1e-6, h1 - h0), 0.0)
         for r in copy:  # copy keeps to the quiet part, and off the people
             if horiz:
                 lo, hi, c0, c1 = r[0] / W, (r[0] + r[2]) / W, r[1] / H, (r[1] + r[3]) / H
@@ -466,6 +494,7 @@ def centre_box(v: Vision, W: float, H: float) -> Rect:
 # a plan's background crop, and what it costs to set things on the subject
 
 FACE = 1.0  # x importance, for an item over a head (share of the smaller box)
+BAKED = 0.85  # x importance, for live copy over text baked into the photo
 PEOPLE = 0.3  # x importance, over head and shoulders
 QUIET = 0.8  # x importance, per unit of picture weight under an item past the picture's mean
 QUIET_SLACK = 0.1  # picture weight past the mean that costs nothing (the map's noise on plain areas)
@@ -544,6 +573,7 @@ def item_penalties(plan, d, ctx, extra: Sequence[Rect] = ()) -> Tuple[dict, floa
             continue
         box = bg_box(e, plan, d, ctx, extra) or centre_box(v, ctx.W, ctx.H)
         heads, people = drawn_faces(v, box, "heads"), drawn_faces(v, box, "people")
+        baked = drawn_faces(v, box, "baked")
         avg = v.mass((0.0, 0.0, 1.0, 1.0))
         bx, by, bw, bh = box
         things = [(x, y, r.w, r.h, float(getattr(r.item, "importance", 40.0)), getattr(r.item, "key", id(r.item)),
@@ -553,7 +583,8 @@ def item_penalties(plan, d, ctx, extra: Sequence[Rect] = ()) -> Tuple[dict, floa
                 continue
             a = w * h
             k = 0.0
-            for (fx, fy, fw, fh), wt in [(f, FACE) for f in heads] + [(f, PEOPLE) for f in people]:
+            for (fx, fy, fw, fh), wt in [(f, FACE) for f in heads] + [(f, BAKED) for f in baked] + \
+                    [(f, PEOPLE) for f in people]:
                 ix = max(0.0, min(x + w, fx + fw) - max(x, fx))
                 iy = max(0.0, min(y + h, fy + fh) - max(y, fy))
                 if ix * iy > 0:
