@@ -594,9 +594,48 @@ def _zone(d: Design, ctx: Ctx, insets, rows: Optional[List[List[Item]]] = None) 
     return Box(mx + il, y0, ctx.W - 2 * mx - il - ir, y1 - y0), mx, my
 
 
+def _quiet_headline(placed: List[Placement], d: Design, ctx: Ctx, zone: Box) -> List[Placement]:
+    """Nudge only the headline within the zone toward the photo's quiet band (CTA stays put)."""
+    from . import vision
+
+    v = None
+    for e in d.backgrounds:
+        if e.get("type") == "image":
+            v = vision.analyze(e.get("asset_id"))
+            break
+    if v is None or not v.subject:
+        return placed
+    from . import vision_models as _vm
+
+    band = _vm.quiet_band(v.imp, (0, 0, ctx.W, ctx.H))
+    out: List[Placement] = []
+    for r, x, y in placed:
+        if r.item.role != "headline" or r.w <= 0 or r.h <= 0:
+            out.append((r, x, y))
+            continue
+        box = vision.centre_box(v, ctx.W, ctx.H)
+        bx, by, bw, bh = box
+        best_x, best_y = x, y
+        best_m = v.mass(((x - bx) / bw, (y - by) / bh, (x + r.w - bx) / bw, (y + r.h - by) / bh))
+        step_x = max(2, int(zone.w * 0.025))
+        step_y = max(2, int(zone.h * 0.02))
+        for dx in range(-int(zone.w * 0.14), int(zone.w * 0.14) + 1, step_x):
+            for dy in range(-int(zone.h * 0.14), int(zone.h * 0.14) + 1, step_y):
+                nx = min(max(x + dx, zone.x), zone.r - r.w)
+                ny = min(max(y + dy, zone.y), zone.b - r.h)
+                m = v.mass(((nx - bx) / bw, (ny - by) / bh, (nx + r.w - bx) / bw, (ny + r.h - by) / bh))
+                cy = (ny + r.h / 2 - by) / bh
+                cx = (nx + r.w / 2 - bx) / bw
+                in_band = band[0] <= cx <= band[2] and band[1] <= cy <= band[3]
+                if m < best_m - (0.02 if in_band else 0.04):
+                    best_m, best_x, best_y = m, nx, ny
+        out.append((r, best_x, best_y))
+    return out
+
+
 def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", insets=(0, 0, 0, 0),
                force_align: Optional[str] = None, fold: frozenset = frozenset(),
-               vside: Optional[str] = None) -> Optional[Plan]:
+               vside: Optional[str] = None, quiet_headline: bool = False) -> Optional[Plan]:
     vis = _visible(d, hidden)
     floaters = [it for it in vis if it.corner and id(it) not in fold]
     body = [it for it in vis if not it.corner or id(it) in fold]
@@ -619,18 +658,21 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
         if tall_ad:  # a tall ad unit read at a glance: the button is the column's second focal point
             s, laid, relax = _with_bold_cta(root, d, ctx, zone, lo, hi, (s, laid, relax), TALL_CTA)
         placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, side=force_align, vside=vside)
+        if quiet_headline:
+            placed = _quiet_headline(placed, d, ctx, laid.zone)
         fl, bad, clash, new_zone = _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax)
         if bad:  # S1: a corner item with no room in its corner joins the column instead of being left out
-            return plan_stack(d, ctx, hidden, name, insets, force_align, _folded(fold, bad), vside)
+            return plan_stack(d, ctx, hidden, name, insets, force_align, _folded(fold, bad), vside,
+                              quiet_headline=quiet_headline)
         if not clash:
             return Plan(name=name, placed=placed, hidden=list(hidden), s=s, zone=zone, floaters=fl,
                         relax=relax, capped=s >= hi * 0.999)
         if new_zone.h < 0.4 * (ctx.H - 2 * my) or new_zone.w < 0.5 * (ctx.W - 2 * mx):
             return _fold_all(plan_stack, d, ctx, hidden, fold, floaters, name=name, insets=insets,
-                             force_align=force_align, vside=vside)
+                             force_align=force_align, vside=vside, quiet_headline=quiet_headline)
         zone = new_zone
     return _fold_all(plan_stack, d, ctx, hidden, fold, floaters, name=name, insets=insets, force_align=force_align,
-                     vside=vside)
+                     vside=vside, quiet_headline=quiet_headline)
 
 
 def plan_split(d: Design, ctx: Ctx, hidden: List[Item], hero_side: str = "left", hero_frac: float = 0.45,
@@ -1131,6 +1173,10 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
             if subject_bg and ctx.H > 1.05 * ctx.W:  # or at the top or bottom of a tall canvas
                 yield "stack-top", plan_stack, dict(vside="top")
                 yield "stack-bottom", plan_stack, dict(vside="bottom")
+            if subject_bg:
+                yield "stack-quiet", plan_stack, dict(quiet_headline=True)
+                yield "stack-quiet-end", plan_stack, dict(force_align="end", quiet_headline=True)
+                yield "stack-quiet-start", plan_stack, dict(force_align="start", quiet_headline=True)
         if r >= 0.95:
             for side in ("left", "right"):
                 for frac in (0.34, 0.48):

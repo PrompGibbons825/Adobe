@@ -1,0 +1,3 @@
+U2-Net / U2-Netp (u2netp.onnx)
+Copyright (c) 2020 Xuebin Qin
+Licensed under the Apache License, Version 2.0.

@@ -28,8 +28,9 @@ docker run --rm --network none \
 
 No network at run time. Besides what the starter installs (skia and numpy through
 cr-renderer, and Pillow), the engine uses OpenCV (`opencv-python-headless`) and one
-small face-detection model committed to the repo (YuNet, 230 KB, MIT, in
-`engine/smart/models/`); nothing is downloaded at run time. A task takes
+face-detection and photo-analysis models committed to the repo (YuNet, 230 KB, MIT;
+U2-Netp saliency, ~4.4 MB, Apache-2.0; PP-OCRv4 text detector only, ~4.6 MB,
+Apache-2.0; all in `engine/smart/models/`); nothing is downloaded at run time. A task takes
 about 0.3 s at the median and under 2 s at the 95th percentile; the first task
 in a run also pays a few seconds of one-time font and library loading.
 
