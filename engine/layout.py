@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .analyze import norm_rot
 from .blocks import GroupBlock, ImageBlock, Placed, TextBlock, img_vis_frac, make_block
+from . import saliency
 from . import textfit as tf
 
 
@@ -1035,7 +1036,7 @@ def tmpl_same(ctx, model, mode="center"):
             # lets each of its units do the same on their own
 
             def pin(lo, hi, size, new):
-                near = 0.08 * size
+                near = 0.12 * size          # a designer's margin: up to about an eighth
                 a, b = lo, size - hi
                 if a <= near and b <= near:
                     return None
@@ -1113,7 +1114,12 @@ def tmpl_same(ctx, model, mode="center"):
                 tol = 0.02 * min(Ws, Hs)
                 ex0, ey0 = e["x"] <= tol, e["y"] <= tol
                 ex1, ey1 = e["x"] + e["width"] >= Ws - tol, e["y"] + e["height"] >= Hs - tol
-                if abs(norm_rot(e.get("rotation", 0) or 0)) <= 1 and (ex0 or ey0 or ex1 or ey1):
+                from .analyze import _fills_box
+                # only what fills its box (a photo, a flat band) stretches to the
+                # edge; a shape (a circle bleeding off the canvas) keeps its form
+                info_ = saliency.analyze(e.get("asset_id") or "") if e["type"] == "image" else None
+                tint = info_ is not None and info_.get("alpha_std", 1.0) < 0.05     # uniform see-through layer
+                if abs(norm_rot(e.get("rotation", 0) or 0)) <= 1 and (ex0 or ey0 or ex1 or ey1) and (_fills_box(e) or tint):
                     # a surface spanning one axis keeps its share of the other
                     # (a photo filling the height and two thirds of the width
                     # still fills two thirds), anchored to the edge it touches
@@ -1166,7 +1172,8 @@ def _same_blocks(units, Ws, Hs):
             parent[k] = parent[parent[k]]
             k = parent[k]
         return k
-    members = [u for u in units if not surface(u)]
+    # decoration moves on its own: a ring behind a quote is not part of it
+    members = [u for u in units if not surface(u) and u.role not in ("deco", "minor")]
     for i, a in enumerate(members):
         for b in members[i + 1:]:
             A, B = boxes[id(a)], boxes[id(b)]

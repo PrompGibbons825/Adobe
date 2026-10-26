@@ -277,6 +277,7 @@ def analyze(asset_id: str) -> dict | None:
         "busyness": float(busy.mean()),
         "opaque_frac": float((alpha > 0.5).mean()),
         "alpha_mean": float(alpha.mean()),
+        "alpha_std": float(alpha.std()),       # ~0 for a full-bleed tint, high for a cut-out shape
         "edge_cover": _edge_cover(_alpha_maxpooled(im)),
         "corners": _corners(_alpha_maxpooled(im)),
     }
