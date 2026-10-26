@@ -596,7 +596,7 @@ def _zone(d: Design, ctx: Ctx, insets, rows: Optional[List[List[Item]]] = None) 
 
 def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", insets=(0, 0, 0, 0),
                force_align: Optional[str] = None, fold: frozenset = frozenset(),
-               vside: Optional[str] = None) -> Optional[Plan]:
+               vside: Optional[str] = None, gap_scale: float = 1.0) -> Optional[Plan]:
     vis = _visible(d, hidden)
     floaters = [it for it in vis if it.corner and id(it) not in fold]
     body = [it for it in vis if not it.corner or id(it) in fold]
@@ -610,7 +610,8 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
     # the hero's share is of the canvas inside the margins: a story's platform UI takes room from
     # the copy, not from what the hero may grow to
     root, boxes = column(d, rows, hero_fill=True, cap_rel=1.9, min_rel=0.7, force_align=force_align,
-                         hero_share=HERO_SHARE * zone.w * max(zone.h, ctx.H - 2 * my), keep=(d, ctx))
+                         gap_scale=gap_scale, hero_share=HERO_SHARE * zone.w * max(zone.h, ctx.H - 2 * my),
+                         keep=(d, ctx))
     tall_ad = ctx.H >= TALL_AD * ctx.W and min(ctx.W, ctx.H) < SMALL_AD and any(i.role == "cta" for i in body)
     for _ in range(4):
         s, laid, relax = solve(root, ctx, zone, lo, hi)
@@ -621,16 +622,16 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
         placed = place_column(laid, boxes, root.align, d, ctx, laid.zone, side=force_align, vside=vside)
         fl, bad, clash, new_zone = _settle_floaters(placed, floaters, s, ctx, zone, mx, my, relax)
         if bad:  # S1: a corner item with no room in its corner joins the column instead of being left out
-            return plan_stack(d, ctx, hidden, name, insets, force_align, _folded(fold, bad), vside)
+            return plan_stack(d, ctx, hidden, name, insets, force_align, _folded(fold, bad), vside, gap_scale)
         if not clash:
             return Plan(name=name, placed=placed, hidden=list(hidden), s=s, zone=zone, floaters=fl,
                         relax=relax, capped=s >= hi * 0.999)
         if new_zone.h < 0.4 * (ctx.H - 2 * my) or new_zone.w < 0.5 * (ctx.W - 2 * mx):
             return _fold_all(plan_stack, d, ctx, hidden, fold, floaters, name=name, insets=insets,
-                             force_align=force_align, vside=vside)
+                             force_align=force_align, vside=vside, gap_scale=gap_scale)
         zone = new_zone
     return _fold_all(plan_stack, d, ctx, hidden, fold, floaters, name=name, insets=insets, force_align=force_align,
-                     vside=vside)
+                     vside=vside, gap_scale=gap_scale)
 
 
 def plan_split(d: Design, ctx: Ctx, hidden: List[Item], hero_side: str = "left", hero_frac: float = 0.45,
@@ -1122,9 +1123,12 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
     words = str(lead_text(head).get("content", "")).split() if head is not None else []
     emphasis = () if not words else EMPHASIS if len(words) <= DISPLAY_WORDS else EMPHASIS[:1]
 
+    from .candidates import extra_variants, param_split_variants
+
     def archetypes(force_all: bool):
         if r <= 2.2 or force_all:
             yield "stack", plan_stack, {}
+            yield "stack-loose", plan_stack, dict(gap_scale=1.2)
             if busy_bg or subject_bg:  # copy over a photo: also try it against either side
                 yield "stack-start", plan_stack, dict(force_align="start")
                 yield "stack-end", plan_stack, dict(force_align="end")
@@ -1137,6 +1141,8 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
                     for fold in ((False, True) if has_corners else (False,)):
                         yield (f"split-{side}-{frac}{'-fold' if fold else ''}", plan_split,
                                dict(hero_side=side, hero_frac=frac, fold_corners=fold))
+            for name, kw in param_split_variants(has_corners):
+                yield name, plan_split, kw
         if d.split is not None and 0.4 <= r <= 3.2:  # a photo / panel split keeps its two regions
             from .regions import plan_regions
             for ax in (("x",) if r >= 1.25 else ("y",) if r <= 0.8 else ("x", "y")):
@@ -1160,6 +1166,8 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
                 yield mname, fn, kw, mctx
                 for e in emphasis:
                     yield f"{mname}@{e:g}", fn, kw, replace(mctx, emphasis=e)
+        for name, fn, kw, c in extra_variants(d, ctx, force_all):
+            yield name, fn, kw, c
 
     if not _visible(d, missing):  # nothing to lay out: every element is void or missing
         return [Plan(name="empty", placed=[], hidden=list(missing), s=1.0, zone=Box(0, 0, ctx.W, ctx.H))]
@@ -1170,12 +1178,27 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
 
     done = set()  # archetypes that already reached their cap without relaxing type
     tried: Dict[tuple, bool] = {}  # (variant, hide-set) -> found a plan: a later pass only adds what an earlier one left out
+    per_kind: Dict[str, int] = {}
+
+    def _plan_kind(nm: str) -> str:
+        base = nm.split("@")[0].split("~")[0]
+        if base.startswith("retrieve"):
+            return "retrieve"
+        if base.startswith("anchor"):
+            return "anchor"
+        if base.startswith("flex"):
+            return "flex"
+        return base.split("-")[0]
+
+    KIND_CAP = 18  # keep the candidate pool diverse: no single archetype floods the search
 
     def attempt(drop: List[Item], force_all: bool, base: Ctx, tag: str = "") -> bool:
         """Every variant with ``drop`` hidden; False when out of budget."""
         hidden = missing + drop
         fitted = set()
         for name, fn, kw, c in variants(force_all, base):
+            if tag and (name.startswith("anchor") or name.startswith("flex") or name.startswith("retrieve")):
+                continue
             plain = name.split("@")[0]
             # emphasis only makes the headline larger: if the plain plan did not fit, neither will it
             if name + tag in done or (plain != name and plain not in fitted) or (tag and plain != name):
@@ -1196,8 +1219,13 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
                     return False  # out of budget: the candidates found so far are the field
                 raise
             if p:
+                kind = _plan_kind(name + tag)
+                if per_kind.get(kind, 0) >= KIND_CAP:
+                    tried[key] = True
+                    continue
                 p.specks = _specks(p, d, c)
                 plans.append(p)
+                per_kind[kind] = per_kind.get(kind, 0) + 1
                 fitted.add(name)
                 tried[key] = True
                 if p.relax >= 1.0 and p.capped:

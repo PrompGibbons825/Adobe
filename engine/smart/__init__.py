@@ -150,9 +150,16 @@ def _bury(plans, d: Design, ctx: Ctx) -> None:
 
 
 def archetype(name: str) -> str:
-    """The archetype of a plan (stack, split, row, adapt, scaled), whatever its
+    """The archetype of a plan (stack, split, row, adapt, scaled, anchor, flex, retrieve), whatever its
     variant: ``split-left-0.34-fold~1.8@1.35`` is a split."""
-    return name.split("@")[0].split("~")[0].split("-")[0]
+    base = name.split("@")[0].split("~")[0]
+    if base.startswith("retrieve"):
+        return "retrieve"
+    if base.startswith("anchor"):
+        return "anchor"
+    if base.startswith("flex"):
+        return "flex"
+    return base.split("-")[0]
 
 
 def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
