@@ -434,7 +434,15 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False
     # Anything else (a circle, a cross, a card) is an object or a container.
     # Nothing is a backdrop when it sits on a detailed full-canvas background
     # (a band over a photo is a panel on the scene, not the scene).
-    big = {e["id"] for e in cand if cw_ and not on_scene and _is_backdrop(e, cw_, ch_)}
+    def _shown(e):
+        b = _box(e)
+        return max(0.0, min(b[2], cw_) - max(b[0], 0)) * max(0.0, min(b[3], ch_) - max(b[1], 0)) / carea
+    # on a photo background a band is a panel on the scene, but a layer that
+    # covers most of the canvas (a figure, a frame of lines) is still a layer:
+    # gluing it to the copy makes the copy as tall as the canvas
+    big = {e["id"] for e in cand if cw_ and _is_backdrop(e, cw_, ch_) and (not on_scene or _shown(e) >= 0.7)}
+    if cw_:
+        big |= {e["id"] for e in cand if e["type"] != "text" and _shown(e) >= 0.7}
     if not compose:
         # the loose reading: a large *detailed* picture is not a container either
         # (text stays readable on a flat card, not on a detailed picture)
@@ -704,7 +712,15 @@ def analyze(source: dict, compose: bool = True) -> dict:
     for e in sorted(els, key=lambda e: e["z_index"]):
         if e["id"] in used:
             continue
-        if e["type"] in ("image", "shape") and _area(e) >= 0.85 * carea and not e.get("group_id"):
+        b = _box(e)
+        on_canvas = max(0.0, min(b[2], cw) - max(b[0], 0)) * max(0.0, min(b[3], ch) - max(b[1], 0))
+        # a background covers the canvas (what shows on it, not what bleeds
+        # off), and nothing set beside it lies below it: a photo covering two
+        # thirds with a panel and copy beside it, stacked above them, would
+        # bury them if it were stretched to fill the canvas
+        beside = any(o["z_index"] < e["z_index"] and o["id"] not in used and not (
+            b[0] <= o["x"] + o["width"] / 2 <= b[2] and b[1] <= o["y"] + o["height"] / 2 <= b[3]) for o in els)
+        if e["type"] in ("image", "shape") and on_canvas >= 0.85 * carea and not beside and not e.get("group_id"):
             if _opaque_frac(e) < 0.3:
                 u = Unit(e["id"], "border", "bg", [e])  # full-canvas overlay/frame
                 u.insets = (e["x"], e["y"], cw - e["x"] - e["width"], ch - e["y"] - e["height"])

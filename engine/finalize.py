@@ -610,17 +610,22 @@ def finalize(ctx, P, model, float_threshold=0.0):
         place_bg(ctx, P, u, model)
     if getattr(P, "backdrop", None) is not None:
         place_bg(ctx, P, P.backdrop, model)   # over the plain backgrounds; defines the busy map
+    # the same-design candidate already placed every unit by the source's own
+    # geometry; only the background and the canvas-edge borders follow the canvas
+    same = getattr(P, "same", False)
     for u in model["units"]:
         if u.role == "bg":
             continue
         elif u.role == "border":
             place_border(ctx, P, u)
+        elif same:
+            continue
         elif u.role == "rule":
             place_rule(ctx, P, u)
         elif u.role == "deco":
             place_deco(ctx, P, u)
     for u in model["units"]:
-        if u.role == "anchored":
+        if u.role == "anchored" and not same:
             place_anchored(ctx, P, u)
     for u in model["units"]:
         if u.role == "aligned" and u.els[0]["id"] not in P.props:
@@ -630,7 +635,7 @@ def finalize(ctx, P, model, float_threshold=0.0):
     for u in sorted(model["units"], key=lambda u: -u.prio):
         if u.role == "ribbon" and u.els[0]["id"] not in P.props:   # not already in the row
             place_float(ctx, P, u, min(t, 1.5))
-        elif u.role == "minor":
+        elif u.role == "minor" and not same:
             # decoration scales with the canvas's shape-preserving scale (not the text's)
             place_scatter(ctx, P, u, min(ctx.W / ctx.Ws, ctx.H / ctx.Hs), content)
     for u in model["units"]:
@@ -645,7 +650,8 @@ def finalize(ctx, P, model, float_threshold=0.0):
         for eid in u.ids:
             if eid not in P.props:
                 return None
-    pin_edges(ctx, P, model)
+    if not same:
+        pin_edges(ctx, P, model)      # the same design already keeps its edges
     clamp_inside(ctx, P, model)
     return P
 

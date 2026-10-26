@@ -31,6 +31,17 @@ DROP_LEVELS = [0.0, 1.3, 3.5, 5.5]
 
 def _candidates(ctx, model):
     """Every candidate keeps every unit (no drops)."""
+    if not getattr(ctx, "grids", False) and not getattr(ctx, "upright", False) \
+            and not getattr(ctx, "restack", False):
+        from .layout import tmpl_same
+        # at a near-same shape the design is kept exactly; otherwise its units
+        # keep to their edges (pinned), and from a 1.5x change they may also
+        # spread to the new proportions
+        sev = abs(math.log((ctx.W / ctx.H) / (ctx.Ws / ctx.Hs)))
+        modes = ("center",) if sev < math.log(1.15) else \
+            ("pinned", "spread") if _fade(ctx) < 1.0 else ("pinned",)
+        for mode in modes:
+            yield 0.0, lambda m=mode: tmpl_same(ctx, model, m)
     flow = [u for u in model["units"] if u.role in FLOW_ROLES]
     if not flow:
         return
@@ -157,6 +168,7 @@ def _broken(tight, loose):
 BREAK_COST = 2.0   # per composition taken apart: it has to buy readability or space
 RESTACK_COST = 0.5  # per composition re-stacked along the other axis
 ROTATE_COST = 0.5   # per text piece turned into a vertical strip
+SAME_BONUS = 3.0    # the same design, rescaled, at a near-same shape (fades to 0 by a 4x change)
 UPRIGHT_COST = 0.5  # per turned text set upright (a restructure, like turning one)
 
 
@@ -376,6 +388,11 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
                 if DEBUG:
                     print(f"    {('loose ' if broken else '') + P.meta['template']:<34} score={s:7.2f} "
                           + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
+                if P.meta["template"].startswith("same-"):
+                    # faithfulness first: for a standard change of format the
+                    # designer's own arrangement wins unless clearly beaten
+                    br["same_design"] = SAME_BONUS * _fade(ctx)
+                    s += br["same_design"]
                 key = _key(br, _fade(ctx))
                 if READ_CHECK:
                     meta = dict(P.meta, frame_modes=dict(getattr(P, "frame_modes", {})))

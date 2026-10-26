@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from .analyze import norm_rot
-from .blocks import GroupBlock, ImageBlock, Placed, TextBlock, make_block
+from .blocks import GroupBlock, ImageBlock, Placed, TextBlock, img_vis_frac, make_block
 from . import textfit as tf
 
 
@@ -996,3 +996,146 @@ def tmpl_grid(ctx, flow, k=2, tiers=False, panel=None, align=None):
     P.meta = {"template": f"grid-{k}" + ("-tiers" if tiers else "") + (f"-panel-{panel}" if panel else ""),
               "t": tc}
     return P
+
+
+# ---------------------------------------------------------------------------
+# The same design, rescaled. Every candidate above rebuilds the layout from the
+# inferred units, so a wrong grouping (a ruled grid torn into pieces) becomes a
+# wrong layout. This one keeps the source's own geometry, transformed as a
+# whole: the design the organizers expect to see, and the one a re-layout has
+# to clearly beat.
+#   center  the design scaled uniformly to fit, centred; the background fills
+#   pinned  each unit keeps to its nearest edge (or the centre line) at its
+#           scaled distance from it: corners stay corners
+#   spread  each unit at the same uniform scale, moved to the same relative
+#           place on the new canvas (uses the room when the shape changes a lot)
+
+SAME_ROLES_SKIP = {"bg", "border"}     # laid out by finalize (cover, edge-hugging)
+
+
+def tmpl_same(ctx, model, mode="center"):
+    from .analyze import norm_rot
+    W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
+    s = min(W / Ws, H / Hs)
+    ox, oy = (W - Ws * s) / 2, (H - Hs * s) / 2
+    P = Placed()
+    units = [u for u in model["units"] if u.role not in SAME_ROLES_SKIP]
+    blocks = _same_blocks(units, Ws, Hs) if mode != "center" else {id(u): [u] for u in units}
+    for u in units:
+        # a unit moves with its block: pieces set close together in the source
+        # (a ruled grid, a photo and its caption) move as one
+        blk = [e for v in blocks[id(u)] for e in v.els]
+        xs = [e["x"] for e in blk] + [e["x"] + e["width"] for e in blk]
+        ys = [e["y"] for e in blk] + [e["y"] + e["height"] for e in blk]
+        ux, uy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+        if mode == "pinned":
+            # each unit keeps to the edge it sat nearest (or the centre line),
+            # at its own scaled distance from that edge: a date bar in the
+            # bottom-right corner stays there, a centred title stays centred
+            uw, uh = (max(xs) - min(xs)) * s, (max(ys) - min(ys)) * s
+
+            def pin(lo, hi, size, new, ext):
+                a, b = lo, size - hi                  # distance to the near / far edge
+                if a < 0.6 * b:
+                    return a * s + ext / 2            # pinned to the start edge
+                if b < 0.6 * a:
+                    return new - b * s - ext / 2      # pinned to the end edge
+                return (lo + hi) / 2 / size * new     # centred: same relative place
+            cx = min(max(pin(min(xs), max(xs), Ws, W, uw), uw / 2), W - uw / 2)
+            cy = min(max(pin(min(ys), max(ys), Hs, H, uh), uh / 2), H - uh / 2)
+            dx, dy = cx - ux * s, cy - uy * s
+        elif mode == "spread":
+            # the unit's centre keeps its relative place; its extent stays inside
+            uw, uh = (max(xs) - min(xs)) * s, (max(ys) - min(ys)) * s
+            cx = min(max(ux / Ws * W, uw / 2), W - uw / 2)
+            cy = min(max(uy / Hs * H, uh / 2), H - uh / 2)
+            dx, dy = cx - ux * s, cy - uy * s
+        else:
+            dx, dy = ox, oy
+        for e in u.els:
+            x, y, w, h = dx + e["x"] * s, dy + e["y"] * s, e["width"] * s, e["height"] * s
+            if e["type"] == "text":
+                fs = max(1, int(e["font_size"] * s))          # never larger: keeps the designed lines
+                P.set(e["id"], x=x, y=y, width=w, height=h, font_size=fs, content=e["content"])
+                if abs(norm_rot(e.get("rotation", 0) or 0)) > 1:
+                    P.vis[e["id"]] = _rot_box(x, y, w, h, e.get("rotation", 0))
+                else:
+                    m = tf.measure(e, fs, w)
+                    P.vis[e["id"]] = tf.visual_box(e, x, y, w, fs, m)
+            else:
+                # what ran to a canvas edge in the source still runs to it: no
+                # empty band appears beside a photo or a bar. A picture is
+                # cropped to its new box (fit=cover), never stretched.
+                tol = 0.02 * min(Ws, Hs)
+                ex0, ey0 = e["x"] <= tol, e["y"] <= tol
+                ex1, ey1 = e["x"] + e["width"] >= Ws - tol, e["y"] + e["height"] >= Hs - tol
+                if abs(norm_rot(e.get("rotation", 0) or 0)) <= 1 and (ex0 or ey0 or ex1 or ey1):
+                    # a surface spanning one axis keeps its share of the other
+                    # (a photo filling the height and two thirds of the width
+                    # still fills two thirds), anchored to the edge it touches
+                    if mode != "center" and ey0 and ey1 and not (ex0 and ex1):
+                        nw = max(w, e["width"] / Ws * W)
+                        x = x if ex0 else (W - nw if ex1 else x - (nw - w) / 2)
+                        w = nw
+                    if mode != "center" and ex0 and ex1 and not (ey0 and ey1):
+                        nh = max(h, e["height"] / Hs * H)
+                        y = y if ey0 else (H - nh if ey1 else y - (nh - h) / 2)
+                        h = nh
+                    x1, y1 = (W if ex1 else x + w), (H if ey1 else y + h)
+                    x, y = (min(x, 0.0) if ex0 else x), (min(y, 0.0) if ey0 else y)
+                    src_aspect = e["width"] / max(1e-6, e["height"])
+                    if e["type"] == "image" and abs((x1 - x) / max(1e-6, y1 - y) - src_aspect) > 0.01 * src_aspect:
+                        # its box changes shape: crop to the canvas side it touches
+                        x, y = (0.0 if ex0 else x), (0.0 if ey0 else y)
+                        P.set(e["id"], fit="cover")
+                    w, h = x1 - x, y1 - y
+                P.set(e["id"], x=x, y=y, width=w, height=h)
+                if abs(norm_rot(e.get("rotation", 0) or 0)) > 1:
+                    P.vis[e["id"]] = _rot_box(x, y, w, h, e.get("rotation", 0))
+                else:
+                    f = img_vis_frac(e) if e["type"] == "image" else (0.0, 0.0, 1.0, 1.0)
+                    P.vis[e["id"]] = (x + f[0] * w, y + f[1] * h, x + f[2] * w, y + f[3] * h)
+    P.same = True
+    P.meta = {"template": f"same-{mode}", "t": s / ctx.t_star if ctx.t_star else 1.0}
+    return P
+
+
+def _same_blocks(units, Ws, Hs):
+    """{id(unit): units of its block}. Units within a small gap of each other
+    in the source form a block; a unit spanning the canvas (touching two or
+    more edges: a photo, a band) is a surface, not a member, and stays alone."""
+    from .analyze import _box
+    tol, gap = 0.02 * min(Ws, Hs), 0.07 * min(Ws, Hs)
+
+    def bb(u):
+        bs = [_box(e) for e in u.els]
+        return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+    boxes = {id(u): bb(u) for u in units}
+
+    def surface(u):
+        b = boxes[id(u)]
+        return (b[0] <= tol) + (b[1] <= tol) + (b[2] >= Ws - tol) + (b[3] >= Hs - tol) >= 2
+    parent = {id(u): id(u) for u in units}
+
+    def find(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+    members = [u for u in units if not surface(u)]
+    for i, a in enumerate(members):
+        for b in members[i + 1:]:
+            A, B = boxes[id(a)], boxes[id(b)]
+            dx = max(0.0, max(A[0], B[0]) - min(A[2], B[2]))
+            dy = max(0.0, max(A[1], B[1]) - min(A[3], B[3]))
+            if max(dx, dy) <= gap:
+                parent[find(id(a))] = find(id(b))
+    out = {}
+    for u in units:
+        out.setdefault(find(id(u)), []).append(u)
+    return {id(u): out[find(id(u))] for u in units}
+
+
+def _rot_box(x, y, w, h, rot):
+    from .blocks import rot_bounds
+    return rot_bounds(x, y, w, h, rot)

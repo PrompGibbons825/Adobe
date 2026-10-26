@@ -113,6 +113,38 @@ def _behind_lum(P, model, eid, v):
     return 1.0                    # an empty canvas renders white
 
 
+def _src_overlap(model, a, b):
+    """How much two elements overlapped in the source (share of the smaller)."""
+    from .analyze import _box
+    cache = model.setdefault("_src_ov", {})
+    k = (a, b) if a < b else (b, a)
+    if k not in cache:
+        va, vb = _box(model["els"][a]), _box(model["els"][b])
+        cache[k] = _overlap(va, vb) / max(1.0, min(_area(va), _area(vb)))
+    return cache[k]
+
+
+def _src_contrast(model, eid):
+    """The text's contrast ratio in the source design, as laid out there."""
+    cache = model.setdefault("_src_con", {})
+    if eid in cache:
+        return cache[eid]
+    from types import SimpleNamespace
+    from .analyze import _box
+    src = SimpleNamespace(vis={i: _box(e) for i, e in model["els"].items()}, hidden=set(), bg_lum=None)
+    for u in model["units"]:
+        g = u.els[0]
+        if u.role == "bg" and g["type"] == "image":
+            info = saliency.analyze(g.get("asset_id") or "")
+            if info is not None:
+                src.bg_lum = (info["lum"], g["x"], g["y"], max(1e-6, g["width"]), max(1e-6, g["height"]))
+    el = model["els"][eid]
+    tl = _color_lum(el.get("color", ""))
+    bl = _behind_lum(src, model, eid, src.vis[eid])
+    cache[eid] = 3.0 if tl is None or bl is None else (max(tl, bl) + 0.05) / (min(tl, bl) + 0.05)
+    return cache[eid]
+
+
 def _src_busy(model, eid):
     """Busyness under a text in the source design (its background photo at
     the source position), cached on the model."""
@@ -192,6 +224,19 @@ def score(ctx, P, model):
                 hfs = fs
             if role == "headline":
                 mn = min(mn, el["font_size"] * ctx.t_star * 0.9) if mn > 16 else mn
+            # never ask for more than the designer's own size for this text,
+            # relative to the canvas (a design set in small, elegant type keeps
+            # it), but never below what reads at the judge's view: about 4 px of
+            # letter height at 768 px, where OCR stops reading
+            src_fs = el["font_size"] * (0.6 if 60 <= abs(norm_rot(el.get("rotation", 0) or 0)) <= 120 else 1.0)
+            Ws_, Hs_ = model["canvas"]
+            # its size in the whole design scaled to fit, but at an extreme change
+            # of shape (a poster into a strip) the fit scale collapses: not
+            # below three quarters of the size the canvas's area calls for
+            fit_s = min(W / Ws_, H / Hs_)
+            area_s = (W * H / (Ws_ * Hs_)) ** 0.5
+            own = 0.95 * src_fs * max(fit_s, 0.75 * area_s)
+            mn = max(min(mn, own), 6.0 * max(W, H) / 768)
             if fs < mn:
                 read -= (u.prio + 3) * 3 * (1 - fs / mn)
     br["readability"] = read
@@ -498,7 +543,8 @@ def score(ctx, P, model):
             frac = ov / max(1.0, min(_area(va), _area(vb)))
             ta, tb = model["els"][a]["type"], model["els"][b]["type"]
             w = 15 if "text" in (ta, tb) else 5
-            col -= w * frac
+            # only overlap beyond what the designer set is a collision
+            col -= w * max(0.0, frac - _src_overlap(model, a, b) - 0.02)
     br["collisions"] = col
 
     # 5. text on busy background
@@ -532,8 +578,10 @@ def score(ctx, P, model):
         if tl is None or bl is None:
             continue
         ratio = (max(tl, bl) + 0.05) / (min(tl, bl) + 0.05)
-        if ratio < 3.0:
-            con -= (owner[eid].prio + 3) * (3.0 - ratio) / 2.0
+        # held to 3:1, or to the designer's own contrast for this text if lower
+        need = min(3.0, _src_contrast(model, eid))
+        if ratio < need:
+            con -= (owner[eid].prio + 3) * (need - ratio) / 2.0
     br["contrast"] = con
 
     # 6. balance: content should use the canvas, and stay off the edges
