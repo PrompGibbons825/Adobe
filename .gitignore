@@ -34,3 +34,4 @@ output/*
 /engine/models/u2netp.onnx
 /engine/models/isnet-general-use.onnx
 /engine/models/clip/
+/crello_fresh/

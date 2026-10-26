@@ -32,6 +32,8 @@ import numpy as np
 from PIL import Image
 
 ROOTS = ["crello", "crello_holdout"]
+if "--roots" in sys.argv:
+    ROOTS = sys.argv[sys.argv.index("--roots") + 1].split(",")
 MIN_WORDS = 0.7
 
 
@@ -200,6 +202,9 @@ def main(dirs):
     keys = sorted(set.intersection(*(set(r) for r in res.values())))
     if "--read" in sys.argv:
         readability(dirs, res, keys)
+    if "--json" in sys.argv:
+        with open(sys.argv[sys.argv.index("--json") + 1], "w") as fh:
+            json.dump({n: {k: r[k] for k in keys} for n, r in res.items()}, fh, indent=1)
     print(f"scored {len(keys)} pairs; skipped {len(skipped)} where the designer kept < {MIN_WORDS:.0%} of the words")
     cols = ("pos", "size", "order", "rank", "dist") + (("read", "lowread") if "--read" in sys.argv else ())
     print(f"{'engine':<12}" + "".join(f"{k:>8}" for k in cols))
@@ -218,4 +223,9 @@ def main(dirs):
 
 
 if __name__ == "__main__":
-    main([a for a in sys.argv[1:] if not a.startswith("-")])
+    args = sys.argv[1:]
+    for opt in ("--roots", "--json"):
+        if opt in args:
+            i = args.index(opt)
+            args = args[:i] + args[i + 2:]
+    main([a for a in args if not a.startswith("-")])

@@ -29,7 +29,7 @@ def main(out, a, b, keys):
         F = ImageFont.load_default()
     rows, cur = [], None
     for key in keys:
-        root = "crello_holdout" if key.startswith("crello_holdout") else "crello"
+        root = max((r for r in ("crello", "crello_holdout", "crello_fresh") if key.startswith(r + "_p")), key=len)
         if root != cur:
             saliency.ASSETS_DIR = Path(f"{root}/assets")
             textfit.FONTS_PICKLE, textfit._FM = f"{root}/fonts_subset.pickle", None
