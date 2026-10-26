@@ -1022,6 +1022,25 @@ def tmpl_same(ctx, model, mode="center"):
     P = Placed()
     units = [u for u in model["units"] if u.role not in SAME_ROLES_SKIP]
     blocks = _same_blocks(units, Ws, Hs) if mode != "center" else {id(u): [u] for u in units}
+    # a picture covering most of the canvas with a slim inset (a photo in a
+    # border) is the backdrop: it fills the new canvas at the same inset,
+    # cropped, and everything set on it keeps its place relative to the canvas
+    if mode != "center":
+        for u in units:
+            e = u.els[0]
+            if len(u.els) != 1 or e["type"] != "image" or abs(norm_rot(e.get("rotation", 0) or 0)) > 1:
+                continue
+            l, t = e["x"], e["y"]
+            r, b = Ws - e["x"] - e["width"], Hs - e["y"] - e["height"]
+            if e["width"] * e["height"] >= 0.6 * Ws * Hs and max(l, t, r, b) <= 0.08 * min(Ws, Hs) \
+                    and min(l, t, r, b) >= -0.02 * min(Ws, Hs):
+                k = min(W, H) / min(Ws, Hs)
+                x, y = l * k, t * k
+                w, h = W - (l + r) * k, H - (t + b) * k
+                P.set(e["id"], x=x, y=y, width=w, height=h, fit="cover")
+                P.vis[e["id"]] = (x, y, x + w, y + h)
+                units = [v for v in units if v is not u]
+                break
     for u in units:
         # a unit moves with its block: pieces set close together in the source
         # (a ruled grid, a photo and its caption) move as one

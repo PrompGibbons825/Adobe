@@ -262,6 +262,18 @@ def place_border(ctx, P, unit):
     k = ctx.border_scale
     l, t, r, b = (max(0.0, v) * k for v in getattr(unit, "insets", (0, 0, 0, 0)))
     P.set(el["id"], x=l, y=t, width=max(1.0, ctx.W - l - r), height=max(1.0, ctx.H - t - b))
+    # an outline stretches cleanly; anything drawn inside it (confetti, a
+    # pattern) is cropped to the new box instead, never distorted
+    if el["type"] == "image" and not _is_outline(el):
+        P.set(el["id"], fit="cover")
+
+
+def _is_outline(el):
+    from .analyze import _corners, _edge_cover
+    info = saliency.analyze(el.get("asset_id") or "")
+    if info is None:
+        return True
+    return info["opaque_frac"] < 0.35 and _edge_cover(el) > 0.4 and _corners(el)
 
 
 def place_rule(ctx, P, unit):
