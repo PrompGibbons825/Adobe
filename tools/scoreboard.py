@@ -143,7 +143,7 @@ def pair_metrics(src, ours, ref, m):
     return dict(pos=pos, size=size, order=order, rank=rank, dist=dist, n=len(ids))
 
 
-BRAND_FONTS = {"sprint"}   # engines that measure text in the brand-kit fonts (Vlad's)
+BRAND_FONTS = {"sprint"}   # engines that measure text in the brand-kit fonts (Vlad's; also any v_* dir)
 
 
 def readability(dirs, res, keys):
@@ -168,7 +168,7 @@ def readability(dirs, res, keys):
             src = src_cache[(root, p)] or {}
             want = [i for i, v in src.items() if v >= 0.6]
             for d in dirs:
-                fd = pathlib.Path("brand_kit/fonts") if d.name in BRAND_FONTS else None
+                fd = pathlib.Path("brand_kit/fonts") if d.name in BRAND_FONTS or d.name.startswith("v_") else None
                 rec = legible.recall(json.load(open(d / f"{key}.json")), fd) or {}
                 vals = [rec.get(i, 0.0) for i in want]
                 res[d.name][key]["read"] = float(np.mean(vals)) if vals else 1.0
