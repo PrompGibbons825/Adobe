@@ -143,6 +143,38 @@ def pair_metrics(src, ours, ref, m):
     return dict(pos=pos, size=size, order=order, rank=rank, dist=dist, n=len(ids))
 
 
+BRAND_FONTS = {"sprint"}   # engines that measure text in the brand-kit fonts (Vlad's)
+
+
+def readability(dirs, res, keys):
+    """read: share of words OCR reads at a 768 px view, over the texts the
+    source's own render reads (>= 60%); lowread: share of those texts read
+    under 40%. Each engine is rendered with the fonts it measured with."""
+    import pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+    from engine import legible, saliency, textfit
+    from renderer.converter import convert
+    src_cache = {}
+    for root in ROOTS:
+        saliency.ASSETS_DIR = pathlib.Path(f"{root}/assets")
+        textfit.FONTS_PICKLE, textfit._FM = f"{root}/fonts_subset.pickle", None
+        legible._RENDERERS.clear()
+        convert._renderer_cache.clear()
+        idx = json.load(open(f"{root}/index.json"))
+        for key in [k for k in keys if k.startswith(root + "_p")]:
+            p = int(key[len(root) + 2:].split("_")[0])
+            if (root, p) not in src_cache:
+                src_cache[(root, p)] = legible.recall(json.load(open(f"{root}/designs/" + idx[p][0]["file"])))
+            src = src_cache[(root, p)] or {}
+            want = [i for i, v in src.items() if v >= 0.6]
+            for d in dirs:
+                fd = pathlib.Path("brand_kit/fonts") if d.name in BRAND_FONTS else None
+                rec = legible.recall(json.load(open(d / f"{key}.json")), fd) or {}
+                vals = [rec.get(i, 0.0) for i in want]
+                res[d.name][key]["read"] = float(np.mean(vals)) if vals else 1.0
+                res[d.name][key]["lowread"] = float(np.mean([v < 0.4 for v in vals])) if vals else 0.0
+
+
 def main(dirs):
     dirs = [Path(d) for d in dirs]
     res = {d.name: {} for d in dirs}
@@ -166,10 +198,13 @@ def main(dirs):
                         if r:
                             res[d.name][key] = r
     keys = sorted(set.intersection(*(set(r) for r in res.values())))
+    if "--read" in sys.argv:
+        readability(dirs, res, keys)
     print(f"scored {len(keys)} pairs; skipped {len(skipped)} where the designer kept < {MIN_WORDS:.0%} of the words")
-    print(f"{'engine':<12}" + "".join(f"{k:>8}" for k in ("pos", "size", "order", "rank", "dist")))
+    cols = ("pos", "size", "order", "rank", "dist") + (("read", "lowread") if "--read" in sys.argv else ())
+    print(f"{'engine':<12}" + "".join(f"{k:>8}" for k in cols))
     for name, r in res.items():
-        print(f"{name:<12}" + "".join(f"{np.mean([r[k][m] for k in keys]):8.3f}" for m in ("pos", "size", "order", "rank", "dist")))
+        print(f"{name:<12}" + "".join(f"{np.mean([r[k][m] for k in keys]):8.3f}" for m in cols))
     names = list(res)
     for a in range(len(names)):
         for b in range(a + 1, len(names)):

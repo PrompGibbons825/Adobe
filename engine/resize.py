@@ -157,6 +157,7 @@ def _broken(tight, loose):
 BREAK_COST = 2.0   # per composition taken apart: it has to buy readability or space
 RESTACK_COST = 0.5  # per composition re-stacked along the other axis
 ROTATE_COST = 0.5   # per text piece turned into a vertical strip
+UPRIGHT_COST = 0.5  # per turned text set upright (a restructure, like turning one)
 
 
 # The critic compares candidates tier by tier: a visible defect first, then
@@ -194,7 +195,7 @@ def _key(br, fade):
 # Read check: the top few candidates are rendered at the judge's view and read
 # with OCR (engine/legible.py); a candidate that loses words the source's own
 # render keeps loses to one that keeps them, before the score is consulted.
-READ_CHECK = os.environ.get("CHAMELEON_READ_CHECK") == "1"
+READ_CHECK = os.environ.get("CHAMELEON_READ_CHECK", "1") != "0"
 READ_TOP = 4
 
 
@@ -228,55 +229,57 @@ def _order_agree(a, b):
 
 
 def _read_check(source, target, pool):
+    """A veto, not a trade: the plain pick stands unless OCR finds that its
+    headline or call to action has lost a third or more of the words the
+    source's own render reads. Then the next candidates in score order are
+    tried, and the first that keeps them is taken, provided it keeps the
+    source's reading order and does not shrink the headline below 80%."""
     from . import legible
+    pool = sorted(pool, key=lambda c: c[0], reverse=True)
+    first = pool[0]
+    texts = [e for e in source["elements"] if e["type"] == "text"]
+    troles = first[4].get("troles", {})
+    sizes = sorted((e["font_size"] for e in texts), reverse=True)
+    head = [e["id"] for e in texts if sizes and e["font_size"] >= 0.9 * sizes[0]]
+    key_ids = set(head) | {i for i, r in troles.items() if r == "cta"}
+    if not key_ids:
+        return first[2], first[1], first[3], first[4], first[5]
     plain = {"canvas": source["canvas"], "elements": [{k: v for k, v in e.items() if k != "_flow"}
                                                        for e in source["elements"]]}
+
+    def broken(P):
+        rec = legible.recall(_build(source, target, P))
+        if rec is None:
+            return None
+        return [i for i in key_ids if src.get(i, 0) >= 0.6 and rec.get(i, 0.0) < src[i] - 0.34]
+
     src = legible.recall(plain)
-    pool = sorted(pool, key=lambda c: c[0], reverse=True)
-    top, seen = [], set()
-    for c in pool:
-        if c[5]["template"] not in seen:
-            seen.add(c[5]["template"])
-            top.append(c)
-        if len(top) == READ_TOP:
-            break
-    first = top[0]
-    texts = [e for e in source["elements"] if e["type"] == "text"]
+    if src is None:
+        return first[2], first[1], first[3], first[4], first[5]
+    bad = broken(first[2])
+    if not bad:
+        return first[2], first[1], first[3], first[4], first[5]
     src_order = _reading_order({e["id"]: (e["x"], e["y"], e["x"] + e["width"], e["y"] + e["height"]) for e in texts})
 
     def agree(P):
         return _order_agree(_reading_order({e["id"]: P.vis[e["id"]] for e in texts if e["id"] in P.vis}), src_order)
-    # a candidate may win on reading only if it keeps the source's reading
-    # order at least as well as the plain pick: legible words in a scrambled
-    # order ("pillows EVER SOFTEST") do not read
-    need = agree(first[2]) - 1e-9
-    top = [c for c in top if agree(c[2]) >= need]
-    if src is None or len(top) < 2:
-        return first[2], first[1], first[3], first[4], first[5]
-    # what a lost text costs: the headline most, small print least. Only a text
-    # that goes from clearly read to clearly not counts (OCR is noisy in between)
-    sizes = sorted((e["font_size"] for e in texts), reverse=True)
-    top_fs = sizes[0] if sizes else 0
-    med = sizes[len(sizes) // 2] if sizes else 0
-    weight = {e["id"]: (2.0 if e["font_size"] >= 0.9 * top_fs else 1.0 if e["font_size"] >= med else 0.5) for e in texts}
-    head = [e["id"] for e in texts if e["font_size"] >= 0.9 * top_fs]
 
     def head_fs(P):
         return max((P.props.get(i, {}).get("font_size", 0) for i in head), default=0)
-    floor_fs = 0.8 * head_fs(first[2])
-    best = None
-    for key, s, P, br, model, meta in top:
-        if P is not first[2] and head_fs(P) < floor_fs:
-            continue                  # reading better by shrinking the headline is not reading better
-        rec = legible.recall(_build(source, target, P))
-        if rec is None:
-            return first[2], first[1], first[3], first[4], first[5]
-        lost = sum(weight.get(i, 0.5) for i in src if src[i] >= 0.8 and rec.get(i, 0.0) < 0.4)
-        br = dict(br, read_lost=-lost)
-        rank = (-lost,) + key
-        if best is None or rank > best[0]:
-            best = (rank, P, s, br, model, meta)
-    return best[1], best[2], best[3], best[4], best[5]
+    need, floor_fs = agree(first[2]) - 1e-9, 0.8 * head_fs(first[2])
+    seen, tried = {first[5]["template"]}, 0
+    for c in pool[1:]:
+        if c[5]["template"] in seen:
+            continue
+        seen.add(c[5]["template"])
+        if agree(c[2]) < need or head_fs(c[2]) < floor_fs:
+            continue
+        tried += 1
+        if tried > READ_TOP:
+            break
+        if broken(c[2]) == []:
+            return c[2], c[1], dict(c[3], read_veto=1.0), c[4], c[5]
+    return first[2], first[1], first[3], first[4], first[5]
 
 
 def _unwrap(source):
@@ -323,14 +326,19 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
                 passes.append((model, broken, True))     # compositions may re-stack
         # grids restructure the design: tried only when no faithful layout
         # can make every text legible
-        stages = [False, True]
-        for grids, (model, broken, restack) in [(g, p) for g in stages for p in passes]:
+        # A design with turned text also gets candidates with that text set
+        # upright: turned text reads far worse at the judge's view (OCR read
+        # 29-65% of its words at any size), so horizontal may read better.
+        turned = any(e["type"] == "text" and abs(norm_rot(e.get("rotation", 0) or 0)) > 1
+                     for e in source["elements"])
+        stages = [(False, False)] + ([(False, True)] if turned else []) + [(True, True)]
+        for (grids, upright), (model, broken, restack) in [(g, p) for g in stages for p in passes]:
             if grids and best_br is not None and best_br.get("readability", 0.0) >= -5.0:
                 break
             ctx = Ctx(model, target_canvas)
             ctx.restack = restack
             ctx.grids = grids
-            ctx.upright = grids
+            ctx.upright = upright
             for th, make in _candidates(ctx, model):
                 try:
                     P = make()
@@ -345,6 +353,14 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
                     if getattr(P, "lifted", 0):
                         br["grouping"] = br.get("grouping", 0.0) - BREAK_COST * P.lifted
                         s -= BREAK_COST * P.lifted
+                    if upright and not grids:
+                        n_up = sum(1 for e in source["elements"] if e["type"] == "text"
+                                   and abs(norm_rot(e.get("rotation", 0) or 0)) > 1
+                                   and abs(norm_rot(P.props.get(e["id"], {}).get("rotation", e.get("rotation", 0)) or 0)) <= 1)
+                        if not n_up:
+                            continue      # nothing was set upright: the plain pass already has it
+                        br["upright"] = -UPRIGHT_COST * n_up
+                        s += br["upright"]
                     if getattr(P, "rotated", 0):
                         br["rotate"] = -ROTATE_COST * P.rotated
                         s += br["rotate"]

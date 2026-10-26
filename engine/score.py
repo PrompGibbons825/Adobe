@@ -4,6 +4,7 @@ candidate layouts. Higher is better. Returns (score, breakdown)."""
 from __future__ import annotations
 
 from . import saliency
+from .analyze import norm_rot
 from .finalize import _area, _overlap
 
 MIN_ABS = {"headline": 16, "cta": 12, "subhead": 11, "body": 11, "group": 10,
@@ -179,6 +180,11 @@ def score(ctx, P, model):
             if el["type"] != "text" or eid in P.hidden:
                 continue
             fs = P.props[eid].get("font_size", el["font_size"])
+            # text set vertical reads at about half the rate of upright text of
+            # the same size (OCR at the judge's view), so it needs more size. A
+            # diagonal is the designer's own gesture and is left alone.
+            if 60 <= abs(norm_rot(P.props[eid].get("rotation", el.get("rotation", 0)) or 0)) <= 120:
+                fs *= 0.6
             # each text by its own role (a group's caption is not held to headline size)
             role = model.get("troles", {}).get(eid, u.role) if u.kind != "text" else u.role
             mn = max(MIN_ABS.get(role, 10), MIN_REL.get(role, 0.015) * min(W, H))

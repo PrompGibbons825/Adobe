@@ -40,12 +40,18 @@ def _close(a, b):
     return any(l[:i] + l[i + 1:] == s for i in range(len(l)))
 
 
-def render(design: dict):
-    """The design rendered by the official renderer, as a PIL image, or None."""
+def render(design: dict, fonts_dir=None):
+    """The design rendered by the official renderer, as a PIL image, or None.
+    fonts_dir renders with that font folder instead of the engine's own fonts."""
     try:
         from renderer.converter import convert
         from . import textfit
         assets = saliency.ASSETS_DIR
+        if fonts_dir is not None:
+            with tempfile.TemporaryDirectory() as td:
+                p = Path(td) / "c.png"
+                convert.render_design_to_png(design, assets, str(p), fonts_dir=str(fonts_dir))
+                return Image.open(p).convert("RGB")
         if textfit.FONTS_PICKLE:
             # a dev font set (the Crello cases): one renderer per pickle
             key = str(Path(assets).parent / "fonts")
@@ -65,9 +71,9 @@ def render(design: dict):
         return None
 
 
-def recall(design: dict):
+def recall(design: dict, fonts_dir=None):
     """{text id: share of its words OCR reads at the judge's view}, or None."""
-    im = render(design)
+    im = render(design, fonts_dir)
     if im is None:
         return None
     k = JUDGE / max(im.size)
