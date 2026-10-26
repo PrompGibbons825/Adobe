@@ -1029,21 +1029,65 @@ def tmpl_same(ctx, model, mode="center"):
         ys = [e["y"] for e in blk] + [e["y"] + e["height"] for e in blk]
         ux, uy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
         if mode == "pinned":
-            # each unit keeps to the edge it sat nearest (or the centre line),
-            # at its own scaled distance from that edge: a date bar in the
-            # bottom-right corner stays there, a centred title stays centred
-            uw, uh = (max(xs) - min(xs)) * s, (max(ys) - min(ys)) * s
+            # per axis: a block near an edge keeps to it (its margin scaled);
+            # anywhere else it keeps its offset from the centre line, so pieces
+            # aligned in the source stay aligned; a block spanning the axis
+            # lets each of its units do the same on their own
 
-            def pin(lo, hi, size, new, ext):
-                a, b = lo, size - hi                  # distance to the near / far edge
-                if a < 0.6 * b:
-                    return a * s + ext / 2            # pinned to the start edge
-                if b < 0.6 * a:
-                    return new - b * s - ext / 2      # pinned to the end edge
-                return (lo + hi) / 2 / size * new     # centred: same relative place
-            cx = min(max(pin(min(xs), max(xs), Ws, W, uw), uw / 2), W - uw / 2)
-            cy = min(max(pin(min(ys), max(ys), Hs, H, uh), uh / 2), H - uh / 2)
-            dx, dy = cx - ux * s, cy - uy * s
+            def pin(lo, hi, size, new):
+                near = 0.08 * size
+                a, b = lo, size - hi
+                if a <= near and b <= near:
+                    return None
+                if a <= near:
+                    return a * s + (hi - lo) * s / 2
+                if b <= near:
+                    return new - b * s - (hi - lo) * s / 2
+                return new / 2 + ((lo + hi) / 2 - size / 2) * s
+
+            def sides(k):
+                """The block split at its widest gap along axis k: (this unit's
+                part, the other part), each as (lo, hi); other is None if no gap."""
+                spans = sorted(((min(e["x" if k == 0 else "y"] for e in v.els),
+                                 max(e["x" if k == 0 else "y"] + e["width" if k == 0 else "height"] for e in v.els))
+                                for v in blocks[id(u)]))
+                best, cut, reach = 0.0, None, spans[0][1]
+                for lo_, hi_ in spans[1:]:
+                    if lo_ - reach > best:
+                        best, cut = lo_ - reach, lo_
+                    reach = max(reach, hi_)
+                if cut is None:
+                    return (spans[0][0], max(t[1] for t in spans)), None
+                me = min(e["x" if k == 0 else "y"] for e in u.els) >= cut
+                mine = [t for t in spans if (t[0] >= cut) == me]
+                other = [t for t in spans if (t[0] >= cut) != me]
+                return (min(t[0] for t in mine), max(t[1] for t in mine)), \
+                    (min(t[0] for t in other), max(t[1] for t in other))
+
+            def axis(blo, bhi, k, size, new):
+                c = pin(blo, bhi, size, new)
+                if c is not None:
+                    return c - (blo + bhi) / 2 * s
+                (lo_, hi_), other = sides(k)
+                if other is None:
+                    c = new / 2 + ((lo_ + hi_) / 2 - size / 2) * s
+                    return c - (lo_ + hi_) / 2 * s
+                # the part nearer its edge anchors there; the other keeps its
+                # source gap to it, so spare room goes to the outer margin
+                def margin(t):
+                    return max(0.0, min(t[0], size - t[1]))      # a box bleeding past the edge is at it
+                if abs(margin((lo_, hi_)) - margin(other)) <= 0.03 * size:
+                    # a tie: the picture holds its edge and the copy follows it
+                    pic_side = _has_picture(blocks[id(u)], k, (lo_, hi_), Ws, Hs)
+                    anchor = (lo_, hi_) if pic_side else other
+                else:
+                    anchor = (lo_, hi_) if margin((lo_, hi_)) <= margin(other) else other
+                at_start = anchor[0] <= size - anchor[1]
+                a_off = (anchor[0] * s) if at_start else (new - (size - anchor[0]) * s)
+                # anchor's own shift; everything in the block shares it
+                return a_off - anchor[0] * s
+            dx = axis(min(xs), max(xs), 0, Ws, W)
+            dy = axis(min(ys), max(ys), 1, Hs, H)
         elif mode == "spread":
             # the unit's centre keeps its relative place; its extent stays inside
             uw, uh = (max(xs) - min(xs)) * s, (max(ys) - min(ys)) * s
@@ -1134,6 +1178,18 @@ def _same_blocks(units, Ws, Hs):
     for u in units:
         out.setdefault(find(id(u)), []).append(u)
     return {id(u): out[find(id(u))] for u in units}
+
+
+def _has_picture(units, k, span, Ws, Hs):
+    """Whether the part of a block within span (along axis k) holds a sizeable picture."""
+    lo, hi = span
+    for v in units:
+        for e in v.els:
+            p0 = e["x"] if k == 0 else e["y"]
+            p1 = p0 + (e["width"] if k == 0 else e["height"])
+            if e["type"] == "image" and lo - 1 <= p0 and p1 <= hi + 1 and e["width"] * e["height"] > 0.1 * Ws * Hs:
+                return True
+    return False
 
 
 def _rot_box(x, y, w, h, rot):
