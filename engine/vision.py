@@ -62,3 +62,36 @@ def mask_from_image(im: Image.Image, model: str = MASK_MODEL):
     out = (out - lo) / (hi - lo) if hi > lo else np.zeros_like(out)
     return np.asarray(Image.fromarray((out * 255).astype(np.uint8)).resize(im.size, Image.BILINEAR),
                       dtype=np.float32) / 255.0
+
+
+# --- OCR -------------------------------------------------------------------
+
+_OCR = None
+
+
+def _ocr():
+    global _OCR
+    if _OCR is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _OCR = RapidOCR()
+        except Exception:
+            _OCR = False
+    return _OCR or None
+
+
+def read_text(im: Image.Image):
+    """(words, run-together text) OCR finds in a picture, lower-case; None if
+    OCR is unavailable. OCR often drops the spaces between words, so a word
+    counts as read if it appears inside the run-together text as well."""
+    import re
+    o = _ocr()
+    if o is None:
+        return None
+    try:
+        res, _ = o(np.asarray(im.convert("RGB"))[:, :, ::-1].copy())
+    except Exception:
+        return None
+    lines = [r[1] for r in (res or [])]
+    toks = [w for ln in lines for w in re.findall(r"[a-z0-9]+", ln.lower())]
+    return toks, re.sub(r"[^a-z0-9]", "", " ".join(lines).lower())

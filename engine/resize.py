@@ -191,6 +191,94 @@ def _key(br, fade):
     return tuple(-math.floor(max(0.0, -t[i]) / BANDS[i]) for i in range(3)) + (total,)
 
 
+# Read check: the top few candidates are rendered at the judge's view and read
+# with OCR (engine/legible.py); a candidate that loses words the source's own
+# render keeps loses to one that keeps them, before the score is consulted.
+READ_CHECK = os.environ.get("CHAMELEON_READ_CHECK") == "1"
+READ_TOP = 4
+
+
+def _reading_order(boxes):
+    """Text ids in reading order: lines top to bottom (boxes that share most of
+    their height are one line), left to right within a line."""
+    items = sorted(boxes.items(), key=lambda kv: (kv[1][1] + kv[1][3]) / 2)
+    lines = []
+    for i, b in items:
+        for ln in lines:
+            lb = ln[0][1]
+            ov = min(b[3], lb[3]) - max(b[1], lb[1])
+            if ov > 0.5 * min(b[3] - b[1], lb[3] - lb[1]):
+                ln.append((i, b))
+                break
+        else:
+            lines.append([(i, b)])
+    return [i for ln in lines for i, _ in sorted(ln, key=lambda t: t[1][0])]
+
+
+def _order_agree(a, b):
+    """Share of text pairs read in the same order in a and b."""
+    pos = {i: k for k, i in enumerate(b)}
+    ids = [i for i in a if i in pos]
+    n = ok = 0
+    for x in range(len(ids)):
+        for y in range(x + 1, len(ids)):
+            n += 1
+            ok += pos[ids[x]] < pos[ids[y]]
+    return ok / n if n else 1.0
+
+
+def _read_check(source, target, pool):
+    from . import legible
+    plain = {"canvas": source["canvas"], "elements": [{k: v for k, v in e.items() if k != "_flow"}
+                                                       for e in source["elements"]]}
+    src = legible.recall(plain)
+    pool = sorted(pool, key=lambda c: c[0], reverse=True)
+    top, seen = [], set()
+    for c in pool:
+        if c[5]["template"] not in seen:
+            seen.add(c[5]["template"])
+            top.append(c)
+        if len(top) == READ_TOP:
+            break
+    first = top[0]
+    texts = [e for e in source["elements"] if e["type"] == "text"]
+    src_order = _reading_order({e["id"]: (e["x"], e["y"], e["x"] + e["width"], e["y"] + e["height"]) for e in texts})
+
+    def agree(P):
+        return _order_agree(_reading_order({e["id"]: P.vis[e["id"]] for e in texts if e["id"] in P.vis}), src_order)
+    # a candidate may win on reading only if it keeps the source's reading
+    # order at least as well as the plain pick: legible words in a scrambled
+    # order ("pillows EVER SOFTEST") do not read
+    need = agree(first[2]) - 1e-9
+    top = [c for c in top if agree(c[2]) >= need]
+    if src is None or len(top) < 2:
+        return first[2], first[1], first[3], first[4], first[5]
+    # what a lost text costs: the headline most, small print least. Only a text
+    # that goes from clearly read to clearly not counts (OCR is noisy in between)
+    sizes = sorted((e["font_size"] for e in texts), reverse=True)
+    top_fs = sizes[0] if sizes else 0
+    med = sizes[len(sizes) // 2] if sizes else 0
+    weight = {e["id"]: (2.0 if e["font_size"] >= 0.9 * top_fs else 1.0 if e["font_size"] >= med else 0.5) for e in texts}
+    head = [e["id"] for e in texts if e["font_size"] >= 0.9 * top_fs]
+
+    def head_fs(P):
+        return max((P.props.get(i, {}).get("font_size", 0) for i in head), default=0)
+    floor_fs = 0.8 * head_fs(first[2])
+    best = None
+    for key, s, P, br, model, meta in top:
+        if P is not first[2] and head_fs(P) < floor_fs:
+            continue                  # reading better by shrinking the headline is not reading better
+        rec = legible.recall(_build(source, target, P))
+        if rec is None:
+            return first[2], first[1], first[3], first[4], first[5]
+        lost = sum(weight.get(i, 0.5) for i in src if src[i] >= 0.8 and rec.get(i, 0.0) < 0.4)
+        br = dict(br, read_lost=-lost)
+        rank = (-lost,) + key
+        if best is None or rank > best[0]:
+            best = (rank, P, s, br, model, meta)
+    return best[1], best[2], best[3], best[4], best[5]
+
+
 def _unwrap(source):
     """Marks texts whose hand-wrapped paragraph breaks can be dropped when the
     text re-flows into a new width (it then wraps cleanly instead of breaking
@@ -225,6 +313,7 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
             readings.append((loose, n))
         best, best_s, best_br, best_meta, best_model = None, -1e18, None, None, None
         best_key = None
+        pool = []
         from .blocks import find_cut
         passes = []
         for model, broken in readings:
@@ -272,6 +361,11 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
                     print(f"    {('loose ' if broken else '') + P.meta['template']:<34} score={s:7.2f} "
                           + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
                 key = _key(br, _fade(ctx))
+                if READ_CHECK:
+                    meta = dict(P.meta, frame_modes=dict(getattr(P, "frame_modes", {})))
+                    if broken:
+                        meta["template"] = "loose-" + meta["template"]
+                    pool.append((key, s, P, br, model, meta))
                 if best_key is None or key > best_key:
                     best_key = key
                     best, best_s, best_br, best_model = P, s, br, model
@@ -282,6 +376,8 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
             return _fallback(source, target_canvas)
         if DEBUG:
             print(f"  -> {best_meta['template']} score={best_s:.2f}")
+        if READ_CHECK and len(pool) > 1:
+            best, best_s, best_br, best_model, best_meta = _read_check(source, target_canvas, pool)
         resize.last_choice = (best_meta, best_s, best_br)
         resize.last_P = best
         resize.last_model = best_model
