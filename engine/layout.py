@@ -621,7 +621,7 @@ def place_photo_panel(ctx, P, hero, rect, side):
     s = max(rw / el["width"], rh / el["height"])
     bw, bh = el["width"] * s, el["height"] * s
     sb = info["sal_box"]
-    concentrated = (sb[2] - sb[0]) * (sb[3] - sb[1]) < 0.45
+    concentrated = (sb[2] - sb[0]) * (sb[3] - sb[1]) < 0.45 or bool(info.get("eyes"))
     fx, fy = info["centroid"] if concentrated else (0.5, 0.5)
     # a diffuse subject still has an extent: follow it along an axis it doesn't fill
     if not concentrated:

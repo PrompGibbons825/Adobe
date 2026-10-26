@@ -120,6 +120,13 @@ def measure(el: dict, fs: int, max_w: float) -> dict:
     }
 
 
+def wrapped(el: dict, fs: int, max_w: float) -> str:
+    """The content as the renderer will break it at font size fs within max_w."""
+    text = str(el.get("content", ""))
+    weight, style = _weight_style(el)
+    return _wrap(text, _widths(el.get("font_family", ""), weight, style, float(fs), text), max_w)
+
+
 def unwrap_breaks(content: str) -> str:
     """Drop line breaks that only wrapped a paragraph by hand, so the text can
     re-wrap cleanly in its new box. A break is kept when it ends a sentence

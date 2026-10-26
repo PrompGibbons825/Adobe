@@ -20,6 +20,9 @@ from PIL import Image, ImageFilter
 
 ASSETS_DIR = Path(os.environ.get("CHAMELEON_ASSETS_DIR", "brand_kit/assets"))
 _WORK = 128  # analysis resolution (long side)
+# the learned subject mask (engine/vision.py): off until the critic can use it
+# without flipping unrelated layout choices (see review/h2h_sprint7pm)
+SUBJECT_MASK = os.environ.get("CHAMELEON_SUBJECT_MASK") == "1"
 
 
 def asset_file(asset_id: str | None) -> Path | None:
@@ -47,19 +50,76 @@ def image_size(asset_id: str) -> tuple[int, int] | None:
 
 
 _CASCADES = None
+_YUNET = None
+YUNET_MODEL = Path(__file__).resolve().parent / "models" / "face_detection_yunet_2023mar.onnx"
 
 
 def _faces(im: Image.Image) -> list:
-    """Faces in a picture, as (x0, y0, x1, y1) fractions. OpenCV's bundled Haar
-    cascades (frontal x2 + profile) on a 900px copy; a hit counts only if at
-    least 45% of its box is skin-toned (YCrCb) and two eyes are found in its
-    upper part, which drops skin, fabric and lights that merely look
-    face-like. Returns [] if OpenCV is unavailable."""
-    global _CASCADES
+    """Faces in a picture: [(box, eye)] with box = (x0, y0, x1, y1) and eye =
+    (x, y), the midpoint of the eyes, as fractions. YuNet (a 230 KB CNN
+    shipped with the engine, run by OpenCV) finds faces turned, tilted, half
+    lit or behind hair that the Haar cascades miss; the cascades are the
+    fallback. Returns [] if OpenCV is unavailable."""
     try:
         import cv2
     except Exception:
         return []
+    w, h = im.size
+    if w * h < 96 * 96:
+        return []
+    found = _yunet(cv2, im)
+    if found is None:
+        # no landmarks: the eyes sit about 40% down a face box
+        return [(f, ((f[0] + f[2]) / 2, f[1] + 0.4 * (f[3] - f[1]))) for f in _haar(cv2, im)]
+    # tiny faces (a crowd far away) are not the subject
+    found = [(f, e) for f, _, e in sorted(found, key=lambda t: -t[1]) if (f[3] - f[1]) * h >= 0.035 * min(w, h)]
+    out = []
+    for f, e in found:
+        if not any(_iou(f, o[0]) > 0.3 for o in out):
+            out.append((f, e))
+    return out[:12]
+
+
+def _iou(a, b):
+    i = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i
+    return i / u if u > 0 else 0.0
+
+
+def _yunet(cv2, im):
+    """[(box, score, eye)] from YuNet at two scales, or None if it cannot run."""
+    global _YUNET
+    if _YUNET is False or not YUNET_MODEL.is_file():
+        return None
+    w, h = im.size
+    out = []
+    for side in (640, 320):
+        sc = min(1.0, side / max(w, h))
+        sz = (max(1, int(w * sc)), max(1, int(h * sc)))
+        bgr = cv2.cvtColor(np.asarray(im.convert("RGB").resize(sz, Image.BILINEAR)), cv2.COLOR_RGB2BGR)
+        try:
+            if _YUNET is None:
+                _YUNET = cv2.FaceDetectorYN.create(str(YUNET_MODEL), "", sz, 0.8, 0.3, 50)
+            _YUNET.setInputSize(sz)
+            _, res = _YUNET.detect(bgr)
+        except Exception:
+            _YUNET = False
+            return None
+        for r in ([] if res is None else res):
+            x, y, fw, fh, s = (float(v) for v in (r[0], r[1], r[2], r[3], r[14]))
+            if fw > 0 and fh > 0 and np.isfinite([x, y, fw, fh, s]).all():
+                eye = ((float(r[4]) + float(r[6])) / 2 / sz[0], (float(r[5]) + float(r[7])) / 2 / sz[1])
+                out.append(((max(0.0, x / sz[0]), max(0.0, y / sz[1]),
+                             min(1.0, (x + fw) / sz[0]), min(1.0, (y + fh) / sz[1])), s, eye))
+    return out
+
+
+def _haar(cv2, im: Image.Image) -> list:
+    """OpenCV's bundled Haar cascades (frontal x2 + profile) on a 900px copy;
+    a hit counts only if at least 45% of its box is skin-toned (YCrCb) and two
+    eyes are found in its upper part, which drops skin, fabric and lights that
+    merely look face-like."""
+    global _CASCADES
     if _CASCADES is None:
         _CASCADES = [cv2.CascadeClassifier(cv2.data.haarcascades + n) for n in
                      ("haarcascade_frontalface_default.xml", "haarcascade_frontalface_alt2.xml",
@@ -132,6 +192,17 @@ def analyze(asset_id: str) -> dict | None:
     has_alpha = alpha.min() < 0.98
     if has_alpha:
         sal = 0.5 * sal * alpha + 0.5 * alpha
+    elif SUBJECT_MASK and w * h >= 160 * 160 and float(busy.mean()) > 0.02:
+        # a photo: the foreground a person would cut out of it (a small
+        # salient-object model) leads; the spectral residual fills in. A flat
+        # illustration has no foreground, and keeps the spectral map alone.
+        from . import vision
+        mk = vision.mask_from_image(im)
+        if mk is not None:
+            mk = np.asarray(Image.fromarray((mk * 255).astype(np.uint8)).resize((sw, sh), Image.BILINEAR),
+                            dtype=np.float32) / 255.0
+            if 0.02 <= float((mk > 0.5).mean()) <= 0.85:
+                sal = 0.6 * mk + 0.4 * sal / (sal.max() + 1e-8)
     sal = sal / (sal.max() + 1e-8)
 
     # alpha bbox
@@ -154,16 +225,19 @@ def analyze(asset_id: str) -> dict | None:
     else:
         sbox, cx, cy = (0.25, 0.25, 0.75, 0.75), 0.5, 0.5
 
-    # faces are the subject: the crop centres on them (head and shoulders)
-    faces = _faces(im) if alpha.mean() > 0.9 else []
+    # faces are the subject and the eyes are where the viewer looks first:
+    # the crop keeps head and shoulders and aims at the eye line
+    found = _faces(im) if alpha.mean() > 0.9 else []
+    faces = [f for f, _ in found]
+    eyes = [e for _, e in found]
     if faces:
         x0 = min(f[0] for f in faces); x1 = max(f[2] for f in faces)
         y0 = min(f[1] for f in faces); y1 = max(f[3] for f in faces)
         fw, fh = x1 - x0, y1 - y0
         sbox = (max(0.0, x0 - 0.3 * fw), max(0.0, y0 - 0.3 * fh), min(1.0, x1 + 0.3 * fw), min(1.0, y1 + 1.2 * fh))
         wts = [(f[2] - f[0]) * (f[3] - f[1]) for f in faces]
-        cx = sum(((f[0] + f[2]) / 2) * wt for f, wt in zip(faces, wts)) / sum(wts)
-        cy = sum(((f[1] + f[3]) / 2) * wt for f, wt in zip(faces, wts)) / sum(wts)
+        cx = sum(e[0] * wt for e, wt in zip(eyes, wts)) / sum(wts)
+        cy = sum(e[1] * wt for e, wt in zip(eyes, wts)) / sum(wts)
 
     # relative luminance (WCAG), for text contrast; transparent pixels count as unknown (nan)
     lin = np.where(arr[..., :3] <= 0.04045, arr[..., :3] / 12.92, ((arr[..., :3] + 0.055) / 1.055) ** 2.4)
@@ -191,6 +265,7 @@ def analyze(asset_id: str) -> dict | None:
         "rules": rules,
         "plain": plain,
         "faces": faces,
+        "eyes": eyes,
         "lum": lum,
         "mean_lum": mean_lum,
         "sal": sal,
@@ -201,6 +276,7 @@ def analyze(asset_id: str) -> dict | None:
         "has_alpha": bool(has_alpha),
         "busyness": float(busy.mean()),
         "opaque_frac": float((alpha > 0.5).mean()),
+        "alpha_mean": float(alpha.mean()),
         "edge_cover": _edge_cover(_alpha_maxpooled(im)),
         "corners": _corners(_alpha_maxpooled(im)),
     }

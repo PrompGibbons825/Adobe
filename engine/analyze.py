@@ -274,7 +274,13 @@ def _text_roles(texts):
     hfs = head["font_size"]
     rest = sorted([e for e in others if e is not head], key=lambda e: e["font_size"], reverse=True)
     sub_done = False
+    from .textsem import is_detail
     for e in rest:
+        if is_detail(e):
+            # when, where, how much, how to reach: information, never the subhead
+            small = e["font_size"] <= 0.4 * hfs
+            roles[e["id"]] = "legal" if small and e is rest[-1] and len(e["content"]) > 40 else "body"
+            continue
         small = e["font_size"] <= 0.4 * hfs
         faint = (e.get("opacity", 1) or 1) < 0.8 or re.search(r",\s*0?\.[0-6]\d*\)", e.get("color", "")) is not None
         if small and (len(e["content"]) > 40 or faint) and e is rest[-1]:

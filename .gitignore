@@ -26,3 +26,11 @@ output/*
 /crello_holdout/
 /writeup_figs/
 /review/
+/research_notes/
+/reports/
+
+# Large vision models (engine/vision.py): kept out of git until we pick LFS
+# or a Docker build step. The engine runs without them.
+/engine/models/u2netp.onnx
+/engine/models/isnet-general-use.onnx
+/engine/models/clip/

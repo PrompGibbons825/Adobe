@@ -321,7 +321,24 @@ def score(ctx, P, model):
             was = max((_overlap(sfb, (model["els"][i]["x"], model["els"][i]["y"],
                                       model["els"][i]["x"] + model["els"][i]["width"],
                                       model["els"][i]["y"] + model["els"][i]["height"])) for i in others), default=0.0) / sfa
-            covered -= 10 * max(0.0, on - was)
+            # without eyes found, the whole face counts; with them, the lower
+            # face (a mask, a chin) may take a card, the eyes may not
+            covered -= (3 if info.get("eyes") else 10) * max(0.0, on - was)
+        # the eyes most of all: a band across them
+        for f, e in zip(info["faces"], info.get("eyes") or []):
+            band = (f[1] + 0.0, max(f[1], e[1] - 0.12 * (f[3] - f[1])), f[2], min(f[3], e[1] + 0.12 * (f[3] - f[1])))
+            eb = (max(0.0, x + f[0] * w), y + band[1] * h, min(W, x + f[2] * w), y + band[3] * h)
+            ea = _area(eb)
+            if ea <= 0:
+                continue
+            on = max((_overlap(eb, P.vis[i]) for i in others if i in P.vis and i not in P.hidden), default=0.0) / ea
+            seb = (el["x"] + f[0] * el["width"], el["y"] + band[1] * el["height"],
+                   el["x"] + f[2] * el["width"], el["y"] + band[3] * el["height"])
+            was = max((_overlap(seb, (model["els"][i]["x"], model["els"][i]["y"],
+                                      model["els"][i]["x"] + model["els"][i]["width"],
+                                      model["els"][i]["y"] + model["els"][i]["height"])) for i in others),
+                      default=0.0) / max(1e-6, _area(seb))
+            covered -= 25 * max(0.0, on - was)
     br["faces"] = covered
 
     # the background photo's subject stays visible: cards and panels may not

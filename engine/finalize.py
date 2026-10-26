@@ -37,6 +37,168 @@ def _thirds_target(text_c, size):
     return 0.5
 
 
+def _src_visible(ctx, el, model, shape):
+    """How much each cell of a background picture counted in the source design
+    (at the saliency map's resolution): 1 where it was seen, 0 where it was off
+    the canvas or under an opaque piece, 0.3 under copy (the designer kept that
+    part for words, so it is not the subject)."""
+    from .analyze import _fills_box, norm_rot
+    h, w = shape
+    xs = el["x"] + (np.arange(w) + 0.5) / w * el["width"]
+    ys = el["y"] + (np.arange(h) + 0.5) / h * el["height"]
+    vis = np.outer((ys >= 0) & (ys <= ctx.Hs), (xs >= 0) & (xs <= ctx.Ws)).astype(np.float32)
+    z = el.get("z_index", 0)
+    for o in model["els"].values():
+        if o is el or o.get("z_index", 0) <= z or abs(norm_rot(o.get("rotation", 0))) > 1:
+            continue
+        if o["type"] == "text":
+            k = 0.3
+        elif (o.get("opacity", 1) or 1) >= 0.9 and _fills_box(o) and (
+                o["type"] != "image" or (saliency.analyze(o.get("asset_id") or "") or {}).get("alpha_mean", 1) >= 0.9):
+            k = 0.0               # a tint over the photo still shows it
+        else:
+            continue
+        cx = (xs >= o["x"]) & (xs <= o["x"] + o["width"])
+        cy = (ys >= o["y"]) & (ys <= o["y"] + o["height"])
+        vis[np.ix_(cy, cx)] *= k
+    return vis
+
+
+def _best_window(ctx, P, el, model, info, pick, wx, wy, bw, bh):
+    """The crop of a background picture, weighing the copy against the picture.
+    Each window is charged for texture and subject under the copy beyond what
+    the designer accepted there (the score's own busy-background terms), and
+    credited for the share of the subject it keeps, counting only what the
+    source design showed. A face is never cut. The rule-of-thirds pick stands
+    unless another window is clearly better.
+
+    Only when the designer set the copy beside the subject: copy set over it
+    (a quote across a landscape, a title on the heart) is the design, and the
+    subject keeps its place in the frame. And the copy stays on the side of the
+    subject the designer put it: under the trees stays under the trees."""
+    from .score import _plates, _src_busy
+    sb = _eye_band(info) or info["sal_box"]
+    ew, eh = max(1e-6, el["width"]), max(1e-6, el["height"])
+    on, tot = 0.0, 0.0
+    src = None
+    for t in model["els"].values():
+        if t["type"] != "text" or t.get("z_index", 0) <= el.get("z_index", 0):
+            continue
+        r = ((t["x"] - el["x"]) / ew, (t["y"] - el["y"]) / eh,
+             (t["x"] + t["width"] - el["x"]) / ew, (t["y"] + t["height"] - el["y"]) / eh)
+        tot += (r[2] - r[0]) * (r[3] - r[1])
+        on += _box_overlap(r, sb)
+        src = r if src is None else (min(src[0], r[0]), min(src[1], r[1]), max(src[2], r[2]), max(src[3], r[3]))
+    if tot <= 0 or on > 0.3 * tot:
+        return pick
+    side, depth = _side(src, sb)
+    if side is None:
+        return pick
+    # the copy may reach up to half way into the subject's box (a loose box:
+    # its edge is mostly ground), never across it
+    reach = (sb[3] - sb[1]) if side in ("above", "below") else (sb[2] - sb[0])
+    sal, busy = info["sal"], info["busy"]
+    vis = _src_visible(ctx, el, model, sal.shape)
+    salv = sal * vis
+    total = float(salv.sum()) or 1.0
+    seen = [k for k, f in enumerate(info["faces"]) if saliency.region_mean(vis, *f) >= 0.5]
+    faces = [info["faces"][k] for k in seen]
+    eyes = [info["eyes"][k] for k in seen] if info.get("eyes") else []
+    plates = _plates(P, model)
+    texts, cover = [], []           # copy on the photo; everything copy-like on it (incl. its cards)
+    for eid, v in P.vis.items():
+        t = model["els"].get(eid)
+        if t is None or t["type"] != "text":
+            continue
+        cover.append(v)
+        z = t.get("z_index", 0)
+        on_plate = [pb for pb, pz in plates
+                    if pz < z and _box_overlap(v, pb) >= 0.9 * max(1.0, (v[2] - v[0]) * (v[3] - v[1]))]
+        if on_plate:
+            cover.extend(on_plate)
+            continue
+        texts.append((v, max(0.06, _src_busy(model, eid))))
+    if not cover:
+        return pick
+    out = (min(v[0] for v in cover) / bw, min(v[1] for v in cover) / bh,
+           max(v[2] for v in cover) / bw, max(v[3] for v in cover) / bh)
+    hh, ww = sal.shape
+
+    def value(x0, y0):
+        c = 0.0
+        for v, ok in texts:
+            r = ((v[0] / bw) + x0, (v[1] / bh) + y0, (v[2] / bw) + x0, (v[3] / bh) + y0)
+            c -= 10 * max(0.0, saliency.region_mean(busy, *r) - ok)
+            c -= 8 * max(0.0, saliency.region_mean(sal, *r) - 0.3)
+        c0, c1 = int(x0 * ww), int(np.ceil((x0 + wx) * ww))
+        r0, r1 = int(y0 * hh), int(np.ceil((y0 + wy) * hh))
+        c += 3 * float(salv[r0:r1, c0:c1].sum()) / total
+        for f in faces:
+            fa = max(1e-6, (f[2] - f[0]) * (f[3] - f[1]))
+            inside = max(0.0, min(f[2], x0 + wx) - max(f[0], x0)) * max(0.0, min(f[3], y0 + wy) - max(f[1], y0))
+            c -= 20 * (1 - inside / fa)
+        for e in eyes:            # the eyes above all: never cropped, never under copy or a card
+            if not (x0 + 0.02 <= e[0] <= x0 + wx - 0.02 and y0 + 0.02 <= e[1] <= y0 + wy - 0.02):
+                c -= 40
+            ex, ey = (e[0] - x0) * bw, (e[1] - y0) * bh
+            if any(v[0] <= ex <= v[2] and v[1] <= ey <= v[3] for v in cover):
+                c -= 40
+        return c
+
+    # the subject may be pushed partly out of frame for the copy, never more
+    # than half of what the plain pick shows of it
+    sba = max(1e-6, (sb[2] - sb[0]) * (sb[3] - sb[1]))
+
+    def shown(x0, y0):
+        return (max(0.0, min(sb[2], x0 + wx) - max(sb[0], x0))
+                * max(0.0, min(sb[3], y0 + wy) - max(sb[1], y0))) / sba
+    floor = 0.5 * shown(*pick)
+
+    gx = np.linspace(0, 1 - wx, 9) if wx < 0.98 else [pick[0]]
+    gy = np.linspace(0, 1 - wy, 9) if wy < 0.98 else [pick[1]]
+    base = value(*pick)
+    best, best_v = pick, base + 0.15
+    for x0 in gx:
+        for y0 in gy:
+            if shown(float(x0), float(y0)) < floor:
+                continue
+            o = (out[0] + x0, out[1] + y0, out[2] + x0, out[3] + y0)
+            if _overlap_on(o, sb, side) > max(0.0, depth) + 0.5 * reach:
+                continue
+            v = value(float(x0), float(y0))
+            if v > best_v:
+                best, best_v = (float(x0), float(y0)), v
+    return best
+
+
+def _overlap_on(copy, subject, side):
+    """How far the copy reaches into the subject from the given side (image
+    fractions; negative is a gap)."""
+    return {"below": subject[3] - copy[1], "above": copy[3] - subject[1],
+            "right": subject[2] - copy[0], "left": copy[2] - subject[0]}[side]
+
+
+def _side(copy, subject):
+    """Which side of the subject the copy sits on (image fractions) and how far
+    it reaches into it; (None, 0) when it is not clearly on any side."""
+    side = min(("below", "above", "right", "left"), key=lambda k: _overlap_on(copy, subject, k))
+    d = _overlap_on(copy, subject, side)
+    return (side, d) if d <= 0.15 else (None, 0.0)
+
+
+def _eye_band(info):
+    """The band across the eyes of every face found (image fractions), or None."""
+    if not info.get("eyes"):
+        return None
+    bands = [(f[0], e[1] - 0.15 * (f[3] - f[1]), f[2], e[1] + 0.15 * (f[3] - f[1]))
+             for f, e in zip(info["faces"], info["eyes"])]
+    return (min(b[0] for b in bands), min(b[1] for b in bands), max(b[2] for b in bands), max(b[3] for b in bands))
+
+
+def _box_overlap(a, b):
+    return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
 def place_bg(ctx, P, unit, model=None):
     el = unit.els[0]
     W, H = ctx.W, ctx.H
@@ -50,7 +212,7 @@ def place_bg(ctx, P, unit, model=None):
     wx, wy = W / bw, H / bh  # visible window, as fraction of image
     cx0, cy0 = (1 - wx) / 2, (1 - wy) / 2
     sb = info["sal_box"]
-    concentrated = (sb[2] - sb[0]) * (sb[3] - sb[1]) < 0.45
+    concentrated = (sb[2] - sb[0]) * (sb[3] - sb[1]) < 0.45 or bool(info.get("eyes"))
     x0, y0 = cx0, cy0
     if concentrated and not (wx > 0.98 and wy > 0.98):
         # rule of thirds: slide the crop so the subject sits on the third line
@@ -63,6 +225,8 @@ def place_bg(ctx, P, unit, model=None):
         if wy < 0.98:
             ty = _thirds_target(tc[1] if tc else None, H)
             y0 = min(max(fy - ty * wy, 0.0), 1 - wy)
+    if model is not None and (wx < 0.98 or wy < 0.98):
+        x0, y0 = _best_window(ctx, P, el, model, info, (x0, y0), wx, wy, bw, bh)
     if abs(x0 - cx0) < 1e-3 and abs(y0 - cy0) < 1e-3 and el.get("fit", "contain") == "cover":
         P.set(el["id"], x=0, y=0, width=W, height=H)
     else:
@@ -78,6 +242,11 @@ def place_bg(ctx, P, unit, model=None):
         "focal_centered": (-cx0 * bw + fx_ * bw, -cy0 * bh + fy_ * bh),
         "sal_box": (-x0 * bw + sb[0] * bw, -y0 * bh + sb[1] * bh, -x0 * bw + sb[2] * bw, -y0 * bh + sb[3] * bh),
     }
+    eb = _eye_band(info)
+    if eb:
+        # with eyes found, what cards must leave visible is the band across the
+        # eyes; a mask, a chin or shoulders may take a card
+        P.bg_info["sal_box"] = (-x0 * bw + eb[0] * bw, -y0 * bh + eb[1] * bh, -x0 * bw + eb[2] * bw, -y0 * bh + eb[3] * bh)
     if concentrated:
         fx, fy = info["centroid"]
         fcx, fcy = -x0 * bw + fx * bw, -y0 * bh + fy * bh

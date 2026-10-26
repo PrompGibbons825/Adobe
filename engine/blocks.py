@@ -79,7 +79,31 @@ class TextBlock:
         while m["word_w"] > box_w and fs > 1:
             fs -= 1
             m = tf.measure(el, fs, box_w)
+        if m["lines"] >= 2:
+            box_w, m = self._rebreak(fs, box_w, m)
         return box_w, fs, m
+
+    def _rebreak(self, fs, box_w, m):
+        """Keep a date, a price, a phone number or a name on one line, and no
+        word alone on the last line: try narrower boxes that keep the size and
+        the line count, and take the widest that reads better."""
+        from .textsem import break_cost
+        text = str(self.el.get("content", ""))
+        cost = break_cost(text, tf.wrapped(self.el, fs, box_w))
+        if cost == 0:
+            return box_w, m
+        best = (cost, box_w, m)
+        for k in range(1, 9):
+            w = box_w * (1 - 0.05 * k)
+            m2 = tf.measure(self.el, fs, w)
+            if m2["lines"] != m["lines"] or m2["word_w"] > w:
+                continue
+            c = break_cost(text, tf.wrapped(self.el, fs, w))
+            if c < best[0]:
+                best = (c, w, m2)
+                if c == 0:
+                    break
+        return best[1], best[2]
 
     def size(self, t, max_w):
         box_w, fs, m = self._fit(t, max_w)
@@ -458,17 +482,28 @@ class RestackBlock:
         return (gx, gy, gx + self.w * u, gy + self.h * u)
 
 
-def structured(c):
-    """A frame drawing with its own interior dividers: its contents were laid
-    out between those rules, so the frame and contents scale as one piece."""
-    if c is None or c["type"] != "image":
+def structured(unit):
+    """A frame with interior dividers: its contents were laid out between
+    those rules, so the frame and contents scale as one piece. The dividers
+    are drawn inside the frame's own artwork, or are separate thin lines
+    inside it (two or more, one spanning most of the frame)."""
+    c = unit.container
+    if c is None:
         return False
-    info = saliency.analyze(c.get("asset_id") or "")
-    return bool(info and info["opaque_frac"] < 0.5 and info.get("rules", 0.0) > 0.01)
+    if c["type"] == "image":
+        info = saliency.analyze(c.get("asset_id") or "")
+        if info and info["opaque_frac"] < 0.5 and info.get("rules", 0.0) > 0.01:
+            return True
+    cw, ch = max(1e-6, c["width"]), max(1e-6, c["height"])
+    thin = [e for e in unit.els if e is not c and e["type"] != "text"
+            and min(e["width"], e["height"]) < 0.03 * min(cw, ch)
+            and max(e["width"], e["height"]) > 8 * max(1e-6, min(e["width"], e["height"]))]
+    span = max((max(e["width"] / cw, e["height"] / ch) for e in thin), default=0.0)
+    return len(thin) >= 2 and span >= 0.6
 
 
 def make_block(unit, src_w, ctx=None):
-    if unit.kind == "frame" and structured(unit.container):
+    if unit.kind == "frame" and structured(unit):
         return GroupBlock(unit)
     if unit.kind == "frame" and ctx is not None:
         return FrameBlock(unit, ctx)
