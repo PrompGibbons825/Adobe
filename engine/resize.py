@@ -16,6 +16,7 @@ Pipeline:
 from __future__ import annotations
 
 import copy
+import math
 import os
 from typing import Any
 
@@ -158,6 +159,38 @@ RESTACK_COST = 0.5  # per composition re-stacked along the other axis
 ROTATE_COST = 0.5   # per text piece turned into a vertical strip
 
 
+# The critic compares candidates tier by tier: a visible defect first, then
+# whether every text reads, then the designer's arrangement, and only then the
+# rest of the score. Each tier is rounded into bands, so a trivial difference
+# falls through to the next tier; within the last band the full score decides.
+# The arrangement tier fades as the shape change grows: a near-same shape keeps
+# the designer's structure, an extreme one (a square into a strip) may flip
+# rows and columns or turn text, as long as the text reads.
+TIERS = (("dropped", "eyes", "collisions"),
+         ("readability", "contrast", "busy_bg"),
+         ("subject_hidden", "picture_cover", "arrangement", "subject_relation", "thumbnail",
+          "grouping", "restack", "rotate"))
+BANDS = (5.0, 6.0, 6.0)   # a band is about one clear defect / one text well below legible / one relation lost
+TIERED = os.environ.get("CHAMELEON_TIERS") == "1"   # off: the terms are not yet defect measures (see review/h2h_sprint7pm/T3_changes.png)
+
+
+def _fade(ctx):
+    """1 up to a 1.5x change of aspect, 0 from 4x on."""
+    sev = abs(math.log((ctx.W / ctx.H) / (ctx.Ws / ctx.Hs)))
+    lo, hi = math.log(1.5), math.log(4.0)
+    return min(1.0, max(0.0, (hi - sev) / (hi - lo)))
+
+
+def _key(br, fade):
+    if not TIERED:
+        return (sum(br.values()),)
+    t = [sum(br.get(k, 0.0) for k in names) for names in TIERS]
+    total = sum(br.values()) - (1 - fade) * t[2]
+    t[2] *= fade
+    # whole bands of penalty: -0.6 is band 0 (no worse than clean), -6.5 is band -1
+    return tuple(-math.floor(max(0.0, -t[i]) / BANDS[i]) for i in range(3)) + (total,)
+
+
 def _unwrap(source):
     """Marks texts whose hand-wrapped paragraph breaks can be dropped when the
     text re-flows into a new width (it then wraps cleanly instead of breaking
@@ -191,6 +224,7 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
         if n:
             readings.append((loose, n))
         best, best_s, best_br, best_meta, best_model = None, -1e18, None, None, None
+        best_key = None
         from .blocks import find_cut
         passes = []
         for model, broken in readings:
@@ -237,7 +271,9 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
                 if DEBUG:
                     print(f"    {('loose ' if broken else '') + P.meta['template']:<34} score={s:7.2f} "
                           + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
-                if s > best_s:
+                key = _key(br, _fade(ctx))
+                if best_key is None or key > best_key:
+                    best_key = key
                     best, best_s, best_br, best_model = P, s, br, model
                     best_meta = dict(P.meta, frame_modes=dict(getattr(P, "frame_modes", {})))
                     if broken:

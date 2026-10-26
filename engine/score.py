@@ -296,7 +296,7 @@ def score(ctx, P, model):
     br["thumbnail"] = thumb
 
     # faces stay uncovered: nothing else may sit on a face in a picture
-    covered = 0.0
+    covered = eyes = 0.0
     for eid, el in model["els"].items():
         if el["type"] != "image" or eid in P.hidden or eid not in P.props:
             continue
@@ -338,8 +338,9 @@ def score(ctx, P, model):
                                       model["els"][i]["x"] + model["els"][i]["width"],
                                       model["els"][i]["y"] + model["els"][i]["height"])) for i in others),
                       default=0.0) / max(1e-6, _area(seb))
-            covered -= 25 * max(0.0, on - was)
+            eyes -= 25 * max(0.0, on - was)
     br["faces"] = covered
+    br["eyes"] = eyes
 
     # the background photo's subject stays visible: cards and panels may not
     # hide more of it than they did in the source
