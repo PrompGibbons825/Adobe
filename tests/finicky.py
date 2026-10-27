@@ -471,7 +471,7 @@ def all_of(*checks: Check) -> Check:
 
 def cases() -> List[Case]:
     return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_b_cases() + sprint_c_cases() \
-        + split_cases() + r12_cases() + r13_cases() + r14_cases()
+        + split_cases() + r12_cases() + r13_cases() + r14_cases() + r15_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -1575,9 +1575,8 @@ SCALE3_XFAIL = {("fill_bg_odd_id_bleeding", "med-rect"), ("plate_text_not_split"
                 ("caption_stays_with_photo", "leaderboard"), ("caption_stays_with_photo", "fb-link"),
                 ("freetype_margin_stack", "med-rect"), ("freetype_margin_stack", "leaderboard")}  # measured 2026-10-25 (r7)
 STEP7_XFAIL: set = set()
-STEP_XFAIL = {# S1 (sprint A): kept at the squeeze floor, a split with the ribbon folded into the copy
-              # fits at 300x250 but leaves the product a speck at 300x251, so the plain split wins there
-              ("crowded_l3", 300, 250, 0, 1)}
+# (crowded_l3 at 300x250 -> 300x251 passes since r15: a squeezed plan first holds its pill labels)
+STEP_XFAIL: set = set()
 
 
 # ----------------------------------------------------------------------------
@@ -1849,4 +1848,47 @@ def r14_cases() -> List[Case]:
                  *button("cta", 640, 600, 232, 57, "See what's new", 23),
              ], targets=("med-rect", "leaderboard", "ig-square", "half-page", "skyscraper"),
              show=("headline", "cta_label"), check=outranks("price_main", "subhead")),
+    ]
+
+
+def fonts_at_least(least: Dict[str, float]) -> Check:
+    """Each named text, where it is visible, is set at no less than its absolute size in px."""
+    def check(src, out, tgt):
+        o = {e["id"]: e for e in out["elements"]}
+        bad = []
+        for tid, px in least.items():
+            e = o.get(tid)
+            if e is None or float(e.get("opacity", 1)) <= 0 or e["width"] <= 0:
+                continue
+            if float(e.get("font_size", 0)) < px:
+                bad.append(f"{tid}: font {float(e['font_size']):g}, wants {px:g}")
+        return bad
+    return check
+
+
+def r15_cases() -> List[Case]:
+    """Labels on pills (a call to action, badges) on medium rectangles (round 15)."""
+    return [
+        Case("pill_labels_legible_on_med_rect",
+             "a dense post (long headline, a paragraph, two badges, a button and small print): on a "
+             "300x250 or 336x280 unit the button label is not left at the minimum text size, and the "
+             "badge labels keep the usual floor while the running copy gives up the room",
+             1080, 1080, [
+                 logo(390, 40, 300, 100),
+                 image("product", 760, 300, 260, 340),
+                 text("headline", 60, 170, 680, 220, "Introducing the new limited-batch summer collection",
+                      62, "Solstice Serif", True, align="left"),
+                 text("body", 60, 410, 680, 160, "Small-batch infusions blended with wild honey, blood orange "
+                      "zest and a whisper of smoked rosemary, bottled at the peak of golden hour.", 22,
+                      align="left"),
+                 *button("badge1", 60, 600, 280, 60, "LIMITED EDITION", 25),
+                 *button("badge2", 360, 600, 330, 60, "AWARD WINNING 2026", 25),
+                 *button("cta", 60, 700, 420, 96, "Shop the summer line", 34),
+                 text("legal", 60, 860, 960, 90, "Please enjoy responsibly. Offer valid while supplies last. "
+                      "See our website for full terms and conditions.", 18, align="left"),
+             ], targets=("med-rect", "336x280", "250x250"),
+             show=("headline", "cta_label"),
+             check=all_of(nothing_hidden(),
+                          fonts_at_least({"cta_label": 11, "badge1_label": 10, "badge2_label": 10})),
+             xfail=("250x250",)),
     ]

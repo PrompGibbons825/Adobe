@@ -24,7 +24,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .analyze import Design, Item
 from .geom import Box, el_box, el_visual_box, union_all
-from .items import Ctx, Real, display_size, keep_floor, min_floor, realize, realize_scaled
+from .items import (LABEL_LIFT, PILL_ROLES, Ctx, Real, display_size, keep_floor, min_floor, realize,
+                    realize_scaled)
 from .layout import BUDGET, BudgetExceeded, Flow, HStack, Laid, Leaf, Node, Padded, VStack, search_scale
 from .structure import dominant_align, lead_text, row_align, rows_for, text_edges
 
@@ -43,6 +44,7 @@ TALL_AD = 1.6  # a canvas this many times taller than wide ...
 SMALL_AD = 400  # ... with a short side under this (px) is a tall ad unit (half-page, skyscraper)
 TALL_CTA = 0.3  # ... whose CTA label is at least this share of its display size ...
 BOLD_CTA_KEEP = 0.95  # ... when that costs the rest of the layout no more than 5% of its scale
+LIFT_KEEP = 0.9  # a button label lifted off the type floor may cost the rest up to 10% of its scale
 HERO_SHARE = 0.2  # in a column, a hero may grow into leftover room until it covers this share of the zone
 COPY_POSTER = 1.4  # a design of copy alone on a tall canvas may set its headline this much past display size
 COLUMN_ROOM = 1.35  # how much further than sqrt(area) a column may grow on a taller canvas
@@ -639,6 +641,9 @@ def plan_stack(d: Design, ctx: Ctx, hidden: List[Item], name: str = "stack", ins
         if bad:  # S1: a corner item with no room in its corner joins the column instead of being left out
             return plan_stack(d, ctx, hidden, name, insets, force_align, _folded(fold, bad), vside)
         if not clash:
+            s, placed, fl, relax = _lifted(root, d, ctx, zone, lo, hi, (s, laid, relax), placed, fl, floaters, mx, my,
+                                           lambda lz: place_column(lz, boxes, root.align, d, ctx, lz.zone,
+                                                                   side=force_align, vside=vside))
             return Plan(name=name, placed=placed, hidden=list(hidden), s=s, zone=zone, floaters=fl,
                         relax=relax, capped=s >= hi * 0.999)
         if new_zone.h < 0.4 * (ctx.H - 2 * my) or new_zone.w < 0.5 * (ctx.W - 2 * mx):
@@ -683,6 +688,8 @@ def plan_split(d: Design, ctx: Ctx, hidden: List[Item], hero_side: str = "left",
         if bad:  # S1: a corner item with no room in its corner joins the copy column
             return plan_split(d, ctx, hidden, hero_side, hero_frac, fold_corners, name, insets, _folded(fold, bad))
         if not clash:
+            s, placed, fl, relax = _lifted(root, d, ctx, zone, lo, hi, (s, laid, relax), placed, fl, floaters, mx, my,
+                                           lambda lz: _place_split(lz, ctx, lz.zone))
             return Plan(name=name, placed=placed, hidden=list(hidden), s=s, zone=zone, floaters=fl,
                         relax=relax, capped=s >= hi * 0.999)
         if new_zone.h < 0.55 * (ctx.H - 2 * my) or new_zone.w < 0.5 * (ctx.W - 2 * mx):
@@ -858,10 +865,61 @@ def _with_bold_cta(root: Node, d: Design, ctx: Ctx, zone: Box, lo: float, hi: fl
     return plain
 
 
-def _cta_in_rank(placed: List[Placement], d: Design) -> bool:
+_LIFTED = [0]  # how many layouts legible_cta lifted (so _with_insets knows to retry without)
+
+
+def legible_cta(root: Node, d: Design, ctx: Ctx, zone: Box, lo: float, hi: float, plain):
+    """A call to action whose label the layout set at the type floor, solved again with the
+    label LABEL_LIFT larger: the pill grows around it and the rest of the layout gives up the
+    room. A button label sitting at the minimum text size reads as small print on a small
+    format (a medium rectangle), where every other piece of copy is above it. Kept on the
+    terms of a bold CTA (_with_bold_cta), a little looser: the rest keeps LIFT_KEEP of its scale, at no
+    looser type, the label outranks no copy the source set larger, and the button is no wider
+    than the copy's measure. Otherwise ``plain``."""
+    s, laid, relax = plain
+    if laid is None or ctx.cta_min or not ctx.lift_cta:
+        return plain
+    floor = ctx.floor("cta", relax)
+    fonts = [fs for r, _, _ in laid.place(0.0, 0.0) if r.item.role == "cta" for fs in r.fonts.values()]
+    if not fonts or min(fonts) > floor + 0.5:
+        return plain
+    for lift in LABEL_LIFT:  # the larger lift first, then a step that costs less room
+        lifted = replace(ctx, cta_min=float(math.ceil(lift * floor)))
+        bs, blaid, brelax = solve(root, lifted, zone, lo, hi)
+        if blaid is None or bs < LIFT_KEEP * s or brelax < relax:
+            continue
+        bplaced = blaid.place(0.0, 0.0)
+        bfonts = [fs for r, _, _ in bplaced if r.item.role == "cta" for fs in r.fonts.values()]
+        # the label must really be larger (a lifted label that did not fit falls back to the
+        # layout's size, and only the rest would have paid for it)
+        if min(bfonts, default=0) > min(fonts) and _cta_in_rank(bplaced, d, measure=True):
+            _LIFTED[0] += 1
+            return bs, blaid, brelax
+    return plain
+
+
+def _lifted(root: Node, d: Design, ctx: Ctx, zone: Box, lo: float, hi: float, plain, placed, fl, floaters,
+            mx: float, my: float, place):
+    """A settled layout (no clash with its corner items) with its button label lifted
+    (legible_cta), placed and settled again; the plain layout when the lifted one is not
+    better-or-equal in every other way (a corner item it would clash with, none left over).
+    Lifting only the final layout keeps the zone the floaters settled on, so a one-pixel change
+    of canvas cannot send the search down another path. Returns (s, placed, floaters, relax)."""
+    s, laid, relax = plain
+    ls, llaid, lrelax = legible_cta(root, d, ctx, zone, lo, hi, plain)
+    if llaid is not laid:
+        lplaced = place(llaid)
+        lfl, lbad, lclash, _ = _settle_floaters(lplaced, floaters, ls, ctx, zone, mx, my, lrelax)
+        if not lbad and not lclash:
+            return ls, lplaced, lfl, lrelax
+    return s, placed, fl, relax
+
+
+def _cta_in_rank(placed: List[Placement], d: Design, measure: bool = False) -> bool:
     """No call-to-action label is set larger than copy that was at least 25%
     larger than it in the source (the hierarchy the scorer and the checks
-    hold every layout to), and no button is wider than the headline."""
+    hold every layout to), and no button is wider than the headline (``measure``:
+    than the widest block of copy, for a label lifted off the floor, legible_cta)."""
     out, cta = {}, set()
     for r, _, _ in placed:
         for tid, fs in r.fonts.items():
@@ -871,7 +929,10 @@ def _cta_in_rank(placed: List[Placement], d: Design) -> bool:
     src = {tid: float(d.by_id[tid].get("font_size") or 0) for tid in out if tid in d.by_id}
     if any(src[a] >= 1.25 * src[c] and out[a] < out[c] - 1 for c in cta for a in out if a not in cta):
         return False
-    head = max((r.w for r, _, _ in placed if r.item.role == "headline"), default=0.0)
+    if measure and any(src[a] > src[c] and out[a] < out[c] for c in cta for a in out if a not in cta):
+        return False  # a lifted label passes no copy the source set larger, by even a pixel
+    head = max((r.w for r, _, _ in placed if r.item.role == "headline" or
+                (measure and r.item.is_copy and r.item.role != "cta")), default=0.0)
     return not head or all(r.w <= head + 0.5 for r, _, _ in placed if r.item.role == "cta")
 
 
@@ -1073,6 +1134,16 @@ def _shift(p: Plan, dx: float, dy: float) -> Plan:
 
 
 def _with_insets(fn, d: Design, ctx: Ctx, *args, **kw) -> Optional[Plan]:
+    """_insets_once; a planner that found no plan after lifting a button label (legible_cta)
+    is run again without the lift: the larger label is a preference and never costs a plan."""
+    n0 = _LIFTED[0]
+    p = _insets_once(fn, d, ctx, *args, **kw)
+    if p is None and _LIFTED[0] > n0 and ctx.lift_cta:
+        p = _insets_once(fn, d, replace(ctx, lift_cta=False), *args, **kw)
+    return p
+
+
+def _insets_once(fn, d: Design, ctx: Ctx, *args, **kw) -> Optional[Plan]:
     """Run a planner and make sure every painted box stays on the canvas.
 
     Images carry transparent margins, so content that sits right at the safe
@@ -1293,6 +1364,17 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
     #     the secondary items in the corners (S1: keeping wins over legibility)
     sctx = replace(ctx, keep_px=float(min_floor(ctx.W, ctx.H)))
     if sctx.keep_px < kctx.keep_px:
+        # first with the pill labels (badges, ribbon) held at the usual floor, and with them all
+        # copy the source set at least as large: only the smaller copy gives up the room, and the
+        # badge stays legible (items.PILL_ROLES)
+        held = [float(lab.get("font_size") or 0) for it in d.items for p in (it, *it.sats)
+                if p.role in PILL_ROLES for lab in p.labels]
+        if held and min(held) > 0:
+            hctx = replace(sctx, hold_fs=min(held))
+            if not attempt([], True, hctx, "!squeeze-held") or kept():
+                return plans
+            if not cornered(hctx, "!squeeze-held-corner") or kept():
+                return plans
         if not attempt([], True, sctx, "!squeeze") or kept():
             return plans
         if not cornered(sctx, "!squeeze-corner") or kept():
