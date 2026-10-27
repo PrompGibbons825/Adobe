@@ -1437,8 +1437,7 @@ def r13_cases() -> List[Case]:
               text("headline", 60, 250, 380, 150, "Morning Ritual", 64, bold=True, color=PLUM),
               *button("cta", 60, 430, 200, 60, "Subscribe", 22)],
              targets=("story", "ig-portrait", "pinterest", "ig-square"),
-             show=("headline", "cta_label"), background=False, check=calm_ground("headline"),
-             xfail=("ig-square",)),
+             show=("headline", "cta_label"), background=False, check=calm_ground("headline")),
     ]
 
 
@@ -1768,3 +1767,86 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# A synthetic photo: a smooth rose armchair with a white cushion right of centre (x 0.53-0.92,
+# y 0.18-0.86, the cushion x 0.62-0.83, y 0.38-0.52) before a plain wall, boards along the bottom
+# fifth (tests/assets/SOURCES.txt).
+CHAIR_PHOTO = "../../tests/assets/chair_beside_wall.jpg"
+CHAIR = (0.53, 0.18, 0.92, 0.86)
+
+
+def off_subject(pid: str, frac: Tuple[float, float, float, float], *ids: str, most: float = 0.12) -> Check:
+    """These texts keep off the photo's subject (``frac``: its box as fractions of the image),
+    as the output draws the photo: at most ``most`` of each text's drawn glyph box on it. A smooth
+    subject reads under dark type and has no texture, so contrast and busy-ness cannot see it."""
+    def check(src, out, tgt):
+        from engine.smart.textfit import drawn_box
+
+        ph = next(x for x in out["elements"] if x["id"] == pid)
+        sx0, sy0 = ph["x"] + frac[0] * ph["width"], ph["y"] + frac[1] * ph["height"]
+        sx1, sy1 = ph["x"] + frac[2] * ph["width"], ph["y"] + frac[3] * ph["height"]
+        errs = []
+        for e in out["elements"]:
+            if e["id"] not in ids or float(e.get("opacity", 1)) <= 0:
+                continue
+            g = drawn_box(e)
+            ix = max(0.0, min(g.r, sx1) - max(g.x, sx0))
+            iy = max(0.0, min(g.b, sy1) - max(g.y, sy0))
+            share = ix * iy / max(1.0, g.w * g.h)
+            if share > most:
+                errs.append(f"{e['id']}: {share:.0%} of it on the photo's subject")
+        return errs
+    return check
+
+
+def outranks(big: str, small: str) -> Check:
+    """Copy the source set larger than other copy is not set smaller than it."""
+    def check(src, out, tgt):
+        o = {e["id"]: e for e in out["elements"]}
+        if float(o[big].get("opacity", 1)) <= 0 or float(o[small].get("opacity", 1)) <= 0:
+            return []
+        fb, fs = float(o[big].get("font_size", 0)), float(o[small].get("font_size", 0))
+        return [f"{big}: font {fb:g} under {small}'s {fs:g}"] if fb < fs else []
+    return check
+
+
+def r14_cases() -> List[Case]:
+    """Copy on a smooth photo subject; display copy squeezed under the secondary copy (round 14)."""
+    W, H = 1280, 720
+    photo = {"id": "photo", "type": "image", "x": 0, "y": 0, "width": W, "height": H, "z_index": 0,
+             "asset_id": CHAIR_PHOTO, "fit": "cover"}
+    return [
+        Case("headline_off_smooth_subject",
+             "dark copy on a plain wall left of a smooth armchair with a white cushion: the chair "
+             "holds 3:1 under dark type and has no texture, so the quiet bands and the pixel critic "
+             "both read it as ground. Cropped to a tall canvas, the headline must not land on it",
+             W, H,
+             [photo,
+              text("kicker", 40, 130, 490, 44, "LIMITED LOT", 30, bold=True, color="rgba(214,92,52,1)"),
+              text("headline", 40, 190, 490, 280, "Morning Ritual", 107, bold=True, color=PLUM),
+              *button("cta", 40, 510, 230, 80, "Subscribe", 30)],
+             targets=("ig-portrait", "ig-square", "story", "pinterest"),
+             show=("headline", "cta_label"), background=False,
+             check=off_subject("photo", CHAIR, "headline", most=0.3), xfail=("ig-portrait",)),
+        Case("price_outranks_subhead_squeezed",
+             "a product post whose price ($129 with its cents, at twice the subhead's size) is a "
+             "lockup of two texts: on a small ad unit the keep ladder squeezes secondary copy, and "
+             "the price must not end smaller than the subhead it outranked in the source",
+             W, H, [
+                 image("product", 40, 60, 600, 600),
+                 shape("badge1_bg", 530, 40, 130, 130, "#dc283c", z=4, kind="ellipse", group_id="badge1"),
+                 text("badge1_label", 543, 90, 104, 30, "HANDMADE", 21, bold=True, color="#ffffff",
+                      z=5, group_id="badge1"),
+                 shape("badge2_bg", 30, 390, 100, 100, "#dc283c", z=4, kind="ellipse", group_id="badge2"),
+                 text("badge2_label", 40, 428, 80, 24, "BESTSELLER", 16, bold=True, color="#ffffff",
+                      z=5, group_id="badge2"),
+                 logo(640, 70, 240, 80),
+                 text("headline", 640, 190, 560, 150, "Soft Days", 115, "Solstice Serif", True),
+                 text("subhead", 640, 375, 560, 54, "Natural fibres, made to last.", 37),
+                 text("price_main", 640, 458, 197, 126, "$129", 88, bold=True, group_id="price"),
+                 text("price_cents", 839, 468, 68, 57, ".00", 39, bold=True, group_id="price"),
+                 *button("cta", 640, 600, 232, 57, "See what's new", 23),
+             ], targets=("med-rect", "leaderboard", "ig-square", "half-page", "skyscraper"),
+             show=("headline", "cta_label"), check=outranks("price_main", "subhead")),
+    ]

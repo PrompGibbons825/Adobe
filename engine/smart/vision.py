@@ -471,6 +471,42 @@ QUIET = 0.8  # x importance, per unit of picture weight under an item past the p
 QUIET_SLACK = 0.1  # picture weight past the mean that costs nothing (the map's noise on plain areas)
 CAP = 1.5  # x importance, at most, per item
 DECOR = 30.0  # importance of a decoration set on the photo
+SUBJECT = 4.0  # x importance, per share of the subject's weight an item covers past the source's share
+SUBJECT_SLACK = 0.03  # share of the subject's weight an item may cover for free
+SUBJECT_Q = 0.85  # importance at or past this quantile of the map is the subject (as in _vision)
+_SUBJ: dict = {}
+
+
+def subject_share(v: Vision, f: Frac) -> float:
+    """Share of the subject's weight (the map at or past its SUBJECT_Q quantile) inside the
+    fractional region ``f``: how much of what the photo shows a box set on it covers. The mean
+    over a box (Vision.mass) cannot tell a headline over a smooth sofa and its cushion from one
+    on the plain wall beside it once the box is large; the share of the subject it covers can."""
+    got = _SUBJ.get(id(v))
+    if got is None or got[0] is not v:
+        imp = v.imp.astype(np.float64)
+        wt = np.where(imp >= float(np.quantile(imp, SUBJECT_Q)), imp, 0.0)
+        S = np.zeros((wt.shape[0] + 1, wt.shape[1] + 1), dtype=np.float64)
+        S[1:, 1:] = wt.cumsum(0).cumsum(1)
+        got = _SUBJ[id(v)] = (v, S, float(S[-1, -1]) + 1e-9)
+    _, S, total = got
+    h, w = S.shape[0] - 1, S.shape[1] - 1
+    x0, x1 = int(max(0, min(w, math.floor(f[0] * w)))), int(max(0, min(w, math.ceil(f[2] * w))))
+    y0, y1 = int(max(0, min(h, math.floor(f[1] * h)))), int(max(0, min(h, math.ceil(f[3] * h))))
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    return float(S[y1, x1] - S[y0, x1] - S[y1, x0] + S[y0, x0]) / total
+
+
+def _src_share(v: Vision, e: dict, d, item) -> float:
+    """subject_share of an item where the source set it (the photo as the source drew it)."""
+    b = getattr(item, "src_box", None)
+    if b is None:
+        return 0.0
+    sx0, sy0, sx1, sy1 = source_window(e, d.W, d.H, v.size)
+    fx = lambda x: sx0 + (x / max(1.0, d.W)) * (sx1 - sx0)  # noqa: E731
+    fy = lambda y: sy0 + (y / max(1.0, d.H)) * (sy1 - sy0)  # noqa: E731
+    return subject_share(v, (fx(b.x), fy(b.y), fx(b.x + b.w), fy(b.y + b.h)))
 
 
 def _placed_rects(plan) -> List[Rect]:
@@ -510,9 +546,9 @@ def item_penalties(plan, d, ctx, extra: Sequence[Rect] = ()) -> Tuple[dict, floa
         heads, people = drawn_faces(v, box, "heads"), drawn_faces(v, box, "people")
         avg = v.mass((0.0, 0.0, 1.0, 1.0))
         bx, by, bw, bh = box
-        things = [(x, y, r.w, r.h, float(getattr(r.item, "importance", 40.0)), getattr(r.item, "key", id(r.item)))
-                  for r, x, y in plan.placed + plan.floaters] + [tuple(rc) + (DECOR, None) for rc in extra]
-        for x, y, w, h, imp, key in things:
+        things = [(x, y, r.w, r.h, float(getattr(r.item, "importance", 40.0)), getattr(r.item, "key", id(r.item)),
+                   r.item) for r, x, y in plan.placed + plan.floaters] + [tuple(rc) + (DECOR, None, None) for rc in extra]
+        for x, y, w, h, imp, key, item in things:
             if w <= 0 or h <= 0:
                 continue
             a = w * h
@@ -524,6 +560,9 @@ def item_penalties(plan, d, ctx, extra: Sequence[Rect] = ()) -> Tuple[dict, floa
                     k += wt * ix * iy / max(1.0, min(a, fw * fh))
             q = v.mass(((x - bx) / bw, (y - by) / bh, (x + w - bx) / bw, (y + h - by) / bh))
             k += QUIET * max(0.0, q - avg - QUIET_SLACK)
+            if item is not None and getattr(item, "is_copy", False):
+                fr = ((x - bx) / bw, (y - by) / bh, (x + w - bx) / bw, (y + h - by) / bh)
+                k += SUBJECT * max(0.0, subject_share(v, fr) - _src_share(v, e, d, item) - SUBJECT_SLACK)
             if key is None:
                 deco += imp * min(CAP, k)
             else:
