@@ -19,7 +19,7 @@ from typing import Dict, List
 
 from . import textfit
 from .analyze import Design
-from .compose import KEEP_HERO, ROOMY, Plan, keep_share, story_band
+from .compose import KEEP_HERO, ROOMY, Plan, art_box, keep_share, story_band
 from .geom import Box
 from .items import Ctx, display_lines
 
@@ -160,8 +160,8 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
     b["coverage"] = -40.0 * max(0.0, want * 0.7 - cov) / max(1e-6, want)
     if roomy:  # room to grow into (small ad units keep their density logic)
         b["fill"] = FILL * min(1.0, cov / max(1e-6, min(0.55, 1.1 * src_cov)))
-        b["shrunk"] = -SHRINK * _shrunk(placed, d, ctx)
         b["trivial"] = -TRIVIAL * _trivial(boxes, d, ctx)
+    b["shrunk"] = -SHRINK * _shrunk(placed, d, ctx)  # ad units too, at KEEP_UNIT (keep_share)
     b["density"] = -DENSITY * _crowding(boxes, d, ctx)
     if area > 0:
         mx = sum(bx.cx * bx.area for _, bx in boxes) / area
@@ -276,14 +276,22 @@ def _shrunk(placed, d: Design, ctx: Ctx) -> float:
     share (compose.keep_share), so a product never ends up a thumbnail. Each
     pays its importance times the share it is missing, as a fraction."""
     total = 0.0
+    roomy = min(ctx.W, ctx.H) >= ROOMY
     for r, _, _ in placed:
         it = r.item
         if it.src_box.area <= 0:
             continue
-        keep = KEEP_HERO if it.role == "headline" else keep_share(it, d, ctx)
+        if it.role == "headline":
+            keep = KEEP_HERO if roomy else 0.0
+        else:
+            keep = keep_share(it, d, ctx, unit=True)
         if not keep:
             continue
-        ratio = (r.w * r.h / (ctx.W * ctx.H)) / (it.src_box.area / (d.W * d.H))
+        if it.kind == "composite" and art_box(it) is not it.src_box:  # the host image, not its stickers
+            a0 = art_box(it).area
+            ratio = (r.scale * r.scale * a0 / (ctx.W * ctx.H)) / (a0 / (d.W * d.H))
+        else:
+            ratio = (r.w * r.h / (ctx.W * ctx.H)) / (it.src_box.area / (d.W * d.H))
         total += it.importance * max(0.0, keep - ratio) / keep
     return total
 

@@ -645,6 +645,8 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float, type_cap: float = 
         fx = (sat.src_box.cx - hb.x) / max(1e-6, hb.w)
         fy = (sat.src_box.cy - hb.y) / max(1e-6, hb.h)
         parts.append((rs, fx * rh.w - rs.w / 2.0, fy * rh.h - rs.h / 2.0))
+    if min(ctx.W, ctx.H) >= STICKER_STRIP and _buried(parts, rh, k):
+        return None
     tix = [i for i, (r, _, _) in enumerate(parts) if r.item.is_copy]
     if len(tix) > 1:  # captions that grew to the floor must not run into each other (any more than designed)
         src = [parts[i][0].item.src_box for i in tix]
@@ -662,6 +664,26 @@ def _composite_at(it: Item, t: float, ctx: Ctx, relax: float, type_cap: float = 
     x1 = max(px + r.w for r, px, _ in parts)
     y1 = max(py + r.h for r, _, py in parts)
     return parts, x0, y0, x1 - x0, y1 - y0, rh, dropped
+
+
+STICKER_COVER = 0.5  # stickers grown past their art's scale may cover at most this share of it ...
+STICKER_STRIP = 200  # ... on a canvas whose short side is at least this (a strip's art is a token beside its copy)
+
+
+def _buried(parts, rh, k: float) -> bool:
+    """True when stickers set larger than their art's own scale (labels held at the type floor
+    while the art shrank) cover more than STICKER_COVER of the art's box: the product would be
+    buried under its badges, so this size of the art is no rendition of it."""
+    grown = [(r, px, py) for r, px, py in parts[1:] if not r.item.is_copy and r.w > r.item.src_box.w * k * 1.05]
+    if not grown:
+        return False
+    n, hit = 16, 0
+    for i in range(n):
+        for j in range(n):
+            x, y = (i + 0.5) * rh.w / n, (j + 0.5) * rh.h / n
+            if any(px <= x <= px + r.w and py <= y <= py + r.h for r, px, py in grown):
+                hit += 1
+    return hit > STICKER_COVER * n * n
 
 
 def _scaled_text(it: Item, k: float, ctx: Ctx, type_k: float = INF) -> Tuple[Real, float, float]:

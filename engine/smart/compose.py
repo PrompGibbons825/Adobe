@@ -57,6 +57,7 @@ KEEP_HERO = 0.7  # on a roomy canvas a hero keeps at least this share of its sou
 KEEP_PICTURE = 0.6  # ... and any other picture that covered PICTURE_SHARE of the source this much
 PICTURE_SHARE = 0.08
 ROOMY = 400  # px: canvases with a short side this long have room to grow into (smaller ones are ad units)
+KEEP_UNIT = 0.5  # on an ad unit a picture keeps this fraction of its roomy keep (the score charges it, no hard floor)
 
 
 @dataclass
@@ -142,23 +143,36 @@ def story_band(ctx: Ctx) -> Tuple[float, float]:
     return 0.0, 0.0
 
 
-def keep_share(it: Item, d: Design, ctx: Ctx) -> float:
+def keep_share(it: Item, d: Design, ctx: Ctx, unit: bool = False) -> float:
     """The share of its source share of the canvas a picture must keep on a
     roomy canvas, so a product never shrinks to a thumbnail (0: no rule). A
     cut-out cannot be cropped, so it is held to no more than 70% of the
-    largest share it could show whole."""
-    if min(ctx.W, ctx.H) < ROOMY or it.kind not in ("image", "composite") or it.src_box.area <= 0:
+    largest share it could show whole. With ``unit``, an ad unit (short side
+    under ROOMY) has a softer rule too, KEEP_UNIT of it: the score charges a
+    product shrunk to a thumbnail beside its copy on a 300x250 or a banner."""
+    unit_ = min(ctx.W, ctx.H) < ROOMY
+    if (unit_ and not unit) or it.kind not in ("image", "composite") or it.src_box.area <= 0:
         return 0.0
-    share0 = it.src_box.area / max(1.0, d.W * d.H)
+    box = art_box(it)
+    share0 = box.area / max(1.0, d.W * d.H)
     if it.role == "hero":
         keep = KEEP_HERO
     elif it.role == "image" and share0 >= PICTURE_SHARE:
         keep = KEEP_PICTURE
     else:
         return 0.0
-    a = it.src_box.w / max(1e-6, it.src_box.h)
+    if unit_:
+        keep *= KEEP_UNIT
+    a = box.w / max(1e-6, box.h)
     whole = min(a * ctx.H / ctx.W, ctx.W / (a * ctx.H))  # the largest share it can cover whole
     return min(keep, 0.7 * whole / max(1e-6, share0))
+
+
+def art_box(it: Item):
+    """The source box of a picture itself: for art carrying stickers, its host image (the badges
+    set at the type floor must not count as the product's size)."""
+    host = getattr(it, "host", None) if it.kind == "composite" else None
+    return host.src_box if host is not None and host.src_box.area > 0 else it.src_box
 
 
 HARD_KEEP = 0.75  # the layout holds a picture at this much of keep_share; the score charges the rest
@@ -999,14 +1013,44 @@ def drop_orders(d: Design) -> List[List[Item]]:
 DEMOTE_ROLES = ("badge", "ribbon", "legal", "watermark")
 
 
-def _demotions(d: Design) -> List[Tuple[Item, str]]:
+def _unstuck(d: Design) -> Optional[List[Item]]:
+    """The design's items with the secondary stickers on art (a round badge on a product: role
+    in DEMOTE_ROLES, not core, not itself art) taken off it as items of their own, so the
+    demotion rung can move them to a corner. Kept on a product shrunk to fit a small canvas,
+    such a sticker held at the legibility floor covers the product or takes its room; designers
+    resizing to an ad unit move it off. None when no art carries one."""
+    out: List[Item] = []
+    found = False
+    held = {id(m) for b in d.backdrops for m in b.members}
+    for it in d.items:
+        if it.kind != "composite" or it.host is None or id(it) in held:
+            out.append(it)
+            continue
+        off = [x for x in it.sats if x.role in DEMOTE_ROLES and not x.core and x.kind not in ("image", "composite")]
+        if not off:
+            out.append(it)
+            continue
+        found = True
+        stay = [x for x in it.sats if x not in off]
+        if stay:
+            out.append(replace(it, key=it.key + "~unstuck", sats=stay,
+                               els=it.host.els + [e for x in stay for e in x.els],
+                               src_box=union_all([it.host.src_box] + [x.src_box for x in stay]), memo={}))
+        else:
+            out.append(it.host)
+        out += off
+    return out if found else None
+
+
+def _demotions(d: Design, items: Optional[List[Item]] = None) -> List[Tuple[Item, str]]:
     """S1 demotion: the corner each small secondary item not pinned to one may move to when the
     column cannot hold it. Small print goes to a bottom corner, badges, ribbons and watermarks to
     the top corner on their side; items of one role share the corner, so place_floaters queues
-    a set of badges in one line along the edge."""
+    a set of badges in one line along the edge. ``items``: the design's items to use instead
+    (``_unstuck``)."""
     out: List[Tuple[Item, str]] = []
     for role in DEMOTE_ROLES:
-        its = [it for it in d.items if it.role == role and not it.corner and not it.core]
+        its = [it for it in (items or d.items) if it.role == role and not it.corner and not it.core]
         if not its:
             continue
         cx = sum(it.src_box.cx for it in its) / len(its)
@@ -1219,19 +1263,26 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
         return plans
     # 1b. small secondary items (badges, ribbon, small print, watermark) move out of the column
     #     into the margins and corners, a set of them queued in one line along the edge
-    demote = _demotions(d)
+    loose = _unstuck(d)
 
-    def cornered(base: Ctx, tag: str) -> bool:
+    def cornered(base: Ctx, tag: str, items: Optional[List[Item]] = None) -> bool:
+        demote = _demotions(d, items)
+        if not demote:
+            return True
         saved = [(it, it.corner) for it, _ in demote]
+        items0 = d.items
         try:
+            if items is not None:
+                d.items = items
             for it, c in demote:
                 it.corner = c
             return attempt([], True, base, tag)
         finally:
+            d.items = items0
             for it, c in saved:
                 it.corner = c
 
-    if demote and (not cornered(kctx, "!corner") or kept()):
+    if not cornered(kctx, "!corner") or kept():
         return plans
     # 1c. squeeze: secondary copy goes under the usual floor, down to the explicit minimum
     #     (items.min_floor; headline and CTA stay at the usual floor), first in place, then with
@@ -1240,8 +1291,14 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
     if sctx.keep_px < kctx.keep_px:
         if not attempt([], True, sctx, "!squeeze") or kept():
             return plans
-        if demote and (not cornered(sctx, "!squeeze-corner") or kept()):
+        if not cornered(sctx, "!squeeze-corner") or kept():
             return plans
+    # 1d. stickers on art (a badge on a product, _unstuck) that cannot stay on it at any rung
+    #     without burying it (items._buried) leave it for the corners, rather than be left out
+    if loose:
+        for c, tag in ((kctx, "!unstuck"), (sctx, "!squeeze-unstuck"))[:2 if sctx.keep_px < kctx.keep_px else 1]:
+            if not cornered(c, tag, loose) or kept():
+                return plans
     # 2. content that fits at no rung: the old hide-sets, least important first, as a repair of
     #    last resort, at the usual context (there a composite may shed a sticker it cannot hold,
     #    so the picture itself stays; keep_everything_first ranks core losses last)
