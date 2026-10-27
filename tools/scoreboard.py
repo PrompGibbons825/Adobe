@@ -29,6 +29,8 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PIL import Image
 
 ROOTS = ["crello", "crello_holdout"]
@@ -177,6 +179,105 @@ def readability(dirs, res, keys):
                 res[d.name][key]["lowread"] = float(np.mean([v < 0.4 for v in vals])) if vals else 0.0
 
 
+def _anchors(e):
+    """Edges and centre lines an element can align on (x0, xc, x1, y0, yc, y1).
+    A text aligns by the edge its alignment uses, not its whole box."""
+    x0, y0, w, h = e["x"], e["y"], e["width"], e["height"]
+    a = {"x0": x0, "xc": x0 + w / 2, "x1": x0 + w, "y0": y0, "yc": y0 + h / 2, "y1": y0 + h}
+    if e["type"] == "text":
+        al = e.get("text_align", "left")
+        keep = {"left": "x0", "center": "xc", "right": "x1"}.get(al, "x0")
+        a = {k: v for k, v in a.items() if k[0] == "y" or k == keep}
+    return a
+
+
+def alignments(d):
+    """Pairs of elements sharing an edge or centre line: {(i, j, key)}."""
+    W, H = d["canvas"]["width"], d["canvas"]["height"]
+    tol = 0.006 * min(W, H)
+    els = [e for e in d["elements"] if abs(float(e.get("rotation", 0) or 0)) <= 1
+           and e["width"] * e["height"] < 0.6 * W * H and e["width"] > 0 and e["height"] > 0]
+    out = set()
+    an = {e["id"]: _anchors(e) for e in els}
+    for i, a in enumerate(els):
+        for b in els[i + 1:]:
+            for k, v in an[a["id"]].items():
+                if k in an[b["id"]] and abs(v - an[b["id"]][k]) <= tol:
+                    out.add((a["id"], b["id"], k))
+    return out
+
+
+def kept_alignments(src, out):
+    rel = alignments(src)
+    if not rel:
+        return None
+    W, H = out["canvas"]["width"], out["canvas"]["height"]
+    tol = 0.01 * min(W, H)
+    oe = {e["id"]: e for e in out["elements"]}
+    ok = 0
+    for i, j, k in rel:
+        if i in oe and j in oe:
+            ai, aj = _anchors(oe[i]), _anchors(oe[j])
+            ok += k in ai and k in aj and abs(ai[k] - aj[k]) <= tol
+    return ok / len(rel)
+
+
+def subject_cover(root, d):
+    """Share of the main photo's subject (faces, else the salient box) under copy."""
+    from engine import saliency
+    W, H = d["canvas"]["width"], d["canvas"]["height"]
+    best = None
+    for e in d["elements"]:
+        if e["type"] == "image" and e["width"] * e["height"] >= 0.3 * W * H:
+            if best is None or e["width"] * e["height"] > best["width"] * best["height"]:
+                best = e
+    if best is None:
+        return None
+    info = saliency.analyze(best.get("asset_id") or "")
+    if info is None:
+        return None
+    sb = info["faces"][0] if info.get("faces") else info["sal_box"]
+    if not info.get("faces") and (sb[2] - sb[0]) * (sb[3] - sb[1]) > 0.45:
+        return None
+    bx = (best["x"] + sb[0] * best["width"], best["y"] + sb[1] * best["height"],
+          best["x"] + sb[2] * best["width"], best["y"] + sb[3] * best["height"])
+    bx = (max(0, bx[0]), max(0, bx[1]), min(W, bx[2]), min(H, bx[3]))
+    area = max(1e-6, (bx[2] - bx[0]) * (bx[3] - bx[1]))
+    if bx[2] <= bx[0] or bx[3] <= bx[1]:
+        return None
+    n = 48
+    grid = np.zeros((n, n), bool)
+    for e in d["elements"]:
+        if e["type"] != "text":
+            continue
+        x0 = int(np.clip((e["x"] - bx[0]) / (bx[2] - bx[0]) * n, 0, n)); x1 = int(np.clip((e["x"] + e["width"] - bx[0]) / (bx[2] - bx[0]) * n, 0, n))
+        y0 = int(np.clip((e["y"] - bx[1]) / (bx[3] - bx[1]) * n, 0, n)); y1 = int(np.clip((e["y"] + e["height"] - bx[1]) / (bx[3] - bx[1]) * n, 0, n))
+        grid[y0:y1, x0:x1] = True
+    return float(grid.mean())
+
+
+def structure(dirs, res, keys):
+    """align: share of the source's alignments kept; cover+: copy over the
+    photo's subject beyond the source's own."""
+    import pathlib
+    from engine import saliency
+    for root in ROOTS:
+        saliency.ASSETS_DIR = pathlib.Path(f"{root}/assets")
+        saliency.analyze.cache_clear()
+        saliency._load.cache_clear()
+        idx = json.load(open(f"{root}/index.json"))
+        for key in [k for k in keys if k.startswith(root + "_p")]:
+            p = int(key[len(root) + 2:].split("_")[0])
+            src = json.load(open(f"{root}/designs/" + idx[p][0]["file"]))
+            sc = subject_cover(root, src)
+            for d in dirs:
+                out = json.load(open(d / f"{key}.json"))
+                ka = kept_alignments(src, out)
+                oc = subject_cover(root, out) if sc is not None else None
+                res[d.name][key]["align"] = ka
+                res[d.name][key]["cover+"] = None if oc is None else max(0.0, oc - sc)
+
+
 def main(dirs):
     dirs = [Path(d) for d in dirs]
     res = {d.name: {} for d in dirs}
@@ -202,6 +303,12 @@ def main(dirs):
     keys = sorted(set.intersection(*(set(r) for r in res.values())))
     if "--read" in sys.argv:
         readability(dirs, res, keys)
+    if "--struct" in sys.argv:
+        structure(dirs, res, keys)
+        for name, r in res.items():
+            al = [r[k]["align"] for k in keys if r[k].get("align") is not None]
+            cv = [r[k]["cover+"] for k in keys if r[k].get("cover+") is not None]
+            print(f"{name:<24} align kept {np.mean(al):.3f} (n={len(al)})   copy over subject +{np.mean(cv):.3f} (n={len(cv)})")
     if "--json" in sys.argv:
         with open(sys.argv[sys.argv.index("--json") + 1], "w") as fh:
             json.dump({n: {k: r[k] for k in keys} for n, r in res.items()}, fh, indent=1)
