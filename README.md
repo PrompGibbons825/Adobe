@@ -194,6 +194,17 @@ so no head is cut, what the source showed stays in view, and the subject sits on
 the third line opposite the copy. A flat or diffuse picture (a gradient, a
 texture) keeps the plain centre crop, so designs on one do not change.
 
+**Quiet bands** (`quiet.py`). Copy set on the calm part of a canvas-covering photo
+(a pale sky, a plain wall) can lose it on another canvas: the crop moves, the type
+grows, and the headline lands on the trees. The photo is rendered small under the
+target as the best plan draws it (and slid to either end of what the source showed,
+by bleed, when the target crops it), and every row and column is marked readable
+where the headline's own colour holds 3:1 contrast on calm pixels. For each quiet
+band three more stacks join the field: the whole column inside the band, the column
+from the band on with its scale capped so the headline stays inside it, and the same
+with every text of the headline's tone inside it (a button carries its own fill).
+They are only candidates; the pixel critic and the score choose.
+
 **5. Check, emit and enforce the rules** (`__init__.py`)
 
 The winning plan must pass two hard checks on its finished output: no copy drawn

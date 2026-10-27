@@ -442,7 +442,7 @@ def all_of(*checks: Check) -> Check:
 
 def cases() -> List[Case]:
     return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_b_cases() + sprint_c_cases() \
-        + split_cases()
+        + split_cases() + r12_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -1303,6 +1303,92 @@ def sprint_c_cases() -> List[Case]:
                  *button("cta", 390, 800, 300, 90, "Shop now", 30),
              ], targets=("ig-square", "story", "fb-link", "yt-thumb", "pres-16x9", "half-page"),
              show=("headline", "cta_label"), check=same_font("feat1", "feat2")),
+    ]
+
+
+# A synthetic photo: a pale sky over the top 28%, busy foliage below (tests/assets/SOURCES.txt).
+SKY_PHOTO = "../../tests/assets/sky_over_trees.jpg"
+
+
+def reads_on_ground(*ids: str, least: float = 3.0) -> Check:
+    """These texts read on what is under them: WCAG contrast at the 10th percentile of their box
+    against the rendered output without its copy (engine.smart.pixels, as the pixel critic and
+    the unseen suite's C4 measure it) is at least ``least``."""
+    def check(src, out, tgt):
+        from engine.smart import pixels
+
+        if not pixels.available():
+            return []
+        stats = pixels.measure(out["elements"], tgt["width"], tgt["height"], skip=set())
+        errs = []
+        for e in out["elements"]:
+            if e["id"] in ids and float(e.get("opacity", 1)) > 0 and e["id"] in stats:
+                c = stats[e["id"]][0]
+                if c < least:
+                    errs.append(f"{e['id']}: contrast {c:.1f} on its ground (< {least:g})")
+        return errs
+    return check
+
+
+def lines_at_most(tid: str, most: int) -> Check:
+    """A text wraps into at most ``most`` lines at the size and width it was given."""
+    def check(src, out, tgt):
+        from engine.smart.textfit import TextStyle, measure
+
+        e = next((x for x in out["elements"] if x["id"] == tid), None)
+        if e is None or float(e.get("opacity", 1)) <= 0:
+            return []
+        n = measure(e["content"], TextStyle.of(e), float(e["font_size"]), float(e["width"]), exact=True).n_lines
+        return [f"{tid}: {n} lines (> {most})"] if n > most else []
+    return check
+
+
+def r12_cases() -> List[Case]:
+    """Copy on the quiet part of a photo, and dense copy on a square (round 12, S16's queue)."""
+    W, H = 1080, 1350
+    photo = {"id": "photo", "type": "image", "x": 0, "y": 0, "width": W, "height": H, "z_index": 0,
+             "asset_id": SKY_PHOTO, "fit": "cover"}
+    return [
+        Case("headline_outgrows_quiet_band",
+             "dark copy set in the pale sky over busy foliage, the button on the tree line: on "
+             "another canvas the crop takes sky away and the headline grows, so it lands on the "
+             "leaves at contrast ~2; it must stay on the sky (a crop that keeps the sky, or a "
+             "headline set to the band)",
+             W, H,
+             [photo,
+              text("kicker", 90, 60, 900, 40, "SPRING ESCAPES", 30, bold=True, color=PLUM),
+              text("headline", 90, 105, 900, 130, "Into the Woods", 96, bold=True, color=PLUM),
+              text("subhead", 140, 245, 800, 50, "Cabins from 89 a night", 34, color=PLUM),
+              *button("cta", 400, 320, 280, 80, "Book a stay", 30)],
+             targets=("ig-square", "story", "yt-thumb", "fb-link", "pres-16x9", "pinterest"),
+             show=("headline", "cta_label"), background=False, check=reads_on_ground("headline")),
+
+        Case("dense_long_headline_square",
+             "a dense portrait post (product, a 20-word headline, a long subhead, three badges, a "
+             "button, a tilted ribbon, legal): on a square a split beside the product sets the "
+             "headline as a narrow six-line column, a near tie in score; judges prefer a wider "
+             "setting in fewer lines",
+             1080, 1350, [
+                 logo(380, 50, 320, 100),
+                 image("product", 340, 180, 400, 400, z=3),
+                 text("headline", 90, 620, 900, 220, "Say Hello to the Brand-New Small-Batch Solstice Evening "
+                      "Spritz Garden Herb Sparkling Range, Finished Slowly for Long Warm Summer Nights", 40,
+                      "Solstice Serif", True, z=5),
+                 text("subhead", 120, 860, 840, 140, "Slow-steeped garden herbs with wild elderflower, pink "
+                      "grapefruit peel and a little lavender, bottled in small runs so every glass tastes "
+                      "like the first warm evening of the year.", 22, color="rgba(255,255,255,0.9)", z=5),
+                 *button("b1", 60, 1020, 290, 50, "NEW RECIPE", 15),
+                 *button("b2", 370, 1020, 340, 50, "GOLD MEDAL WINNER", 15, fill=PLUM),
+                 *button("b3", 730, 1020, 260, 50, "LOW SUGAR", 15),
+                 *button("cta", 330, 1100, 420, 90, "Find Your Nearest Stockist", 22),
+                 shape("ribbon_bg", 740, 30, 300, 54, "rgba(220,60,50,1)", z=4, rotation=-12, group_id="ribbon"),
+                 text("ribbon_label", 740, 40, 300, 34, "SUMMER SALE", 20, bold=True, z=6, rotation=-12,
+                      group_id="ribbon"),
+                 text("legal", 60, 1310, 960, 30, "Contains no alcohol. Solstice Drinks Co., 2026. Offer "
+                      "while stocks last; see solstice.com/terms for full details.", 12,
+                      color="rgba(255,255,255,0.6)", z=6),
+             ], targets=("ig-square", "1200x1200", "ig-portrait", "story"),
+             show=("headline", "cta_label"), check=lines_at_most("headline", 5)),
     ]
 
 

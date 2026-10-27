@@ -14,7 +14,7 @@ from .layout import PANEL_PAD, BudgetExceeded, panel_pads
 from .regions import legal_bleed
 from .score import keep_everything_first, prune_relaxed, score_plans
 from .textfit import TextStyle, letter_spacing
-from . import vision
+from . import quiet, vision
 
 RERANK = 8  # how many of the best candidates the pixel critic looks at
 
@@ -41,7 +41,8 @@ def plan_design(source: dict, target: dict):
         for settle in (True, False):
             BUDGET.armed = True  # the budget cuts the candidate search short, never what follows it
             try:
-                plans = prune_relaxed(generate(d, ctx, settle=settle))
+                plans = generate(d, ctx, settle=settle)
+                plans = prune_relaxed(plans + _quiet(d, ctx, plans))  # copy on a photo's calm part
             except BudgetExceeded:
                 if settle:
                     raise
@@ -65,6 +66,16 @@ def plan_design(source: dict, target: dict):
         if not any(it.lockup for it in d.items):
             break
     raise RuntimeError(reason)
+
+
+def _quiet(d: Design, ctx: Ctx, plans) -> list:
+    """quiet.plans, which only ever adds candidates: whatever goes wrong there, the field stands."""
+    try:
+        return quiet.plans(d, ctx, plans)
+    except BudgetExceeded:
+        raise
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def _promote_passing(plans, source: dict, d: Design, ctx: Ctx) -> bool:
@@ -151,8 +162,10 @@ def _bury(plans, d: Design, ctx: Ctx) -> None:
 
 def archetype(name: str) -> str:
     """The archetype of a plan (stack, split, row, adapt, scaled), whatever its
-    variant: ``split-left-0.34-fold~1.8@1.35`` is a split."""
-    return name.split("@")[0].split("~")[0].split("-")[0]
+    variant: ``split-left-0.34-fold~1.8@1.35`` is a split. The quiet plans (quiet.py) are three:
+    the column in the band, the headline in it, and the copy of its tone in it."""
+    parts = name.split("@")[0].split("~")[0].split("-")
+    return "-".join(parts[:2]) if parts[0] == "quiet" else parts[0]
 
 
 def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
