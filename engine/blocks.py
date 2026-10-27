@@ -74,12 +74,13 @@ class TextBlock:
 
     def _fit(self, t, max_w):
         el = self.el
-        box_w = max_w * self.wfrac
+        avail = max_w * self.wfrac
         fs = max(self.floor, round(el["font_size"] * t))
-        m = tf.measure(el, fs, box_w)
-        while m["word_w"] > box_w and fs > 1:
+        m = tf.measure(el, fs, avail)
+        while m["word_w"] > avail and fs > 1:      # the longest word does not depend on the wrap
             fs -= 1
-            m = tf.measure(el, fs, box_w)
+            m = tf.measure(el, fs, avail)
+        box_w, m = tf.tracked_wrap(el, fs, avail)
         return box_w, fs, m
 
     def size(self, t, max_w):
@@ -87,7 +88,8 @@ class TextBlock:
         asc, cap, desc = tf.metrics(self.el)
         lh = float(self.el.get("line_height", 1.2))
         vh = (m["lines"] - 1) * fs * lh + (cap + desc * 0.6) * fs
-        return min(box_w, m["width"]), vh
+        # tracked lines draw wider than the wrap width they were broken at
+        return (m["width"] if self.el.get("letter_spacing") else min(box_w, m["width"])), vh
 
     def place(self, P, x, y_vis, t, max_w, align):
         box_w, fs, m = self._fit(t, max_w)
@@ -513,6 +515,17 @@ class ButtonBlock:
         self.py = min(1.0, max(0.25, (sh["height"] - hgt) / 2 / fs0))
         self.fs0 = fs0
         self.rot = float(sh.get("rotation", 0) or 0) if len(self.texts) == 1 else 0.0
+        self.upright = False
+        # copy set over several lines in the source (a headline on a card) wraps rather than
+        # shrinking: only a one-line label gives up size to stay on one line
+        self.wraps = any(tf.measure(t, max(1, int(round(t["font_size"]))), t["width"])["lines"] > 1
+                         for t in self.texts)
+
+    def set_upright(self):
+        """Set the turned pill and its label upright (a re-stack whose turned bounds cannot hold
+        the type floor in the space there is, as turned free text already is)."""
+        self.rot = 0.0
+        self.upright = True
 
     max_fs = None   # set by a re-stack: a label never outgrows type that was well above it
 
@@ -526,7 +539,7 @@ class ButtonBlock:
         # then stay alike); only then does it wrap
         ms = [tf.measure(e, fs, 1e9) for e, fs in zip(self.texts, fss)]
         one = max(m["width"] for m in ms)
-        while one + 0.8 * top > max_w and top > self.floor:   # smaller type before a wrapped label
+        while not self.wraps and one + 0.8 * top > max_w and top > self.floor:   # smaller type before a wrapped label
             k = max(self.floor / top, (top - 1) / top)
             fss = [max(self.floor, int(f * k)) for f in fss]
             top = max(fss)
@@ -542,6 +555,9 @@ class ButtonBlock:
             lh = float(e.get("line_height", 1.2))
             m["height"] = (m["lines"] - 1) * fs * lh + max(fs * lh, (asc + desc) * fs)
         tw = max(max(m["width"], m["word_w"]) for m in ms)
+        # the label box (tw + 1) must break where it was measured, or it grows a line past the pill
+        tw = max([tw] + [tf.same_lines_width(e, fs, tw + 1.0, max(inner, tw + 1.0), m["lines"]) - 1.0
+                         for e, fs, m in zip(self.texts, fss, ms)])
         th = sum(m["height"] for m in ms)
         return fss, ms, px, py, tw, th
 
@@ -564,10 +580,14 @@ class ButtonBlock:
         if sh.get("corner_radius"):
             P.set(sh["id"], corner_radius=min(float(sh["corner_radius"]) * k, h / 2))
         P.vis[sh["id"]] = rot_bounds(bx, y, w, h, self.rot)
+        if self.upright:
+            P.set(sh["id"], rotation=0)
         ty = y + py
         for e, fs, m in zip(self.texts, fss, ms):
             box_w = tw + 1.0
             P.set(e["id"], x=bx + px - 0.5, y=ty, width=box_w, height=m["height"], font_size=fs, text_align="center")
+            if self.upright:
+                P.set(e["id"], rotation=0)
             vb = tf.visual_box(dict(e, text_align="center"), bx + px - 0.5, ty, box_w, fs, m)
             P.vis[e["id"]] = rotate_box_about(vb, bx + w / 2, y + h / 2, self.rot)
             ty += m["height"]

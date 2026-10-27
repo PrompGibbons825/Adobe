@@ -448,7 +448,7 @@ def finalize(ctx, P, model, float_threshold=0.0):
             place_border(ctx, P, u)
         elif u.role == "rule":
             place_rule(ctx, P, u)
-        elif u.role == "deco":
+        elif u.role == "deco" and not set(u.ids) <= getattr(P, "held", set()):   # a re-stack may carry it
             place_deco(ctx, P, u)
     for u in model["units"]:
         if u.role == "anchored" and not all(i in P.props for i in u.ids):   # a re-stack may hold it

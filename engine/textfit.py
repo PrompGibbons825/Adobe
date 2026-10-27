@@ -125,6 +125,41 @@ def _measure(text: str, family: str, weight: str, style: str, fs: int, max_w: fl
     }
 
 
+def tracked_wrap(el: dict, fs: int, box_w: float) -> tuple:
+    """The renderer wraps on glyph widths alone and then draws each line with the element's
+    letter spacing, so tracked copy wrapped at the box width draws past it (and smaller type only
+    packs more characters, so more spacing, into each line). Returns (wrap width, measure): the
+    widest wrap width, at most box_w, whose drawn lines fit box_w, or box_w itself when nothing
+    narrower does better."""
+    m = measure(el, fs, box_w)
+    if m["width"] <= box_w + 0.5 or not float(el.get("letter_spacing", 0) or 0):
+        return box_w, m
+    lo, hi, best = 1.0, box_w, None
+    for _ in range(14):
+        mid = (lo + hi) / 2
+        mm = measure(el, fs, mid)
+        if mm["width"] <= box_w + 0.5:
+            lo, best = mid, (mid, mm)
+        else:
+            hi = mid
+    return best if best is not None else (box_w, m)
+
+
+def same_lines_width(el: dict, fs: int, lo: float, hi: float, lines: int) -> float:
+    """The narrowest box width in [lo, hi] at which el still wraps into at most `lines` lines. A
+    box set to the drawn width of its widest line can wrap one line more (the greedy wrap counts
+    the space before a break), so a box is never made that tight blindly."""
+    if measure(el, fs, lo)["lines"] <= lines or hi <= lo:
+        return lo
+    for _ in range(10):
+        mid = (lo + hi) / 2
+        if measure(el, fs, mid)["lines"] <= lines:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
 def unwrap_breaks(content: str) -> str:
     """Drop line breaks that only wrapped a paragraph by hand, so the text can
     re-wrap cleanly in its new box. A break is kept when it ends a sentence

@@ -375,7 +375,7 @@ def all_of(*checks: Check) -> Check:
 
 
 def cases() -> List[Case]:
-    return _line_baseline(_base_cases() + round5_cases() + round7_cases() + strip_cases())
+    return _line_baseline(_base_cases() + round5_cases() + round7_cases() + strip_cases() + restack_cases())
 
 
 # An engine line built outside this suite (STEERING S15: line/jeff) carries its own baseline, its
@@ -923,6 +923,60 @@ def strip_cases() -> List[Case]:
                  *button("cta", 80, 480, 300, 80, "Shop now", 28),
              ], targets=("leaderboard", "billboard", "skyscraper", "story", "pres-16x9", "a4"),
              show=("headline", "subhead", "pill1_label", "pill2_label", "cta_label")),
+    ]
+
+
+RESTACK_DESIGNS = Path(__file__).with_name("restack_designs.json")
+
+
+def restack_cases() -> List[Case]:
+    """Failure classes found taking line/jeff's stress run to the type floor (round 12): tracked
+    copy, whose drawn lines are wider than the box it wraps in (smaller type only packs more
+    spacing into a line); a tilted pill too tall for a strip at the floor; shapes that would carry
+    copy they merely overlap (a paragraph centred on a thin pill, a label turned another way);
+    crowded wide strips whose copy only fits in columns as narrow as their height allows (random
+    designs frozen from the stress run). Everything stays visible (S1), no text under the floor."""
+    return [
+        Case("tracked_copy_narrow",
+             "a long paragraph with wide letter spacing: on narrow and short canvases the box narrows "
+             "until the tracked lines fit, instead of the type shrinking towards a pixel",
+             1080, 1920, [
+                 text("headline", 120, 300, 840, 200, "Golden Hour", 120, "Solstice Serif", True),
+                 text("body", 120, 1300, 840, 260, "Small batch botanical infusions with wild honey, "
+                      "smoked rosemary and blood orange, crafted for long summer evenings", 40,
+                      letter_spacing=5),
+                 *button("cta", 340, 1650, 400, 90, "Shop now", 30),
+             ], targets=("skyscraper", "leaderboard", "x-header", "half-page", "ig-square"),
+             show=("headline", "body", "cta_label")),
+        Case("tilted_pill_on_strip",
+             "a pill turned -12 degrees whose label is long: on a short strip its turned bounds cannot "
+             "hold the type floor, so it is set upright rather than its label going under the floor",
+             1080, 1080, [
+                 text("headline", 100, 200, 880, 160, "Summer Collection", 90, "Solstice Serif", True),
+                 *[dict(e, rotation=-12) for e in button("tag", 300, 500, 480, 70, "Limited summer batch", 28)],
+                 image("product", 380, 640, 320, 320),
+             ], targets=("mobile-banner", "leaderboard", "large-leader"),
+             show=("headline", "tag_label", "product")),
+        Case("copy_over_thin_pills",
+             "a body paragraph whose centre falls on a thin ungrouped pill, and an upright label "
+             "overlapping a tilted pill: neither shape carries the other's copy, so a re-stack can "
+             "still set every text at the floor",
+             1200, 628, [
+                 text("headline", 80, 60, 1040, 120, "Botanical Sparkling", 80, "Solstice Serif", True),
+                 text("body", 80, 300, 1040, 90, "Crafted in small batches from wild honey, rosemary and "
+                      "orange peel", 30),
+                 shape("rule", 500, 340, 200, 8, ORANGE, z=3, corner_radius=4),
+                 *button("cta", 420, 450, 360, 70, "Order now", 26),
+                 dict(button("tag", 440, 452, 380, 70, "Find a store", 26, group=False)[0], rotation=-12),
+                 dict(button("tag", 440, 452, 380, 70, "Find a store", 26, group=False)[1], rotation=-12),
+             ], targets=("skyscraper", "leaderboard", "large-leader", "a4"),
+             show=("headline", "body", "cta_label", "tag_label")),
+    ] + [
+        Case(name, "a crowded random design (frozen from the stress run) going to wide strips: in rows at a "
+             "fixed wrap width its copy does not fit at the floor; in columns, each text as narrow as the "
+             "strip's height allows, it does", d["canvas"]["width"], d["canvas"]["height"], d["elements"],
+             targets=("leaderboard", "large-leader"), background=False)
+        for name, d in json.loads(RESTACK_DESIGNS.read_text())["designs"].items()
     ]
 
 

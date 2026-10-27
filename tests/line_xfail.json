@@ -1,9 +1,6 @@
 {
  "_about": "line/jeff baseline (STEERING S15): tests.run failures of Jeffrey's engine at 9bef46a with main's tests at 847caaf (276/513 passed). On this line these replace the in-code xfail marks of tests/finicky.py, which describe main's engine. Remove an entry when it is fixed (the run reports XPASS). 'other' lists malformed/bleed probes that have no xfail mechanism; they must be fixed, not carried. Updated on line/jeff-rules: fixed entries removed; 'added' lists entries added after the baseline, with why.",
  "cases": {
-  "accents_and_symbols": [
-   "mobile-banner"
-  ],
   "badge_grid": [
    "mobile-banner"
   ],
@@ -48,7 +45,6 @@
    "ig-portrait",
    "ig-square",
    "leaderboard",
-   "mobile-banner",
    "pres-16x9",
    "story"
   ],
@@ -62,7 +58,6 @@
    "story"
   ],
   "letter_spaced_caps": [
-   "med-rect",
    "mobile-banner",
    "skyscraper"
   ],
@@ -89,17 +84,6 @@
   ],
   "rotated_everything": [
    "mobile-banner"
-  ],
-  "source_bleeds_decor": [
-   "a4",
-   "billboard",
-   "fb-link",
-   "ig-square",
-   "leaderboard",
-   "med-rect",
-   "mobile-banner",
-   "skyscraper",
-   "story"
   ],
   "split_background": [
    "a4",
@@ -130,9 +114,6 @@
    "skyscraper",
    "story"
   ],
-  "thin_rules_and_lines": [
-   "mobile-banner"
-  ],
   "type_wordmark": [
    "billboard",
    "li-banner"
@@ -142,9 +123,7 @@
    "skyscraper"
   ],
   "wall_of_copy": [
-   "leaderboard",
-   "mobile-banner",
-   "skyscraper"
+   "mobile-banner"
   ]
  },
  "relations": [
@@ -165,7 +144,6 @@
   "step/caption_stays_with_photo@1200x628+01",
   "step/caption_stays_with_photo@1200x628+10",
   "step/crowded_l3@300x250+10",
-  "step/crowded_l3@728x90+01",
   "step/freetype_margin_stack@728x90+01",
   "step/tiny_items_kept_on_small_canvases@1200x628+01",
   "step/tiny_items_kept_on_small_canvases@1200x628+10",
@@ -174,7 +152,6 @@
  "other": [],
  "added": {
   "step/band_stays_band_on_squares@970x250+01": "one pixel flips the winner between two candidates with scores within ~0.1 (the line's critic is an argmax; the type floor moved the tie). Not a rule failure; a continuity gap of argmax selection, recorded instead of hidden.",
-  "step/crowded_l3@300x250+10": "one pixel flips the winner between two candidates with scores within ~0.1 (the line's critic is an argmax; the type floor moved the tie). Not a rule failure; a continuity gap of argmax selection, recorded instead of hidden.",
-  "step/crowded_l3@728x90+01": "one pixel flips the winner between two candidates with scores within ~0.1 (the line's critic is an argmax; the type floor moved the tie). Not a rule failure; a continuity gap of argmax selection, recorded instead of hidden."
+  "step/crowded_l3@300x250+10": "one pixel flips the winner between two candidates with scores within ~0.1 (the line's critic is an argmax; the type floor moved the tie). Not a rule failure; a continuity gap of argmax selection, recorded instead of hidden."
  }
 }

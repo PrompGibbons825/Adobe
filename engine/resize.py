@@ -72,10 +72,12 @@ def _templates_raw(ctx, flow):
     if getattr(ctx, "grids", False):
         # re-stack into rows or columns (strips above all): every unit legible at the type
         # floor, as many lines as it takes; tried only when no faithful layout keeps every promise
+        # wide strips also get columns fitted to their height (each text as narrow as it can be)
+        fit = (("fit", (1.0,)),) if ctx.W / ctx.H >= 1.5 else ()
         for order in ("reading", "role"):
-            for axis, caps in (("rows", (1.0, 0.6, 0.4)), ("cols", (1.0, 0.45, 0.3, 0.2))):
+            for axis, caps in (("rows", (1.0, 0.6, 0.4)), ("cols", (1.0, 0.45, 0.3, 0.2))) + fit:
                 for cap in caps:
-                    for atom in (False, True):
+                    for atom in (False, True, "pieces"):
                         yield 0.0, lambda f=flow, o=order, c=cap, a=axis, t=atom: tmpl_rows(ctx, f, o, c, "center", a, t)
         for k in (2, 3, 4):
             for tiers in (False, True):
@@ -179,6 +181,7 @@ def _broken(tight, loose):
 
 BREAK_COST = 2.0   # per composition taken apart: it has to buy readability or space
 RESTACK_COST = 0.5  # per composition re-stacked along the other axis
+FIT_COST = 2.0     # a re-stack into columns as narrow as a strip's height allows
 ROTATE_COST = 0.5   # per text piece turned into a vertical strip
 
 
@@ -275,6 +278,10 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
             if getattr(P, "rotated", 0):
                 br["rotate"] = -ROTATE_COST * P.rotated
                 s += br["rotate"]
+            if P.meta.get("template", "").startswith("fit-"):
+                # narrow columns read worse than rows: they must buy legibility or a clear margin
+                br["fit"] = -FIT_COST
+                s -= FIT_COST
             if getattr(P, "restacked", 0):
                 br["restack"] = -RESTACK_COST * P.restacked
                 s += br["restack"]

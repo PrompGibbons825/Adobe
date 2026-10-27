@@ -297,8 +297,13 @@ def _fit_text(e: dict, W: float, H: float) -> None:
     if num(e["width"]) > W:
         e["width"] = W
     fs = int(e["font_size"])
+    w0 = num(e["width"])
     while fs > 1:
         b = glyph_box(dict(e, font_size=fs))
+        if b[2] - b[0] > W + TOL and num(e.get("letter_spacing")):
+            # tracked lines draw past the box: a narrower wrap before smaller type
+            e["width"] = max(1.0, tf.tracked_wrap(e, fs, min(w0, W))[0])
+            b = glyph_box(dict(e, font_size=fs))
         if b[2] - b[0] <= W + TOL and b[3] - b[1] <= H + TOL:
             break
         fs -= 1

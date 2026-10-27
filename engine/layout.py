@@ -1040,15 +1040,22 @@ def _centre_in(t, sh, tol=2.0):
     return sh["x"] - tol <= cx <= sh["x"] + sh["width"] + tol and sh["y"] - tol <= cy <= sh["y"] + sh["height"] + tol
 
 
-def _atoms(ctx, flow):
-    """The design taken apart to its smallest readable pieces, for the last-resort re-stack: a
-    shape with the text it carries (a button, a badge) stays one piece; every other text, image
-    and shape becomes its own piece. A composition that mixes display type with small labels can
-    then give each its own size instead of scaling them as one rigid block."""
-    from .analyze import Unit
+def _atoms(ctx, flow, fine=False):
+    """The design taken apart for the last-resort re-stack: along clean cuts only as far as a part
+    is still too big at the floor (`fine` False), or all the way to its smallest readable pieces
+    (`fine` True): a shape with the text it carries (a button, a badge) stays one piece; every
+    other text, image and shape becomes its own piece. A composition that mixes display type with
+    small labels can then give each its own size instead of scaling them as one rigid block, and
+    a rigid group whose re-fitted copy outgrows its box can no longer run into its neighbours."""
     out = []
     for u in flow:
-        out += _split(ctx, u)
+        for a in _split(ctx, u):
+            if fine and a.kind not in ("text", "image") and len(a.ids) > 1:
+                for p in _pieces(a):    # a part's pieces stay together, in the part's place
+                    p.parent = a
+                    out.append(p)
+            else:
+                out.append(a)
     return out
 
 
@@ -1109,6 +1116,13 @@ def _split(ctx, u, depth=0):
     return _pieces(u)
 
 
+def _overlap_share(a, b):
+    """The share of a's (unturned) box that lies on b's."""
+    ix = min(a["x"] + a["width"], b["x"] + b["width"]) - max(a["x"], b["x"])
+    iy = min(a["y"] + a["height"], b["y"] + b["height"]) - max(a["y"], b["y"])
+    return max(0.0, ix) * max(0.0, iy) / max(1e-6, a["width"] * a["height"])
+
+
 def _pieces(u):
     """Single pieces: a shape with the text it carries is one (a button); all else alone."""
     from .analyze import Unit
@@ -1120,8 +1134,10 @@ def _pieces(u):
     taken = set()
     for sh in sorted((e for e in els if e["type"] == "shape"), key=lambda e: e["width"] * e["height"]):
         mine = [t for t in texts if t["id"] not in taken and _centre_in(t, sh)
-                and (t.get("group_id") == sh.get("group_id") or
-                     t["width"] * t["height"] >= 0.12 * sh["width"] * sh["height"])]
+                and abs(float(t.get("rotation") or 0) - float(sh.get("rotation") or 0)) < 1   # turned with it
+                and (t.get("group_id") and t.get("group_id") == sh.get("group_id") or
+                     t["width"] * t["height"] >= 0.12 * sh["width"] * sh["height"]
+                     and _overlap_share(t, sh) >= 0.5)]   # a shape carries copy that lies on it
         if mine:
             taken.update(t["id"] for t in mine)
             taken.add(sh["id"])
@@ -1129,12 +1145,46 @@ def _pieces(u):
             b.button = len(mine) == 1 and float(mine[0].get("rotation") or 0) == float(sh.get("rotation") or 0) \
                 or (not sh.get("rotation") and not any(t.get("rotation") for t in mine))
             out.append(b)
+    # copy set over copy (a drop shadow, an outline under its fill) is one piece: apart, it reads twice
+    for t in texts:
+        if t["id"] in taken:
+            continue
+        twins = [v for v in texts if v is not t and v["id"] not in taken
+                 and str(v.get("content", "")) == str(t.get("content", ""))
+                 and abs(float(v["font_size"]) - float(t["font_size"])) <= 0.1 * float(t["font_size"])
+                 and _overlap_share(t, v) >= 0.5 and _overlap_share(v, t) >= 0.5]
+        if twins:
+            taken.update([t["id"]] + [v["id"] for v in twins])
+            out.append(Unit(f"{u.uid}:{t['id']}", u.role, "group", [t] + twins))
     for e in els:
         if e["id"] in taken:
             continue
         kind = "text" if e["type"] == "text" else ("image" if e["type"] == "image" else "group")
         out.append(Unit(f"{u.uid}:{e['id']}", u.role, kind, [e]))
     return out
+
+
+def _with_carriers(ctx, flow):
+    """A shape read as decoration that carries copy of its own group (a pill whose label the
+    reading put elsewhere) joins the piece holding that copy, so a re-stack rebuilds them together
+    instead of leaving the pill where decoration goes and the label in a row. Returns the flow and
+    the ids it now holds that finalize would otherwise place."""
+    from .analyze import Unit
+    flow = list(flow)
+    held = set()
+    for d in ctx.model["units"]:
+        if d.role != "deco" or len(d.els) != 1 or d.els[0]["type"] != "shape" or not d.els[0].get("group_id"):
+            continue
+        sh = d.els[0]
+        for i, u in enumerate(flow):
+            if u.kind in ("badges", "frame"):
+                continue
+            if any(t["type"] == "text" and t.get("group_id") == sh["group_id"] and _centre_in(t, sh) for t in u.els):
+                nu = Unit(u.uid, u.role, "group", list(u.els) + [sh])
+                flow[i] = nu
+                held.add(sh["id"])
+                break
+    return flow, held
 
 
 def tmpl_rows(ctx, flow, order="reading", cap=1.0, align="center", axis="rows", atom=False):
@@ -1152,17 +1202,103 @@ def tmpl_rows(ctx, flow, order="reading", cap=1.0, align="center", axis="rows", 
     # promise them, and a float that hops corners on a 1 px change is no layout
     flow = list(flow) + [u for u in ctx.model["units"] if u.role in ("ribbon", "anchored")
                          and any(e["type"] == "text" for e in u.els) and u not in flow]
+    flow, held = _with_carriers(ctx, flow)
+    extra = 0
     if atom:
-        flow = _atoms(ctx, flow)
+        clean = _atoms(ctx, flow)
+        flow = _atoms(ctx, flow, fine=True) if atom == "pieces" else clean
+        extra = len(flow) - len(clean)   # compositions taken apart beyond the clean cuts
     floors = sorted({max(6, int(ctx.floor * k)) for k in (1.0, 0.9, 0.8, 0.7, 0.6)}, reverse=True)
     for floor in floors + [5, 4, 3]:   # under 6 px only when nothing else keeps every element
+        if floor > 3 and not _may_hold(ctx, flow, floor):   # 3 px stays the last resort
+            continue
         # margins and gaps tighten before the type gets any smaller
-        P = _rows(ctx, flow, order, cap, align, axis, floor) or _rows(ctx, flow, order, cap, align, axis, floor, 0.5)
+        P = None
+        for tight in (1.0, 0.5, 0.25):
+            P = _rows(ctx, flow, order, cap, align, axis, floor, tight)
+            if P is not None:
+                break
         if P is not None:
             if atom:
-                P.meta["template"] += "-atoms"
+                P.meta["template"] += "-pieces" if atom == "pieces" else "-atoms"
+            P.held = held
+            if extra > 0:
+                P.lifted = extra             # each costs like any composition taken apart
             return P
     return None
+
+
+def floor_area(els, floor) -> float:
+    """A lower bound on the area the copy needs at the type floor: however a text wraps, its
+    block is at least its one-line length times its line height (a wrap only adds slack)."""
+    need = 0.0
+    for e in els:
+        if e["type"] == "text" and str(e.get("content", "")).strip():
+            m = tf.measure(e, int(floor), 1e9)
+            need += m["width"] * m["height"]
+    return need
+
+
+def _may_hold(ctx, flow, floor) -> bool:
+    """Whether the canvas can hold all of the flow's copy at this floor at all (with the tightest
+    margins a re-stack uses). Cached per canvas: every re-stack variant asks the same."""
+    cache = ctx.__dict__.setdefault("_hold", {})
+    els = {e["id"]: e for u in flow for e in u.els}
+    key = (floor, tuple(sorted(els)))
+    if key not in cache:
+        m = 0.25 * min(ctx.margin, 0.12 * min(ctx.W, ctx.H) + 0.01 * max(ctx.W, ctx.H))
+        cache[key] = floor_area(els.values(), floor) <= (ctx.W - 2 * m) * (ctx.H - 2 * m)
+    return cache[key]
+
+
+def _under(a, b) -> bool:
+    """b is set directly under a: they share most of the narrower one's width and only a small
+    gap runs between them (a subhead under its headline)."""
+    ax0, ay0, ax1, ay1 = a.bbox
+    bx0, by0, bx1, by1 = b.bbox
+    share = min(ax1, bx1) - max(ax0, bx0)
+    narrow = min(ax1 - ax0, bx1 - bx0)
+    gap = by0 - ay1
+    return narrow > 0 and share >= 0.5 * narrow and -0.1 * (ay1 - ay0) <= gap <= 0.35 * max(ay1 - ay0, by1 - by0)
+
+
+def _under_follows(units):
+    """Reading order, except that a piece set directly under another follows it at once: rows
+    bucketed by centre height would otherwise let a piece to the side cut in between."""
+    out, left = [], list(units)
+    while left:
+        u = left.pop(0)
+        out.append(u)
+        while True:
+            nxt = [v for v in left if _under(u, v)]
+            if not nxt:
+                break
+            v = min(nxt, key=lambda v: v.bbox[1])
+            left.remove(v)
+            out.append(v)
+            u = v
+    return out
+
+
+GROW = 1.06   # a text's slot is this much taller than measured: the Linux renderer may set it taller
+
+
+def _same_lines(b, t, w, wrap):
+    """The narrowest box, from the drawn width w up to the packing's wrap width, that breaks the
+    text into the same lines as the packing measured: re-wrapping at the drawn width alone can
+    push a word down (a greedy wrap counts the space before a break), and a text one line taller
+    than its slot runs into the next piece."""
+    n = b._fit(t, wrap)[2]["lines"]
+    lo, hi = w + 1.0, max(wrap, w + 1.0)
+    if b._fit(t, lo)[2]["lines"] <= n:
+        return lo
+    for _ in range(10):
+        mid = (lo + hi) / 2
+        if b._fit(t, mid)[2]["lines"] <= n:
+            hi = mid
+        else:
+            lo = mid
+    return hi
 
 
 def _text_lines(b, t, max_w):
@@ -1171,7 +1307,8 @@ def _text_lines(b, t, max_w):
     box_w, fs, m = b._fit(t, max_w)
     asc, capk, desc = tf.metrics(b.el)
     lh = float(b.el.get("line_height", 1.2))
-    return min(box_w, max(m["width"], m["word_w"])), (m["lines"] - 1) * fs * lh + max(fs * lh, (asc + desc) * fs)
+    w = max(m["width"], m["word_w"])     # tracked lines draw wider than the wrap they broke at
+    return (w if b.el.get("letter_spacing") else min(box_w, w)), (m["lines"] - 1) * fs * lh + max(fs * lh, (asc + desc) * fs)
 
 
 def _rows(ctx, flow, order, cap, align, axis, floor, tight=1.0):
@@ -1183,10 +1320,13 @@ def _rows(ctx, flow, order, cap, align, axis, floor, tight=1.0):
     AW, AH = W - 2 * m, H - 2 * m
     if AW <= 0 or AH <= 0:
         return None
+    def at(u):                       # pieces of one part read where their part reads
+        return getattr(u, "parent", None) or u
     if order == "role":
-        units = sorted(flow, key=lambda u: (ROW_ORDER.get(u.role, 3), u.bbox[1], u.bbox[0]))
+        units = sorted(flow, key=lambda u: (ROW_ORDER.get(u.role, 3), at(u).bbox[1], at(u).bbox[0], u.bbox[1], u.bbox[0]))
     else:
-        units = sorted(flow, key=lambda u: (round(u.cy / max(1.0, 0.04 * ctx.Hs)), u.bbox[0]))
+        units = _under_follows(sorted(flow, key=lambda u: (round(at(u).cy / max(1.0, 0.04 * ctx.Hs)), at(u).bbox[0],
+                                                           round(u.cy / max(1.0, 0.04 * ctx.Hs)), u.bbox[0])))
     blocks = []
     from .blocks import ButtonBlock
     for u in units:
@@ -1197,9 +1337,14 @@ def _rows(ctx, flow, order, cap, align, axis, floor, tight=1.0):
             b.wfrac = 1.0
             b.floor = floor
         blocks.append(b)
+    for b in blocks:                 # a turned pill too big for the space even at the floor turns upright
+        if isinstance(b, ButtonBlock) and b.rot:
+            bw, bh = b.size(1e-4, AW)
+            if bw > AW + 0.5 or bh > AH + 0.5:
+                b.set_upright()
     gap = tight * max(0.6 * floor, 0.025 * min(W, H))
     speck = 0.18 * min(AW, AH)       # a picture's long side never under this
-    cols = axis == "cols"
+    cols = axis in ("cols", "fit")
     main_len, cross_len = (AH, AW) if cols else (AW, AH)
 
     def scale_of(u, b, t):
@@ -1211,6 +1356,59 @@ def _rows(ctx, flow, order, cap, align, axis, floor, tight=1.0):
 
     texts = [(u.els[0]["font_size"], b) for u, b in zip(units, blocks) if isinstance(b, TextBlock)]
 
+    def dims(b, sc, hmax):
+        """A piece's (width, height) in a column at most hmax tall: a text wraps as narrow as
+        that height allows (the narrowest wrap width whose lines still fit), anything else at
+        its size. None when it cannot fit at all."""
+        if not isinstance(b, TextBlock):
+            w, h = b.size(sc, AW)
+            return (w, h, AW) if w <= AW + 0.5 and h <= hmax + 0.5 else None
+        w, h = _text_lines(b, sc, AW)
+        h *= GROW
+        if w > AW + 0.5 or h > hmax + 0.5:
+            return None
+        fs = b._fit(sc, AW)[1]
+        lo, hi, best = 1.0, AW, (w, h, AW)
+        for _ in range(12):
+            mid = (lo + hi) / 2
+            w2, h2 = _text_lines(b, sc, mid)
+            h2 *= GROW
+            # never so narrow that the longest word forces the type smaller
+            if h2 <= hmax + 0.5 and w2 <= AW + 0.5 and b._fit(sc, mid)[1] >= fs:
+                hi, best = mid, (w2, h2, mid)
+            else:
+                lo = mid
+        return best
+
+    def pack_fit(t):
+        """Columns across a wide strip (the strip's height is the scarce side): each piece takes
+        the narrowest shape that fits the column, and joins the current column under the last
+        piece when that widens the column less than a column of its own would take."""
+        lines, cur, ch, cw, thick = [], [], 0.0, 0.0, []
+        for u, b in zip(units, blocks):
+            sc = scale_of(u, b, t)
+            full = dims(b, sc, AH)
+            if full is None:
+                return None
+            put = None
+            if cur and AH - ch - gap > 0:
+                st = dims(b, sc, AH - ch - gap)
+                if st is not None and max(cw, st[0]) - cw <= full[0] + gap:
+                    put = st
+            if put is None:
+                if cur:
+                    lines.append((cur, ch))
+                    thick.append(cw)
+                cur, ch, cw = [], 0.0, 0.0
+                put = full
+            ch += (gap if cur else 0.0) + put[1]
+            cw = max(cw, put[0])
+            cur.append((u, b, sc, put[0], put[1], put[2]))
+        if cur:
+            lines.append((cur, ch))
+            thick.append(cw)
+        return (lines, thick) if sum(thick) + gap * (len(lines) - 1) <= cross_len + 0.5 else None
+
     def pack(t):
         # hierarchy: a button label stays no larger than any text set >= 1.25x larger than it
         tfs = [(f0, b._fit(scale_of(None, b, t), AW * cap)[1]) for f0, b in texts]
@@ -1218,10 +1416,16 @@ def _rows(ctx, flow, order, cap, align, axis, floor, tight=1.0):
             if isinstance(b, ButtonBlock):
                 above = [fs for f0, fs in tfs if f0 >= 1.25 * b.fs0]
                 b.max_fs = min(above) if above else None
+        if axis == "fit":
+            return pack_fit(t)
         lines, cur, cl = [], [], 0.0
         for u, b in zip(units, blocks):
             sc = scale_of(u, b, t)
-            w, h = _text_lines(b, sc, AW * cap) if isinstance(b, TextBlock) else b.size(sc, AW)
+            if isinstance(b, TextBlock):
+                w, h = _text_lines(b, sc, AW * cap)
+                h *= GROW
+            else:
+                w, h = b.size(sc, AW)
             if w > AW + 0.5 or h > AH + 0.5:
                 return None
             along = h if cols else w
@@ -1229,7 +1433,7 @@ def _rows(ctx, flow, order, cap, align, axis, floor, tight=1.0):
                 lines.append((cur, cl))
                 cur, cl = [], 0.0
             cl += (gap if cur else 0.0) + along
-            cur.append((u, b, sc, w, h))
+            cur.append((u, b, sc, w, h, AW * cap))
         if cur:
             lines.append((cur, cl))
         thick = [max((it[3] if cols else it[4]) for it in ln[0]) for ln in lines]
@@ -1240,7 +1444,12 @@ def _rows(ctx, flow, order, cap, align, axis, floor, tight=1.0):
         lo = hi
     else:
         if not pack(1e-4):
-            return None
+            # legible copy before a pill's tilt: turned pills go upright, then try again
+            turned = [b for b in blocks if isinstance(b, ButtonBlock) and b.rot]
+            for b in turned:
+                b.set_upright()
+            if not turned or not pack(1e-4):
+                return None
         lo = 1e-4
         for _ in range(16):
             mid = (lo + hi) / 2
@@ -1254,15 +1463,16 @@ def _rows(ctx, flow, order, cap, align, axis, floor, tight=1.0):
     c = m + (cross_len - tot) / 2               # cross axis: the block of lines, centred
     for (ln, length), th in zip(lines, thick):
         a = m + ((main_len - length) / 2 if align == "center" or cols else 0.0)
-        for u, b, sc, w, h in ln:
+        for u, b, sc, w, h, wrap in ln:
             if cols:
                 x, y = c + ((th - w) / 2 if align == "center" else 0.0), a
             else:
                 x, y = a, c + (th - h) / 2
             if isinstance(b, TextBlock):           # packed by line boxes, placed by cap top
-                _, fs, _ = b._fit(sc, w + 1.0)
+                ww = _same_lines(b, sc, w, wrap)    # wraps where the packing measured it
+                _, fs, _ = b._fit(sc, ww)
                 asc, capk, _ = tf.metrics(b.el)
-                b.place(P, x, y + (asc - capk) * fs, sc, w + 1.0, "center" if cols and align == "center" else "left")
+                b.place(P, x, y + (asc - capk) * fs, sc, ww, "center" if cols and align == "center" else "left")
             elif isinstance(b, ImageBlock):
                 b.place_vis(P, x, y, b.scale_for(sc, AW))
             else:
