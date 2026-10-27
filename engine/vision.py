@@ -95,3 +95,55 @@ def read_text(im: Image.Image):
     lines = [r[1] for r in (res or [])]
     toks = [w for ln in lines for w in re.findall(r"[a-z0-9]+", ln.lower())]
     return toks, re.sub(r"[^a-z0-9]", "", " ".join(lines).lower())
+
+
+# --- CLIP ------------------------------------------------------------------
+
+_TOK = None
+_MEAN = np.array([0.48145466, 0.4578275, 0.40821073], np.float32)
+_STD = np.array([0.26862954, 0.26130258, 0.27577711], np.float32)
+
+
+def _clip_image(ims):
+    s = _session("clip/vision_model_quantized.onnx")
+    if s is None:
+        return None
+    batch = []
+    for im in ims:
+        im = im.convert("RGB")
+        k = 224 / min(im.size)
+        im = im.resize((max(224, round(im.width * k)), max(224, round(im.height * k))), Image.BICUBIC)
+        l, t = (im.width - 224) // 2, (im.height - 224) // 2
+        x = (np.asarray(im.crop((l, t, l + 224, t + 224))).astype(np.float32) / 255 - _MEAN) / _STD
+        batch.append(x.transpose(2, 0, 1))
+    e = s.run(None, {"pixel_values": np.stack(batch)})[0]
+    return e / np.linalg.norm(e, axis=1, keepdims=True)
+
+
+def _clip_text(texts):
+    global _TOK
+    s = _session("clip/text_model_quantized.onnx")
+    if s is None:
+        return None
+    try:
+        if _TOK is None:
+            from tokenizers import Tokenizer
+            _TOK = Tokenizer.from_file(str(MODELS / "clip" / "tokenizer.json"))
+    except Exception:
+        return None
+    ids = [_TOK.encode(t.lower()).ids[:77] for t in texts]
+    n = max(len(i) for i in ids)
+    arr = np.array([i + [49407] * (n - len(i)) for i in ids], np.int64)
+    e = s.run(None, {"input_ids": arr})[0]
+    return e / np.linalg.norm(e, axis=1, keepdims=True)
+
+
+def relevance(im: Image.Image, boxes, text: str):
+    """CLIP similarity of each crop box (fractions of im) to the text, or None."""
+    t = _clip_text([text])
+    if t is None:
+        return None
+    W, H = im.size
+    crops = [im.crop((int(b[0] * W), int(b[1] * H), int(b[2] * W), int(b[3] * H))) for b in boxes]
+    v = _clip_image(crops)
+    return None if v is None else (v @ t[0]).tolist()
