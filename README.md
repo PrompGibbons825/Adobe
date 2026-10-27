@@ -181,6 +181,11 @@ the source. Those eight are shared out first: identical layouts count once and n
 archetype takes more than two places, so variants of one plan cannot crowd out a
 different one.
 
+When the top two hand scores are within a small margin, a **learned ranker**
+(`ranker.py`, weights in `ranker_weights.json`) nudges the order toward what
+designers did on Crello template families (trained with `tools/ranker_train.py`,
+dev-only). It only re-ranks valid candidates; set `CHAMELEON_RANKER=0` to disable.
+
 **Photos** (`vision.py`). A background photo is looked at once, small: an
 importance map in the manner of smartcrop.js (edges, skin tone, saturation) plus
 spectral-residual saliency, and faces from YuNet (OpenCV's Haar cascade if it
