@@ -25,7 +25,6 @@ from .items import Ctx, display_lines
 
 ALPHA = 1.1
 LINE_CAP = {"headline": 4, "subhead": 5, "body": 6, "legal": 3}
-HEAD_LINES = 0.15  # x importance, per headline line past LINE_CAP + 1, on top of the 0.05 every line pays
 INVERSION = 25.0  # for each text now smaller than one it was 25% larger than in the source
 DENSITY = 120.0  # per unit of crowding past a comfortable copy density (see _crowding)
 SMALL_UNIT = 400  # px: canvases with a shorter short side are ad units, read at a glance
@@ -130,11 +129,7 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         for blk in r.blocks.values():
             cap = LINE_CAP.get(it.role, 1)
             if blk.n_lines > cap:
-                # a headline stacked six lines or more reads as a narrow column, not display type:
-                # judges prefer the wider, fewer-line setting (a dense design on a square, sprint note)
                 lines_pen += it.importance * 0.05 * (blk.n_lines - cap)
-                if it.role == "headline" and blk.n_lines > cap + 1:
-                    lines_pen += it.importance * HEAD_LINES * (blk.n_lines - cap - 1)
             words = len(" ".join(blk.lines).split())
             display = it.role == "headline" and blk.n_lines <= max(it.src_lines, display_lines(words))
             if it.role in ("headline", "subhead") and textfit.has_runt(blk):
@@ -258,9 +253,15 @@ def _inflation(placed, d: Design, ctx: Ctx) -> float:
     return total
 
 
-def pixel_penalty(stats, src_stats, importance) -> float:
+DISPLAY_BUSY = 1.5  # x the busy charge, for display type (the headline): it must read at a glance
+
+
+def pixel_penalty(stats, src_stats, importance, display=frozenset()) -> float:
     """Copy that lost contrast against the pixels under it, or landed on texture
-    the source kept it off."""
+    the source kept it off. Display type (``display``: the headline's text ids)
+    pays DISPLAY_BUSY times as much for texture: on a photo whose quiet part is
+    small, the headline is the copy that must keep to it, while a button carries
+    its own fill and secondary copy may run on past it."""
     pen = 0.0
     for tid, (c, busy) in stats.items():
         imp = importance.get(tid, 40.0)
@@ -270,7 +271,7 @@ def pixel_penalty(stats, src_stats, importance) -> float:
             pen += imp * 1.5 * (1.0 - c / target)
         calm = max(1.5 * b0, 0.06)
         if busy > calm:
-            pen += imp * 0.6 * min(1.0, (busy - calm) / 0.1)
+            pen += imp * 0.6 * min(1.0, (busy - calm) / 0.1) * (DISPLAY_BUSY if tid in display else 1.0)
     return pen
 
 

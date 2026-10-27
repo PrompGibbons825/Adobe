@@ -198,12 +198,17 @@ texture) keeps the plain centre crop, so designs on one do not change.
 (a pale sky, a plain wall) can lose it on another canvas: the crop moves, the type
 grows, and the headline lands on the trees. The photo is rendered small under the
 target as the best plan draws it (and slid to either end of what the source showed,
-by bleed, when the target crops it), and every row and column is marked readable
+by bleed, when the target crops it and the photo is drawn with fit cover),
+and every row and column is marked readable
 where the headline's own colour holds 3:1 contrast on calm pixels. For each quiet
 band three more stacks join the field: the whole column inside the band, the column
 from the band on with its scale capped so the headline stays inside it, and the same
 with every text of the headline's tone inside it (a button carries its own fill).
-They are only candidates; the pixel critic and the score choose.
+On a band across the canvas the headline may also run in longer lines, so it fits
+the band in fewer lines instead of the whole column shrinking to it. They are only
+candidates: the best of each band and kind always reaches the pixel critic (the
+score before it, blind to the ground, ranks them under the plain stacks), and the
+critic and the score choose.
 
 **5. Check, emit and enforce the rules** (`__init__.py`)
 

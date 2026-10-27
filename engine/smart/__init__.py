@@ -56,7 +56,7 @@ def plan_design(source: dict, target: dict):
                 plans.sort(key=lambda p: -p.score)
                 keep_everything_first(plans)
                 plans[:] = _diverse(plans, RERANK)
-                _pixel_rerank(plans, d, ctx, RERANK)
+                _pixel_rerank(plans, d, ctx, RERANK + _quiet_extras(plans, RERANK))
                 keep_everything_first(plans)
                 if _promote_passing(plans, source, d, ctx):
                     return d, ctx, plans
@@ -76,6 +76,31 @@ def _quiet(d: Design, ctx: Ctx, plans) -> list:
         raise
     except Exception:  # noqa: BLE001
         return []
+
+
+QUIET_EXTRA = 4  # quiet plans (one per kind and band) the pixel critic sees past the usual places
+
+
+def _quiet_extras(plans, top: int) -> int:
+    """Move the best quiet plan of each kind and band that missed the critic's places to just
+    after them, and return how many. A quiet plan trades size for calm ground, so the score
+    before the critic always ranks it under the plain stacks; only the critic, which sees the
+    ground, can judge it. Returns 0 (and moves nothing) on a design without quiet plans."""
+    seen = {_band(p.name) for p in plans[:top] if p.name.startswith("quiet")}
+    extra = []
+    for p in plans[top:]:
+        if p.name.startswith("quiet") and _band(p.name) not in seen and len(extra) < QUIET_EXTRA:
+            seen.add(_band(p.name))
+            extra.append(p)
+    if extra:
+        ids = {id(p) for p in extra}
+        plans[top:] = extra + [p for p in plans[top:] if id(p) not in ids]
+    return len(extra)
+
+
+def _band(name: str) -> str:
+    """``quiet-head-slid-y96~1.8@1.35`` -> ``quiet-head-slid-y96``: a quiet plan's kind and band."""
+    return name.split("@")[0].split("~")[0]
 
 
 def _promote_passing(plans, source: dict, d: Design, ctx: Ctx) -> bool:
@@ -178,6 +203,8 @@ def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
     src = pixels.measure(d.elements, d.W, d.H, skip=set())
     if not src:
         return
+    display = frozenset(e["id"] for it in d.items if it.role == "headline" and it.kind == "text" for e in it.els
+                        if e.get("type") == "text")
     head = plans[:top]
     for p in head:
         imp = {}
@@ -186,7 +213,7 @@ def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
                 imp[e["id"]] = r.item.importance
         hidden = {e["id"] for it in p.hidden for e in it.els}
         stats = pixels.measure(emit(p, d, ctx), ctx.W, ctx.H, skip=hidden)
-        pen = pixel_penalty(stats, src, imp)
+        pen = pixel_penalty(stats, src, imp, display)
         p.breakdown["pixels"] = -pen
         p.score -= pen
     head.sort(key=lambda p: -p.score)

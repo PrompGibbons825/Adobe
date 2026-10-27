@@ -29,7 +29,7 @@ from dataclasses import replace
 from typing import List, Optional, Tuple
 
 from .analyze import Design
-from .compose import DISPLAY_WORDS, EMPHASIS, Plan, _specks, copyfit, margins, overflow, plan_stack, story_band
+from .compose import DISPLAY_WORDS, EMPHASIS, WIDE_MEASURE, Plan, _specks, copyfit, margins, overflow, plan_stack, story_band
 from .layout import BudgetExceeded
 from .items import Ctx
 from .structure import lead_text
@@ -48,6 +48,7 @@ MIN_BAND = 0.14  # a quiet band is at least this share of the canvas along its a
 MAX_BAND = 0.8  # ... and less than this (a canvas readable almost everywhere needs no help)
 BANDS = 2  # the longest bands looked at, per axis
 STEPS = 6  # bisection steps for the headline's scale cap
+WIDE_GAIN = 1.15  # a wider headline measure must buy at least this much scale in a band
 
 
 def _photo(d: Design) -> bool:
@@ -157,6 +158,8 @@ def _slides(d: Design, ctx: Ctx) -> List[dict]:
     for e in d.backgrounds:
         if e.get("type") != "image":
             continue
+        if e.get("fit") != "cover":
+            break  # finalize keeps bleed only for a cover photo: any other would be pulled inside
         v = vision.analyze(e.get("asset_id"))
         if v is None:
             continue
@@ -211,9 +214,8 @@ def plans(d: Design, ctx: Ctx, field: List[Plan]) -> List[Plan]:
     colour = (r / 255.0, g / 255.0, b / 255.0)
     out: List[Plan] = []
     try:
-        for fixed in [dict(base.fixed)] + [{**base.fixed, **s} for s in _slides(d, ctx)]:
-            ground = replace(base, fixed=fixed)
-            arr, f = _ground(ground, d, ctx)
+        for fixed in [dict(base.fixed)] + [{**base.fixed, **sl} for sl in _slides(d, ctx)]:
+            arr, f = _ground(replace(base, fixed=fixed), d, ctx)
             if arr is None:
                 continue
             out += _from_ground(d, ctx, base, head, readable_map(arr, colour), f, fixed)
@@ -250,10 +252,16 @@ def _from_ground(d: Design, ctx: Ctx, base: Plan, head, ok, f: float, fixed: dic
                 return False
             tol = 0.02 * ctx.H
             seen = 0
-            for rr, _, yy in p.placed + p.floaters:
+            for rr, xx, yy in p.placed + p.floaters:
                 if rr.item.key in keys:
                     seen += 1
                     if yy < b0 - tol or yy + rr.h > b1 + tol:
+                        return False
+                    # and on readable ground across its width too: a band's rows need only most of
+                    # the canvas readable, so a long line may still reach the subject beside it
+                    cell = ok[max(0, int(yy * f)):max(1, int((yy + rr.h) * f)),
+                              max(0, int(xx * f)):max(1, int((xx + rr.w) * f))]
+                    if cell.size and float(cell.mean()) < ROW_OK:
                         return False
             return seen > 0
 
@@ -294,13 +302,22 @@ def _from_ground(d: Design, ctx: Ctx, base: Plan, head, ok, f: float, fixed: dic
         # the headline in the band, the rest run on past it, away from the nearer canvas edge
         down = (b0 - y0) <= (y1 - b1)
         ins = (0.0, b0 - y0, 0.0, 0.0) if down else (0.0, 0.0, 0.0, y1 - b1)
+        # a band across the canvas is short and wide: the headline may also run on in longer
+        # lines (WIDE_MEASURE), so it fits the band in fewer lines instead of shrinking the column;
+        # only when that buys it real size (WIDE_GAIN), else the source's own breaks stand
         for k, keys in enumerate(sets):
             for e in emph:
-                c = replace(ctx, emphasis=e) if e != 1.0 else ctx
-                p = head_in(c, ins, "top" if down else "bottom", b0, b1, keys)
-                if p is not None:
-                    out.append(_finish(p, d, c, f"quiet-{'copy' if k else 'head'}{tag}-y{int(b0)}"
-                                       + (f"@{e:g}" if e != 1.0 else "")))
+                narrow = None
+                for m in (1.0, WIDE_MEASURE) if k == 0 else (1.0,):
+                    c = replace(ctx, emphasis=e, measure=m) if (e, m) != (1.0, 1.0) else ctx
+                    p = head_in(c, ins, "top" if down else "bottom", b0, b1, keys)
+                    if m == 1.0:
+                        narrow = p
+                    elif p is not None and narrow is not None and p.s < WIDE_GAIN * narrow.s:
+                        continue
+                    if p is not None:
+                        out.append(_finish(p, d, c, f"quiet-{'copy' if k else 'head'}{tag}-y{int(b0)}"
+                                           + (f"~{m:g}" if m != 1.0 else "") + (f"@{e:g}" if e != 1.0 else "")))
     # columns: a band down one side (a plain wall beside the subject)
     span = (int(y0 * f), max(int(y0 * f) + 1, int(y1 * f)))
     for a, z in bands(ok.T, span[0], span[1], max(2, int(MIN_BAND * w))):
