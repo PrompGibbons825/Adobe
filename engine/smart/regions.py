@@ -153,9 +153,8 @@ def find_split(d) -> Optional[Split]:
     return None
 
 
-def regions(sp: Split, W: float, H: float, axis: str) -> Tuple[Box, Box]:
-    """(photo region, panel region) on a W x H canvas split along ``axis``.
-    Turned from side by side to stacked, the photo goes on top."""
+def share(sp: Split, W: float, H: float, axis: str) -> float:
+    """The photo's share of the canvas along ``axis``: what shows it at its source proportions."""
     # the share that would show the photo at its source proportions, uncropped; kept along the
     # same axis, half way to the source's own share
     pb = el_box(sp.photo.els[0])
@@ -163,7 +162,14 @@ def regions(sp: Split, W: float, H: float, axis: str) -> Tuple[Box, Box]:
     ideal = (H * r_s / W) if axis == "x" else (W / r_s / H)
     f = ideal if axis != sp.axis else 0.5 * (ideal + sp.frac)
     # turned side by side, the copy column is short of width: the photo takes at most half
-    f = min(FRAC[1] if axis == sp.axis or axis == "y" else 0.5, max(FRAC[0], f))
+    return min(FRAC[1] if axis == sp.axis or axis == "y" else 0.5, max(FRAC[0], f))
+
+
+def regions(sp: Split, W: float, H: float, axis: str, f: Optional[float] = None) -> Tuple[Box, Box]:
+    """(photo region, panel region) on a W x H canvas split along ``axis``, the photo taking
+    share ``f`` (default: ``share``). Turned from side by side to stacked, the photo goes on top."""
+    if f is None:
+        f = share(sp, W, H, axis)
     first = sp.photo_first if axis == sp.axis else (True if axis == "y" else sp.photo_first)
     if axis == "x":
         pw = round(W * f)
@@ -253,6 +259,31 @@ def _photo_box(e, P: Box, Q: Box, W, H, W0, H0, hides):
     return best
 
 
+def cuts_head(e: dict, box: Tuple[float, float, float, float], P: Box) -> bool:
+    """Whether the photo drawn at ``box`` (fit cover) and seen through region ``P`` cuts a head
+    (vision.py's face map) by more than a sliver."""
+    from . import assets, vision
+
+    try:
+        a = assets.info(e.get("asset_id"))
+        v = vision.analyze(e.get("asset_id"))
+        if not a.found or v is None or not v.heads:
+            return False
+        iw, ih = a.size
+        x, y, bw, bh = box
+        sA = max(bw / iw, bh / ih)
+        dw, dh = iw * sA, ih * sA
+        ox, oy = x + (bw - dw) / 2.0, y + (bh - dh) / 2.0
+        win = ((P.x - ox) / dw, (P.y - oy) / dh, (P.r - ox) / dw, (P.b - oy) / dh)
+        for hd in v.heads:
+            ha = max(1e-6, (hd[2] - hd[0]) * (hd[3] - hd[1]))
+            if 1.0 - _inter(win, hd) / ha > 0.02:
+                return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 def _span(lo: float, hi: float) -> List[float]:
     if hi - lo < 1.0:
         return [min(lo, hi) if hi < lo else lo]
@@ -321,10 +352,17 @@ def _legal_bleed(e: dict, se: dict, W: float, H: float, W0: float, H0: float) ->
 # the layout
 
 
-def plan_regions(d, ctx, hidden, name: str = "regions", insets=(0, 0, 0, 0), axis: str = "x"):
+def plan_regions(d, ctx, hidden, name: str = "regions", insets=(0, 0, 0, 0), axis: str = "x",
+                 roomy: bool = False):
     """The photo region and the panel region tiling the canvas along ``axis``;
     the panel's copy laid out inside the panel as one column. None if the
-    design has no such split, or the copy does not fit."""
+    design has no such split, or the copy does not fit.
+
+    ``roomy``: the photo takes the least share it may (FRAC[0]) instead of the one that shows
+    it at its own proportions, so the copy's panel has room to set the type large. Which of
+    the two reads better depends on how much copy there is, and the scorer weighs that: a
+    long headline in a short panel set small, or in a narrow one broken into many lines,
+    loses to the same copy in a panel with the room for it."""
     from dataclasses import replace
 
     from .compose import BALANCE, Plan, _settle_floaters, _visible, collides, column, margins, scale_bounds, solve
@@ -343,10 +381,17 @@ def plan_regions(d, ctx, hidden, name: str = "regions", insets=(0, 0, 0, 0), axi
     if not body or any(it is not sp.photo and id(it) not in mine and not it.corner for it in vis):
         return None
     W, H = ctx.W, ctx.H
-    P, Q = regions(sp, W, H, axis)
+    f = share(sp, W, H, axis)
+    if roomy:
+        if f - FRAC[0] < 0.05:  # the photo already takes the least it may: nothing new to offer
+            return None
+        f = FRAC[0]
+    P, Q = regions(sp, W, H, axis, f)
     box = photo_box(sp.photo.els[0], P, Q, W, H, d.W, d.H, sp.hides)
     if box is None:
         return None
+    if roomy and cuts_head(sp.photo.els[0], box, P):
+        return None  # the room for the copy is not worth a face cut by the crop
 
     # the copy column, padded inside the panel as the source padded it
     sb = el_box(sp.panel.el)

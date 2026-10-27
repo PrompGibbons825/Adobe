@@ -471,7 +471,7 @@ def all_of(*checks: Check) -> Check:
 
 def cases() -> List[Case]:
     return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_b_cases() + sprint_c_cases() \
-        + split_cases() + r12_cases() + r13_cases() + r14_cases()
+        + split_cases() + r12_cases() + r13_cases() + r14_cases() + r15_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -1849,4 +1849,49 @@ def r14_cases() -> List[Case]:
                  *button("cta", 640, 600, 232, 57, "See what's new", 23),
              ], targets=("med-rect", "leaderboard", "ig-square", "half-page", "skyscraper"),
              show=("headline", "cta_label"), check=outranks("price_main", "subhead")),
+    ]
+
+
+def copy_has_room(head: str, share: float, lines: int) -> Check:
+    """The headline reads as display type: its font is at least ``share`` of the target's shorter
+    side and it wraps to at most ``lines`` lines (not a narrow column of one word a line)."""
+    from engine.smart.textfit import TextStyle, measure
+
+    def check(src, out, tgt):
+        e = next(x for x in out["elements"] if x["id"] == head)
+        errs = []
+        need = share * min(tgt["width"], tgt["height"])
+        if e["font_size"] < need:
+            errs.append(f"{head}: font {e['font_size']:.0f}, wants {need:.0f}")
+        n = measure(str(e["content"]), TextStyle.of(e), float(e["font_size"]), float(e["width"]), exact=True).n_lines
+        if n > lines:
+            errs.append(f"{head}: {n} lines, wants at most {lines}")
+        return errs
+    return check
+
+
+def r15_cases() -> List[Case]:
+    """A photo / panel split whose panel carries a long headline (round 15): taken to a squarish
+    canvas, the photo kept the share that shows it at its own proportions, so the panel was a
+    narrow column (the headline one or two words a line) or a short band (the headline small)."""
+    W, H = 1920, 1080
+    return [
+        Case("split_panel_long_headline",
+             "a chair photo fills the left half of a wide canvas, a green panel the right with a logo, "
+             "a nine-word headline, a line of small print and a button: going square or to a medium "
+             "rectangle, the panel must get the room to set the headline as display type in a few "
+             "lines, not a narrow column with a word a line",
+             W, H,
+             [{"id": "photo", "type": "image", "x": 0, "y": 0, "width": 1000, "height": H, "z_index": 1,
+               "asset_id": CHAIR_PHOTO, "fit": "cover"},
+              shape("panel", 1000, 0, 920, H, "rgba(22,52,38,1)", z=2),
+              text("headline", 1090, 330, 760, 300, "Single-origin beans, roasted every Tuesday in small batches",
+                   64, "Solstice Serif", True, align="left"),
+              text("subhead", 1090, 660, 700, 40, "Roasted to order, shipped within 48 hours.", 24,
+                   align="left", color="rgba(255,255,255,0.8)"),
+              *button("cta", 1090, 740, 220, 60, "Order now", 22, fill=GOLD, color=PLUM)],
+             targets=("ig-square", "ig-portrait", "med-rect", "fb-link"),
+             show=("headline", "cta_label", "photo", "panel"), background=False,
+             check=all_of(split_kept("photo", "panel", ("headline", "subhead", "cta_label")),
+                          copy_has_room("headline", 0.06, 4))),
     ]

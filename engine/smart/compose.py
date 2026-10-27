@@ -1187,6 +1187,7 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
             from .regions import plan_regions
             for ax in (("x",) if r >= 1.25 else ("y",) if r <= 0.8 else ("x", "y")):
                 yield f"regions-{ax}", plan_regions, dict(axis=ax)
+                yield f"regions-{ax}-room", plan_regions, dict(axis=ax, roomy=True)
         from .collage import variants as collage_variants
         yield from collage_variants(d, ctx)  # a collage or grid of pictures, re-flowed (collage.py)
         if r >= 1.7 or force_all:
