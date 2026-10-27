@@ -43,6 +43,7 @@ class Ctx:
     display_room: float = 1.0  # how far past the canvas's display size this design's headline may go
     cta_min: float = 0.0  # px: the least label size of a call to action in this plan (strips)
     keep_px: float = 0.0  # px: when set, the type floor of a plan that must keep everything (see keep_floor)
+    scale_cap: float = 0.0  # when set, the most the layout scale may be in this plan (quiet.py)
 
     @property
     def display_max(self) -> float:

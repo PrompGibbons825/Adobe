@@ -224,6 +224,8 @@ def scale_bounds(d: Design, ctx: Ctx, kind: str = "stack") -> Tuple[float, float
         # as far past as the source set it): nothing outgrows the headline, the hierarchy holds
         rank = max(1.0, head.main_fs() / display_size(d.W, d.H))
         cap = min(cap, rank * ctx.display_max / head.main_fs())
+    if ctx.scale_cap:
+        cap = min(cap, ctx.scale_cap)
     return 0.01, max(0.02, cap)
 
 

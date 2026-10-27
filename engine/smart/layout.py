@@ -68,7 +68,7 @@ def _snap(s: float) -> float:
 
 
 def _ctx_key(ctx: Ctx) -> tuple:
-    return (ctx.W, ctx.H, ctx.W0, ctx.H0, ctx.emphasis, ctx.measure, ctx.display_room, ctx.cta_min, ctx.keep_px)
+    return (ctx.W, ctx.H, ctx.W0, ctx.H0, ctx.emphasis, ctx.measure, ctx.display_room, ctx.cta_min, ctx.keep_px, ctx.scale_cap)
 
 
 class Node:

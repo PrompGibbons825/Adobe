@@ -25,6 +25,7 @@ from .items import Ctx, display_lines
 
 ALPHA = 1.1
 LINE_CAP = {"headline": 4, "subhead": 5, "body": 6, "legal": 3}
+HEAD_LINES = 0.15  # x importance, per headline line past LINE_CAP + 1, on top of the 0.05 every line pays
 INVERSION = 25.0  # for each text now smaller than one it was 25% larger than in the source
 DENSITY = 120.0  # per unit of crowding past a comfortable copy density (see _crowding)
 SMALL_UNIT = 400  # px: canvases with a shorter short side are ad units, read at a glance
@@ -45,7 +46,7 @@ def _prior(name: str, r: float, r0: float = 1.0) -> float:
     if name.startswith("adapt"):
         # the designer's own arrangement, when the shape barely changes
         return 40.0 * max(0.0, 1.0 - abs(math.log(r / r0)) / math.log(1.2))
-    if name.startswith("stack"):
+    if name.startswith("stack") or name.startswith("quiet"):  # a quiet plan is a stack (quiet.py)
         return 10.0 - 14.0 * max(0.0, lr - math.log(1.25))
     if name.startswith("split"):
         p = 17.0 - 12.0 * abs(lr - math.log(2.0))
@@ -129,7 +130,11 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         for blk in r.blocks.values():
             cap = LINE_CAP.get(it.role, 1)
             if blk.n_lines > cap:
+                # a headline stacked six lines or more reads as a narrow column, not display type:
+                # judges prefer the wider, fewer-line setting (a dense design on a square, sprint note)
                 lines_pen += it.importance * 0.05 * (blk.n_lines - cap)
+                if it.role == "headline" and blk.n_lines > cap + 1:
+                    lines_pen += it.importance * HEAD_LINES * (blk.n_lines - cap - 1)
             words = len(" ".join(blk.lines).split())
             display = it.role == "headline" and blk.n_lines <= max(it.src_lines, display_lines(words))
             if it.role in ("headline", "subhead") and textfit.has_runt(blk):
