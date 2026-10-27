@@ -33,6 +33,7 @@ COLLAPSE = 1.5  # times its importance, for copy set level with copy it was 1.5x
 HIERARCHY = 12.0  # for a headline that stands out 1.6x more than in the source (or less, negative)
 INFLATION = 2.0  # per unit of importance and of log-excess share (see _inflation)
 SHARE_SLACK = math.log(2.5)  # a secondary item may grow to 2.5x its share of the canvas freely
+COLLAGE = 15.0  # prior for re-flowing a collage of pictures into a grid for the new shape
 REGIONS = 65.0  # prior for keeping a photo / panel split as two regions that tile the canvas
 FILL = 15.0  # on a roomy canvas, for using it up to the larger of 1.1x the source's coverage, at most 55%
 SHRINK = 0.6  # per unit of importance and of missing share, for a headline or picture shrunk past keep (_shrunk)
@@ -56,6 +57,10 @@ def _prior(name: str, r: float, r0: float = 1.0) -> float:
         # a photo region beside a flat panel carrying the copy (regions.py): the designer's own
         # structure, rebuilt for the new shape, rather than a thumbnail floating on blank canvas
         return REGIONS
+    if name.startswith("collage"):
+        # a collage or grid of pictures re-flowed for the shape (collage.py): the designer's
+        # own structure kept, as a split or a regions plan keeps theirs
+        return COLLAGE
     if name.startswith("row"):
         p = 10.0 - 18.0 * max(0.0, math.log(3.6) - lr)
         if "stacked" in name:

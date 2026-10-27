@@ -80,6 +80,7 @@ For images, the alpha channel gives where the visible pixels sit.
 | stack | portrait, square, mild landscape | one column in reading order, rows near their source-relative height |
 | split | square to wide | hero on one side, copy stacked on the other |
 | regions | a photo filling one side edge to edge beside a flat panel carrying the copy (`regions.py`) | the two still tile the canvas, side by side on a wide one, stacked (photo on top) on a tall one; the panel fills its region, the copy is one padded column in it, the photo fills its region by cropping (its own proportions, the overflow past the canvas edges or under the opaque panel, the window kept on its subject and faces) |
+| collage | 3-9 pictures packed edge to edge or with even gutters, no copy on them (`collage.py`) | the pictures re-flow for the new shape, in reading order and each at its own proportions: alike pictures as a uniform cols x rows grid, mixed ones as justified rows or columns, with the source gutters; the copy goes in a band after them (below on a tall canvas, beside on a wide one) |
 | row | banners and strips | logo, hero, copy, CTA on one line; a row of three or more parts, or one that ends in its CTA, is set like a banner (the brand holds one end, the CTA the other); any other pair stays a centred group; the hero may fill the strip's height |
 
 Each is solved by a small flexbox-like engine for the largest scale that fits

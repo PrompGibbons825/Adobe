@@ -471,7 +471,7 @@ def all_of(*checks: Check) -> Check:
 
 def cases() -> List[Case]:
     return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_b_cases() + sprint_c_cases() \
-        + split_cases() + r12_cases() + r13_cases()
+        + split_cases() + r12_cases() + r13_cases() + r14_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -1439,6 +1439,68 @@ def r13_cases() -> List[Case]:
              targets=("story", "ig-portrait", "pinterest", "ig-square"),
              show=("headline", "cta_label"), background=False, check=calm_ground("headline"),
              xfail=("ig-square",)),
+    ]
+
+
+def pictures_fill(ids: Tuple[str, ...], share: float, short: int = 400) -> Check:
+    """A collage of pictures re-flows to the new shape: on a canvas whose short side is at least
+    ``short`` the pictures together cover at least ``share`` of it (never a small block lost in
+    blank canvas), every one keeps its aspect (within 5%) and stays on the canvas."""
+    def check(src, out, tgt):
+        so = {e["id"]: e for e in src["elements"]}
+        els = [e for e in out["elements"] if e["id"] in ids and float(e.get("opacity", 1)) > 0]
+        errs = []
+        W, H = tgt["width"], tgt["height"]
+        for e in els:
+            a0 = so[e["id"]]["width"] / so[e["id"]]["height"]
+            a1 = e["width"] / max(1e-6, e["height"])
+            if abs(a1 / a0 - 1) > 0.05:
+                errs.append(f"{e['id']}: aspect {a0:.2f} -> {a1:.2f}")
+            if e["x"] < -0.5 or e["y"] < -0.5 or e["x"] + e["width"] > W + 0.5 or e["y"] + e["height"] > H + 0.5:
+                errs.append(f"{e['id']}: past the canvas")
+        cov = sum(e["width"] * e["height"] for e in els) / float(W * H)
+        if min(W, H) >= short and cov < share:
+            errs.append(f"pictures cover {cov:.0%} of the canvas (< {share:.0%})")
+        return errs
+    return check
+
+
+def r14_cases() -> List[Case]:
+    """Collages and grid posters (H6, loop/weaknesses.md): the pictures re-flow into a grid for
+    the new shape instead of shrinking as one block."""
+    photos = (FACE_PHOTO, SKY_PHOTO, WALL_PHOTO)
+    grid = [{"id": f"tile{k}", "type": "image", "x": 60 + (k % 3) * 330, "y": 60 + (k // 3) * 330,
+             "width": 310, "height": 310, "z_index": 2, "asset_id": photos[k % 3], "fit": "cover"}
+            for k in range(6)]
+    tiles = tuple(e["id"] for e in grid)
+    mosaic = [{"id": "big", "type": "image", "x": 0, "y": 0, "width": 460, "height": 628, "z_index": 2,
+               "asset_id": SKY_PHOTO, "fit": "cover"},
+              {"id": "top", "type": "image", "x": 470, "y": 0, "width": 230, "height": 309, "z_index": 2,
+               "asset_id": FACE_PHOTO, "fit": "cover"},
+              {"id": "low", "type": "image", "x": 470, "y": 319, "width": 230, "height": 309, "z_index": 2,
+               "asset_id": WALL_PHOTO, "fit": "cover"}]
+    return [
+        Case("photo_grid_six",
+             "six alike photos in a 3x2 grid above the copy: on a tall or wide canvas the grid "
+             "re-flows (2x3 on a story, a row on a banner) and still fills the canvas, each photo "
+             "at its own shape",
+             1080, 1080,
+             [*grid,
+              text("headline", 90, 760, 900, 90, "The Autumn Edit", 72, bold=True),
+              text("sub", 140, 860, 800, 40, "Six looks for shorter days", 30),
+              *button("cta", 390, 940, 300, 80, "Shop now", 28)],
+             targets=("story", "ig-portrait", "fb-link", "x-header", "yt-thumb", "leaderboard"),
+             show=("headline", "cta_label"), check=pictures_fill(tiles, 0.25)),
+        Case("photo_mosaic_three",
+             "one large and two small photos packed edge to edge beside the copy: on a tall canvas "
+             "the mosaic re-flows above the copy instead of shrinking into a corner",
+             1200, 628,
+             [*mosaic,
+              text("headline", 760, 180, 400, 160, "Slow Living, Made to Last", 52, bold=True,
+                   align="left"),
+              *button("cta", 760, 380, 260, 70, "Explore", 26)],
+             targets=("story", "ig-portrait", "ig-square", "x-header"),
+             show=("headline", "cta_label"), check=pictures_fill(("big", "top", "low"), 0.36)),
     ]
 
 
