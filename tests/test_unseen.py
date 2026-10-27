@@ -53,10 +53,8 @@ class UnseenSubset(unittest.TestCase):
     def test_c1_rules(self):
         self.assertEqual(self.fails("C1"), [])
 
-    # Baseline fails on 4 tiles, all the engine dropping an element to opacity 0:
-    #   split_panel-s1-hd-16x9|ig-portrait, |story  (band_panel: the colour panel under the copy)
-    #   sale-s1-ig-square|ig-portrait, |yt-thumb      (sticker_bg/label; on yt-thumb also ribbon_bg/label)
-    @unittest.expectedFailure
+    # The sprint start engine failed 4 tiles here (an element dropped to opacity 0); line/sprint's
+    # S1 ladder keeps them all, so the expectedFailure mark came off (unexpected success, r12).
     def test_c2_hidden(self):
         self.assertEqual(self.fails("C2"), [])
 
