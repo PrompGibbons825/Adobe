@@ -421,6 +421,35 @@ def keeps_share(pid: str, keep: float = 0.6) -> Check:
     return check
 
 
+def uncovered(pid: str, most: float = 0.5) -> Check:
+    """No more than ``most`` of this picture's box is under opaque shapes painted above it
+    (ellipses measured as ellipses), and it is drawn: stickers on a product that grew to the type
+    floor while the product shrank must not bury it."""
+    def check(src, out, tgt):
+        e = next(x for x in out["elements"] if x["id"] == pid)
+        if float(e.get("opacity", 1)) <= 0:
+            return [f"{pid}: hidden"]
+        z = e.get("z_index", 0)
+        top = [o for o in out["elements"] if o.get("type") == "shape" and o.get("z_index", 0) > z
+               and float(o.get("opacity", 1)) >= 0.95]
+        n, hit = 24, 0
+        for i in range(n):
+            for j in range(n):
+                px, py = e["x"] + (i + 0.5) * e["width"] / n, e["y"] + (j + 0.5) * e["height"] / n
+                for o in top:
+                    dx, dy = px - o["x"] - o["width"] / 2.0, py - o["y"] - o["height"] / 2.0
+                    if o.get("shape_type") == "ellipse":
+                        inside = (dx / max(1e-6, o["width"] / 2.0)) ** 2 + (dy / max(1e-6, o["height"] / 2.0)) ** 2 <= 1
+                    else:
+                        inside = abs(dx) <= o["width"] / 2.0 and abs(dy) <= o["height"] / 2.0
+                    if inside:
+                        hit += 1
+                        break
+        share = hit / float(n * n)
+        return [f"{pid}: {share:.0%} covered by stickers"] if share > most else []
+    return check
+
+
 def same_font(*ids: str) -> Check:
     """Texts that shared a font size in the source share one in the output (copyfit)."""
     def check(src, out, tgt):
@@ -1291,6 +1320,25 @@ def sprint_c_cases() -> List[Case]:
                  *button("cta", 390, 1150, 300, 90, "Discover", 28),
              ], targets=ROOMY, show=("headline", "cta_label"), show_roomy=("product",),
              check=keeps_share("product", 0.6)),
+
+        Case("stickers_bury_product",
+             "a product on the left of a wide post with two round badges on its corners (their "
+             "labels long words): on small ad units the labels hold the type floor while the product "
+             "shrinks, and badges kept where they were cover it; the product stays mostly in view",
+             1280, 720, [
+                 image("product", 40, 60, 600, 600),
+                 shape("badge1_bg", 530, 40, 130, 130, "#dc283c", z=4, kind="ellipse", group_id="badge1"),
+                 text("badge1_label", 543, 90, 104, 30, "HANDMADE", 21, bold=True, color="#ffffff",
+                      z=5, group_id="badge1"),
+                 shape("badge2_bg", 30, 390, 100, 100, "#dc283c", z=4, kind="ellipse", group_id="badge2"),
+                 text("badge2_label", 40, 428, 80, 24, "BESTSELLER", 16, bold=True, color="#ffffff",
+                      z=5, group_id="badge2"),
+                 logo(640, 70, 240, 80),
+                 text("headline", 640, 190, 560, 150, "Soft Days", 115, "Solstice Serif", True),
+                 text("subhead", 640, 375, 560, 54, "Natural fibres, made to last.", 37),
+                 *button("cta", 640, 560, 260, 70, "See what's new", 26),
+             ], targets=("med-rect", "leaderboard", "ig-square", "fb-link", "story", "half-page"),
+             show=("headline", "cta_label"), show_roomy=("product",), check=uncovered("product")),
 
         Case("copyfit_twins",
              "two feature lines set at one size in the source, one short and one long: wherever both "
