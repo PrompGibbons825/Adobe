@@ -45,6 +45,8 @@ class Ctx:
     keep_px: float = 0.0  # px: when set, the type floor of a plan that must keep everything (see keep_floor)
     scale_cap: float = 0.0  # when set, the most the layout scale may be in this plan (quiet.py)
     copy_fs: float = 0.0  # px: the design's typical copy size in the source (median), for the rank floor
+    lift_cta: bool = True  # a CTA label left at its floor may be offered larger (compose.legible_cta)
+    hold_fs: float = 0.0  # px: in a squeezed plan, source copy at least this large (the pill labels) keeps the usual floor
 
     @property
     def display_max(self) -> float:
@@ -70,8 +72,8 @@ class Ctx:
 
     def floor(self, role: str, relax: float = 1.0) -> float:
         jf = float(self.judge_floor)
-        if role in LEGIBLE_ROLES:  # a plan squeezed under the usual floor (keep_px) never squeezes these
-            jf = max(jf, float(self.usual_floor))
+        if role in LEGIBLE_ROLES or (self.hold_fs and role in PILL_ROLES):
+            jf = max(jf, float(self.usual_floor))  # a plan squeezed under the usual floor keeps these at it
         return max(jf, FLOOR_MULT.get(role, 1.0) * self.base_fs * relax)
 
 
@@ -86,6 +88,12 @@ def keep_floor(W: float, H: float) -> int:
 
 
 LEGIBLE_ROLES = ("headline", "cta")  # held at the usual floor even in a squeezed plan
+# The label on a pill (a badge, a sticker, a ribbon): a squeezed plan first tries to keep it at the
+# usual floor and squeeze only the copy the source set smaller than it (Ctx.hold_fs, compose.generate).
+# A few letters on a filled shape set at 7 px read as a smudge; small print at 7 px still reads as
+# small print.
+PILL_ROLES = ("badge", "ribbon")
+LABEL_LIFT = (1.2, 1.1)  # a button label the layout set at its floor is offered this much larger (compose.legible_cta)
 
 
 def min_floor(W: float, H: float) -> int:
@@ -116,6 +124,8 @@ def rank_floor(fs0: float, role: str, ctx: Ctx, relax: float = 1.0) -> float:
     floor = ctx.floor(role, relax)
     if ctx.keep_px and ctx.copy_fs > 0 and fs0 >= RANK * ctx.copy_fs:
         floor = max(floor, float(ctx.usual_floor))
+    if ctx.hold_fs and fs0 >= ctx.hold_fs - 0.01:  # copy the source set as large as the held pill labels
+        floor = max(floor, float(ctx.usual_floor))  # is held with them: holding a badge never inverts rank
     return floor
 
 
@@ -123,7 +133,7 @@ def lockup_floor(big: float, ctx: Ctx) -> float:
     """The least size of a lockup's smallest part (its parts keep their proportions): the judge
     floor, or the usual floor for a lockup of display copy in a squeezed plan (rank_floor: the
     cents of a price are as much the price as its figure)."""
-    if ctx.keep_px and ctx.copy_fs > 0 and big >= RANK * ctx.copy_fs:
+    if ctx.keep_px and ((ctx.copy_fs > 0 and big >= RANK * ctx.copy_fs) or (ctx.hold_fs and big >= ctx.hold_fs - 0.01)):
         return float(max(ctx.judge_floor, ctx.usual_floor))
     return float(ctx.judge_floor)
 
@@ -432,9 +442,12 @@ def _button_at(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, relax: 
     # legibility floor (q times larger than the layout scale) gets a tighter
     # pill, as a designer sets a button on a small format, down to a compact
     # 0.8 em a side and 2.6 em tall.
+    # A pill held at the usual floor in a squeezed plan (Ctx.hold_fs) is tighter still, 0.6 em
+    # a side and 2 em tall: the room the larger label takes comes out of its padding first.
     q = max(1.0, g / max(s, 1e-6))
-    pad_em = max(0.8, max(0.0, (cb.w - src_blk.ink_width) / 2.0) / fs0 / q)
-    h_em = max(2.6, cb.h / fs0 / q)
+    tight = bool(ctx.hold_fs) and it.role in PILL_ROLES
+    pad_em = max(0.6 if tight else 0.8, max(0.0, (cb.w - src_blk.ink_width) / 2.0) / fs0 / q)
+    h_em = max(2.0 if tight else 2.6, cb.h / fs0 / q)
     pad_x = max(pad_em * fs, 0.55 * fs)
     rot = it.rotation
     cos_t, sin_t = abs(math.cos(math.radians(rot))), abs(math.sin(math.radians(rot)))
@@ -934,7 +947,7 @@ def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF
     heads = it.role == "headline" or any(sat.role == "headline" for sat in it.sats)
     key = (id(it), s, max_w, max_h, relax, k, mode, nowrap, ctx.W, ctx.H, ctx.W0, ctx.H0, ctx.display_room,
            ctx.emphasis if heads else 1.0, ctx.measure if it.kind == "text" else 1.0,
-           ctx.cta_min if it.role == "cta" else 0.0, ctx.keep_px)
+           ctx.cta_min if it.role == "cta" else 0.0, ctx.keep_px, ctx.hold_fs)
     r = _REALIZED.get(key, _MISS)
     if r is _MISS:
         BUDGET.tick()

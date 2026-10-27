@@ -327,7 +327,8 @@ def plan_regions(d, ctx, hidden, name: str = "regions", insets=(0, 0, 0, 0), axi
     design has no such split, or the copy does not fit."""
     from dataclasses import replace
 
-    from .compose import BALANCE, Plan, _settle_floaters, _visible, collides, column, margins, scale_bounds, solve
+    from .compose import (BALANCE, Plan, _settle_floaters, _visible, collides, column, legible_cta, margins,
+                          scale_bounds, solve)
     from .items import Real
     from .structure import dominant_align, rows_for
 
@@ -366,6 +367,7 @@ def plan_regions(d, ctx, hidden, name: str = "regions", insets=(0, 0, 0, 0), axi
     s, laid, relax = solve(root, ctx, zone, lo, hi)
     if laid is None:
         return None
+    s, laid, relax = legible_cta(root, d, ctx, zone, lo, hi, (s, laid, relax))
     z = laid.zone  # type: ignore[attr-defined]
     parts, gaps = laid.parts, laid.gap_list  # type: ignore[attr-defined]
     u = None
