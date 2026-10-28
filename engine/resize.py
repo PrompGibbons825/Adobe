@@ -135,6 +135,10 @@ def _build(source, target, P):
             e[k] = round(v, 2) if isinstance(v, float) else v
         if e["type"] == "text":
             e["font_size"] = max(1, int(round(e["font_size"])))
+            # tracking is set in ems: it scales with the type
+            ls = float(el.get("letter_spacing", 0) or 0)
+            if ls and el.get("font_size"):
+                e["letter_spacing"] = round(ls * e["font_size"] / float(el["font_size"]), 3)
         out.append(e)
     return {"canvas": {"width": target["width"], "height": target["height"]}, "elements": out}
 

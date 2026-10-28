@@ -225,6 +225,37 @@ def analyze(asset_id: str) -> dict | None:
     else:
         sbox, cx, cy = (0.25, 0.25, 0.75, 0.75), 0.5, 0.5
 
+    # a diffuse map (a textured surface: marble, wood, paper) finds no subject;
+    # then what stands out from the surface's own tone (dark or coloured
+    # objects on pale stone) is the subject, if it is a clear part of the
+    # picture. Only the box and centroid change; the map stays as it was.
+    if (sbox[2] - sbox[0]) * (sbox[3] - sbox[1]) > 0.75 and not has_alpha:
+        rgb = arr[..., :3]
+        g = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+        sat = rgb.max(-1) - rgb.min(-1)
+        dev = np.abs(g - np.median(g)) + np.maximum(0.0, sat - np.median(sat))
+        fg = np.asarray(Image.fromarray((dev > 0.22).astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(3))) > 0
+        if 0.05 <= float(fg.mean()) <= 0.55:
+            def band(share):
+                """The longest run of rows/columns that are mostly object."""
+                best, cur = (0, 0), None
+                for i, v in enumerate(list(share) + [0.0]):
+                    if v > 0.3:
+                        cur = (cur[0], i + 1) if cur else (i, i + 1)
+                    elif cur:
+                        best = max(best, cur, key=lambda r: r[1] - r[0])
+                        cur = None
+                return best
+            x0, x1 = band(fg.mean(0))
+            y0, y1 = band(fg[:, x0:x1].mean(1)) if x1 > x0 else (0, 0)
+            box = (x0 / sw, y0 / sh, x1 / sw, y1 / sh)
+            area = (box[2] - box[0]) * (box[3] - box[1])
+            if 0.04 <= area < 0.6:
+                sbox = box
+                sub = fg[y0:y1, x0:x1]
+                ys, xs = np.where(sub)
+                cx, cy = float(xs.mean() + x0 + 0.5) / sw, float(ys.mean() + y0 + 0.5) / sh
+
     # faces are the subject and the eyes are where the viewer looks first:
     # the crop keeps head and shoulders and aims at the eye line
     found = _faces(im) if alpha.mean() > 0.9 else []

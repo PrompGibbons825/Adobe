@@ -96,6 +96,8 @@ def measure(el: dict, fs: int, max_w: float) -> dict:
     wrapped = _wrap(text, widths, max_w)
     lines = wrapped.split("\n")
     ls = float(el.get("letter_spacing", 0) or 0)
+    if ls and el.get("font_size"):
+        ls *= fs / float(el["font_size"])          # tracking scales with the type
     line_ws = []
     idx = 0
     for ln in lines:

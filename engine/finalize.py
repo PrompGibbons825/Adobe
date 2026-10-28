@@ -152,7 +152,13 @@ def _best_window(ctx, P, el, model, info, pick, wx, wy, bw, bh):
     def shown(x0, y0):
         return (max(0.0, min(sb[2], x0 + wx) - max(sb[0], x0))
                 * max(0.0, min(sb[3], y0 + wy) - max(sb[1], y0))) / sba
-    floor = 0.5 * shown(*pick)
+    # at least half of the most any window could show (a centred pick that
+    # misses the subject entirely must not set the bar at nothing)
+    gx_ = np.linspace(0, 1 - wx, 9) if wx < 0.98 else [pick[0]]
+    gy_ = np.linspace(0, 1 - wy, 9) if wy < 0.98 else [pick[1]]
+    floor = 0.5 * max(shown(float(a), float(b)) for a in gx_ for b in gy_)
+    if shown(*pick) < floor:
+        pick = max(((float(a), float(b)) for a in gx_ for b in gy_), key=lambda w: shown(*w))
 
     gx = np.linspace(0, 1 - wx, 9) if wx < 0.98 else [pick[0]]
     gy = np.linspace(0, 1 - wy, 9) if wy < 0.98 else [pick[1]]
