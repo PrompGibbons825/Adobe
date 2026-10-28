@@ -1343,9 +1343,27 @@ def tmpl_turn(ctx, model):
                     sub.vis[t["id"]] = (x, y + (asc - cap) * fs, x + w, y + asc * fs)
                     x += w + 0.5 * fs
                 y += lh
-            r_ = (rect[0] + hw + 0.05 * rect[2], rect[1], rect[2] - hw - 0.05 * rect[2], rect[3])
-            if stack(ctx, sub, rest, r_, "left", t_cap(ctx, r_[2]) * 3) is None:
-                return None
+            used = max(sum(tf.single_line_width(t, fs) for t in r) + 0.5 * fs * (len(r) - 1) for r in rows)
+            gx = rect[0] + used + 0.06 * rect[2]
+            colw = rect[0] + rect[2] - gx
+            # the details: one size for all of them, the largest at which their
+            # re-flowed lines fit the rest of the panel, never above the headline's
+            dts = [dict(u.els[0], content=" ".join(str(u.els[0]["content"]).split())) for u in rest]
+            f2 = min(fs - 1, int(rect[3] / (1.3 * len(dts))))
+            while f2 > 5:
+                ms = [tf.measure(t, f2, colw) for t in dts]
+                if all(m_["word_w"] <= colw for m_ in ms) and \
+                        sum(m_["height"] for m_ in ms) + 0.3 * f2 * (len(ms) - 1) <= 0.96 * rect[3]:
+                    break
+                f2 -= 1
+            ms = [tf.measure(t, f2, colw) for t in dts]
+            th = sum(m_["height"] for m_ in ms) + 0.3 * f2 * (len(ms) - 1)
+            y = rect[1] + (rect[3] - th) / 2
+            for t, m_ in zip(dts, ms):
+                sub.set(t["id"], x=gx, y=y, width=colw, height=m_["height"], font_size=f2,
+                        content=t["content"], text_align="left")
+                sub.vis[t["id"]] = tf.visual_box(dict(t, text_align="left"), gx, y, colw, f2, m_)
+                y += m_["height"] + 0.3 * f2
         elif stack(ctx, sub, units, rect, al, t_cap(ctx, rect[2]) * 2) is None:
             return None
         for kk, v in sub.props.items():
