@@ -4,6 +4,8 @@ keeping content inside the canvas."""
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from . import saliency
@@ -236,6 +238,14 @@ def place_bg(ctx, P, unit, model=None):
     from .analyze import norm_rot
     rot = norm_rot(el.get("rotation", 0) or 0)
     turned = 0
+    if abs(abs(rot) - 90) <= 30 or abs(abs(rot) - 270) <= 30:
+        # turned only to fit the source's shape? If the new canvas suits the
+        # picture's own orientation better, show it the right way round
+        iw0, ih0 = info["size"]
+        ca, na, ta = W / H, iw0 / ih0, ih0 / iw0
+        if abs(math.log(ca / na)) < abs(math.log(ca / ta)):
+            rot = 0.0
+            P.set(el["id"], rotation=0)
     if abs(abs(rot) - 90) <= 30 or abs(abs(rot) - 270) <= 30:
         # a photo turned on its side: crop it as the upright picture the viewer
         # sees (its maps turned with it), then turn the box back
@@ -705,8 +715,64 @@ def finalize(ctx, P, model, float_threshold=0.0):
                 return None
     if not same:
         pin_edges(ctx, P, model)      # the same design already keeps its edges
+    min_type(ctx, P, model)
     clamp_inside(ctx, P, model)
     return P
+
+
+def min_type(ctx, P, model):
+    """No text smaller than about 11 px when the design is seen at 768 px on
+    its long side: a smaller line is set at that size, its box widened to hold
+    its lines (around the same anchor its alignment uses)."""
+    from . import textfit as tf
+    fmin = int(math.ceil(11.0 * max(ctx.W, ctx.H) / 768))
+    for eid, p in P.props.items():
+        el = model["els"].get(eid)
+        if el is None or el["type"] != "text" or eid in P.hidden:
+            continue
+        fs = p.get("font_size", el["font_size"])
+        if fs >= fmin:
+            continue
+        from .analyze import norm_rot
+        if abs(norm_rot(p.get("rotation", el.get("rotation", 0)) or 0)) > 1:
+            continue                  # a turned line: its box does not show where it lands
+        k = fmin / max(1.0, fs)
+        w, h = p.get("width", el["width"]), p.get("height", el["height"])
+        x, y = p.get("x", el["x"]), p.get("y", el["y"])
+        nw = min(ctx.W, w * k)
+        e2 = dict(el, **{kk: v for kk, v in p.items() if kk in ("content", "text_align")})
+        m = tf.measure(tf.flow(e2), fmin, nw)
+        nh = max(h * k, m["height"])
+        al = p.get("text_align", el.get("text_align", "left"))
+        nx = x if al == "left" else (x + w - nw if al == "right" else x + w / 2 - nw / 2)
+        nv = tf.visual_box(dict(e2, text_align=al), nx, y, nw, fmin, m)
+        old = P.vis.get(eid, nv)
+        if nv[0] < 0 or nv[1] < 0 or nv[2] > ctx.W or nv[3] > ctx.H:
+            continue
+        # only where the bigger line still fits: inside whatever it sat on,
+        # and onto nothing it was clear of
+        z = el.get("z_index", 0)
+        ok = True
+        for j, ob in P.vis.items():
+            if j == eid or j in P.hidden or j not in model["els"]:
+                continue
+            oe = model["els"][j]
+            under = oe["type"] != "text" and oe.get("z_index", 0) < z and _box_overlap(old, ob) >= 0.9 * max(
+                1.0, (old[2] - old[0]) * (old[3] - old[1]))
+            if under:
+                if _box_overlap(nv, ob) < 0.95 * (nv[2] - nv[0]) * (nv[3] - nv[1]):
+                    ok = False          # it would spill off its plate
+                continue
+            big = (ob[2] - ob[0]) * (ob[3] - ob[1]) > 0.5 * ctx.W * ctx.H
+            if not big and _box_overlap(nv, ob) > _box_overlap(old, ob) + 1.0:
+                ok = False
+            if not ok:
+                break
+        if not ok:
+            continue
+        p.update(font_size=fmin, width=nw, height=nh, x=nx)
+        p["y"] = y
+        P.vis[eid] = nv
 
 
 def place_anchored(ctx, P, unit):
