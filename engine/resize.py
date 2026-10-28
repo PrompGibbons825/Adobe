@@ -42,9 +42,9 @@ def _candidates(ctx, model):
             ("pinned", "spread") if _fade(ctx) < 1.0 else ("pinned",)
         for mode in modes:
             yield 0.0, lambda m=mode: tmpl_same(ctx, model, m)
-    if not getattr(ctx, "grids", False) and _fade(ctx) < 0.5:
-        from .layout import tmpl_axis
-        yield 0.0, lambda: tmpl_axis(ctx, model)
+    if not getattr(ctx, "grids", False) and _fade(ctx) == 0.0:
+        from .layout import tmpl_turn
+        yield 0.0, lambda: tmpl_turn(ctx, model)
     flow = [u for u in model["units"] if u.role in FLOW_ROLES]
     if not flow:
         return
@@ -395,7 +395,7 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
                 if DEBUG:
                     print(f"    {('loose ' if broken else '') + P.meta['template']:<34} score={s:7.2f} "
                           + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
-                if P.meta["template"].startswith("same-"):
+                if P.meta["template"].startswith(("same-", "turn")):
                     # faithfulness first: for a standard change of format the
                     # designer's own arrangement wins unless clearly beaten
                     br["same_design"] = SAME_BONUS * _fade(ctx)

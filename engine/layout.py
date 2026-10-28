@@ -1224,165 +1224,133 @@ def _rot_box(x, y, w, h, rot):
 
 
 # ---------------------------------------------------------------------------
-# The design turned onto the new axis. A skyscraper made into a leaderboard (or
-# the reverse) is a sequence of bands along its long side: badge, photo, copy
-# panel. They are laid out in the same order along the new long side, each in
-# a slot sized to its content; a band keeps its own arrangement (scaled to fit
-# its slot) unless that leaves its text too small to read, then its units are
-# re-stacked to fill the slot.
+# The whole design turned a quarter turn: for a tall design made wide (or the
+# reverse), every picture, panel and shape is rotated with the design, so the
+# composition stays exactly as the designer made it, only on its side. The
+# words alone are set upright again, each group of them in the turned box of
+# whatever held it (a copy panel, a badge), in its reading order.
 
-AXIS_SKIP = {"bg", "border"}
-
-
-def _bands(els, along, tol):
-    """Elements grouped into bands along one axis (0 = x, 1 = y), in order:
-    a band ends where nothing crosses the gap to the next."""
-    from .analyze import _box
-    spans = sorted(((_box(e)[along], _box(e)[along + 2], e) for e in els), key=lambda t: t[0])
-    bands, cur, hi = [], [], None
-    for lo, h, e in spans:
-        # a new band starts where a piece reaches past the current one and
-        # overlaps it by less than tol (a panel tucked under a photo's edge)
-        if cur and lo > hi - tol and h > hi:
-            bands.append(cur)
-            cur = []
-        hi = h if not cur else max(hi, h)
-        cur.append(e)
-    if cur:
-        bands.append(cur)
-    return bands
-
-
-def _box_is_picture(x):
-    """A detailed picture (a photo), not a flat panel."""
-    if x["type"] != "image":
-        return False
-    info = saliency.analyze(x.get("asset_id") or "")
-    return bool(info and info["busyness"] > 0.03 and info["opaque_frac"] > 0.6)
-
-
-def tmpl_axis(ctx, model):
+def tmpl_turn(ctx, model):
     from .analyze import Unit, _box, norm_rot
     W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
-    src_long = 1 if Hs >= Ws else 0
-    new_long = 0 if W >= H else 1
-    if src_long == new_long:
+    if (Hs > Ws) == (H > W) or min(W, H) == 0:
         return None
-    els = [e for u in model["units"] if u.role not in AXIS_SKIP for e in u.els
-           if abs(norm_rot(e.get("rotation", 0) or 0)) <= 1]
-    if len(els) < 3:
-        return None
-    srcL = Hs if src_long == 1 else Ws
-    # what runs most of the length (a full-height panel, a frame) is a
-    # surface: it fills the new canvas instead of taking a slot
-    surfaces = [e for e in els if _box(e)[src_long + 2] - _box(e)[src_long] >= 0.7 * srcL]
-    els = [e for e in els if e not in surfaces]
-    bands = [b for b in _bands(els, src_long, 0.1 * srcL)]
-    # tiny bands (a lone rule, a dot) join their neighbour
-    merged = []
-    for b in bands:
-        bs = [_box(e) for e in b]
-        size = max(x[src_long + 2] for x in bs) - min(x[src_long] for x in bs)
-        if merged and size < 0.06 * srcL:
-            merged[-1] += b
-        else:
-            merged.append(list(b))
-    bands = merged
-    if len(bands) < 2 or len(bands) > 5:
-        return None
-    if not any(e["type"] == "text" for b in bands for e in b):
-        return None
-    P = Placed()
-    L, S = (W, H) if new_long == 0 else (H, W)
-    m = 0.06 * S
-    gap = 0.02 * L
+    ccw = Hs > Ws          # tall -> wide: turn counter-clockwise (top goes left)
+    # the turned design fills the new canvas: its length along the new width,
+    # its breadth along the new height (pictures are cropped, never distorted)
+    # the design's content (not its outer margin) is mapped edge to edge
+    allb = [_box(e) for u in model["units"] if u.role not in ("bg", "border") for e in u.els]
+    cx0, cy0 = max(0.0, min(b[0] for b in allb)), max(0.0, min(b[1] for b in allb))
+    cx1, cy1 = min(Ws, max(b[2] for b in allb)), min(Hs, max(b[3] for b in allb))
+    m = 0.03 * min(W, H)
+    sx = (W - 2 * m) / max(1e-6, cy1 - cy0)
+    sy = (H - 2 * m) / max(1e-6, cx1 - cx0)
+    s = min(sx, sy)
 
-    def ext(band):
-        bs = [_box(e) for e in band]
-        return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
-    exts = [ext(b) for b in bands]
-    fmin = 11.0 * max(W, H) / 768
-    need = []
-    for band, e in zip(bands, exts):
-        bw, bh = e[2] - e[0], e[3] - e[1]
-        short_src, long_src = (bw, bh) if new_long == 1 else (bh, bw)
-        k = (S - 2 * m) / max(1e-6, short_src)
-        texty = any(x["type"] == "text" for x in band)
-        # a band of copy turned onto its side gets room to set its lines across
-        need.append(max(long_src * k, 2.2 * (S - 2 * m) if texty else 0.0))
-    avail = L - 2 * m - gap * (len(bands) - 1)
-    scale = min(1.0, avail / max(1e-6, sum(need)))
-    pos = m + (avail - sum(n * scale for n in need)) / 2
+    def turn_pt(x, y):
+        return (m + (y - cy0) * sx, m + (cx1 - x) * sy) if ccw else (m + (cy1 - y) * sx, m + (x - cx0) * sy)
+
+    def turn_box(b):
+        a, c = turn_pt(b[0], b[1]), turn_pt(b[2], b[3])
+        return (min(a[0], c[0]), min(a[1], c[1]), max(a[0], c[0]), max(a[1], c[1]))
+    P = Placed()
+    els = [e for u in model["units"] if u.role not in ("bg", "border") for e in u.els]
+    texts = [e for e in els if e["type"] == "text"]
+    others = [e for e in els if e["type"] != "text"]
+    for e in others:
+        cx, cy = turn_pt(e["x"] + e["width"] / 2, e["y"] + e["height"] / 2)
+        # before the turn the box's width runs along the new height
+        w, h = e["width"] * sy, e["height"] * sx
+        r = (float(e.get("rotation", 0) or 0) + (-90 if ccw else 90)) % 360
+        r = r - 360 if r > 180 else r
+        P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h, rotation=r)
+        if e["type"] == "image" and abs(w / max(1e-6, h) - e["width"] / max(1e-6, e["height"])) > 0.02 * e["width"] / max(1e-6, e["height"]):
+            from .analyze import _fills_box
+            if _fills_box(e):
+                P.set(e["id"], fit="cover")
+        P.vis[e["id"]] = turn_box(_box(e))
+    # each text belongs to the smallest solid piece under it (its panel, its badge)
+    def holder(t):
+        tb = _box(t)
+        cx, cy = (tb[0] + tb[2]) / 2, (tb[1] + tb[3]) / 2
+        cands = [o for o in others if o.get("z_index", 0) < t.get("z_index", 0)
+                 and _box(o)[0] <= cx <= _box(o)[2] and _box(o)[1] <= cy <= _box(o)[3]
+                 and o["width"] * o["height"] < 0.8 * Ws * Hs]
+        return min(cands, key=lambda o: o["width"] * o["height"])["id"] if cands else None
+    groups = {}
+    for t in texts:
+        groups.setdefault(holder(t), []).append(t)
     troles = model.get("troles", {})
-    for band, e, n in zip(bands, exts, need):
-        slot_len = n * scale
-        slot = (pos, m, slot_len, S - 2 * m) if new_long == 0 else (m, pos, S - 2 * m, slot_len)
-        pos += slot_len + gap
-        bw, bh = max(1e-6, e[2] - e[0]), max(1e-6, e[3] - e[1])
-        k = min(slot[2] / bw, slot[3] / bh)
-        texts = [x for x in band if x["type"] == "text"]
-        pic = sum(x["width"] * x["height"] for x in band if x["type"] != "text"
-                  and x["width"] * x["height"] >= 0.4 * bw * bh and _box_is_picture(x))
-        if texts and min(x["font_size"] * k for x in texts) < fmin and pic == 0:
-            # re-set the band: its surface fills the slot, its copy is stacked across it
-            barea = bw * bh
-            for x in band:
-                if x["type"] == "text":
-                    continue
-                if x["width"] * x["height"] >= 0.4 * barea:
-                    sx = slot[0] - m * 0.5 if new_long == 0 else slot[0] - m
-                    P.set(x["id"], x=slot[0] - 0.5 * m, y=slot[1] - m, width=slot[2] + m, height=slot[3] + 2 * m,
-                          fit="cover")
-                    P.vis[x["id"]] = (slot[0], slot[1], slot[0] + slot[2], slot[1] + slot[3])
-            tunits = [Unit(x["id"], troles.get(x["id"], "body"), "text", [x]) for x in
-                      sorted(texts, key=lambda x: (_box(x)[1], _box(x)[0]))]
-            inner = (slot[0] + 0.05 * slot[2], slot[1], 0.9 * slot[2], slot[3])
-            sub = Placed()
-            # no line larger than the band's biggest type would be at a share of the slot
-            t = stack(ctx, sub, tunits, inner, "left", min(t_cap(ctx, inner[2]), 1.6 * k / max(1e-6, ctx.t_star)))
-            if t is None:
+    for hid, ts in groups.items():
+        if hid is not None:
+            hb = turn_box(_box(model["els"][hid]))
+            pad = 0.08 * min(hb[2] - hb[0], hb[3] - hb[1])
+            rect = (hb[0] + pad, hb[1] + pad, hb[2] - hb[0] - 2 * pad, hb[3] - hb[1] - 2 * pad)
+        else:
+            bs = [turn_box(_box(t)) for t in ts]
+            rect = (min(b[0] for b in bs), min(b[1] for b in bs),
+                    max(b[2] for b in bs) - min(b[0] for b in bs), max(b[3] for b in bs) - min(b[1] for b in bs))
+        ts = sorted(ts, key=lambda t: (_box(t)[1], _box(t)[0]))
+        units = [Unit(t["id"], troles.get(t["id"], "body"), "text", [dict(t, rotation=0)]) for t in ts]
+        sub = Placed()
+        al = "left" if all(t.get("text_align", "left") == "left" for t in ts) else "center"
+        cols = [units]
+        if rect[2] > 2.5 * rect[3] and len(units) >= 3:
+            # a wide, short panel: the larger type in one column, the rest beside it
+            big = max(t["font_size"] for t in ts)
+            head = [u for u, t in zip(units, ts) if t["font_size"] >= 0.6 * big]
+            rest = [u for u in units if u not in head]
+            if head and rest:
+                cols = [head, rest]
+        if len(cols) == 2:
+            # the headline words, stacked in the narrow original, now run in one
+            # row across the wide panel at the largest size that fits
+            head, rest = cols
+            hw = 0.62 * rect[2]
+            hts = [u.els[0] for u in head]
+            line = [dict(t, content=" ".join(str(t["content"]).split())) for t in hts]
+            best = None
+            for nrows in range(1, min(3, len(line)) + 1):
+                # consecutive words per row, as even as their widths allow
+                ws1 = [tf.single_line_width(t, 100) for t in line]
+                tot = sum(ws1)
+                rows, cur, acc = [], [], 0.0
+                for t, w in zip(line, ws1):
+                    if cur and acc + w / 2 > tot * (len(rows) + 1) / nrows and len(rows) < nrows - 1:
+                        rows.append(cur)
+                        cur = []
+                    cur.append(t)
+                    acc += w
+                rows.append(cur)
+                fs = int(0.85 * rect[3] / (1.15 * len(rows)))
+                while fs > 6:
+                    widest = max(sum(tf.single_line_width(t, fs) for t in r) + 0.5 * fs * (len(r) - 1) for r in rows)
+                    if widest <= hw:
+                        break
+                    fs -= 1
+                if best is None or fs > best[0]:
+                    best = (fs, rows)
+            fs, rows = best
+            asc, cap, desc = tf.metrics(line[0])
+            lh = 1.15 * fs
+            y = rect[1] + (rect[3] - lh * len(rows)) / 2
+            for r in rows:
+                x = rect[0]
+                for t in r:
+                    w = tf.single_line_width(t, fs)
+                    sub.set(t["id"], x=x, y=y, width=w + 2, height=fs * 1.3, font_size=fs,
+                            content=t["content"], text_align="left")
+                    sub.vis[t["id"]] = (x, y + (asc - cap) * fs, x + w, y + asc * fs)
+                    x += w + 0.5 * fs
+                y += lh
+            r_ = (rect[0] + hw + 0.05 * rect[2], rect[1], rect[2] - hw - 0.05 * rect[2], rect[3])
+            if stack(ctx, sub, rest, r_, "left", t_cap(ctx, r_[2]) * 3) is None:
                 return None
-            for kk, v in sub.props.items():
-                P.set(kk, **v)
-            P.vis.update(sub.vis)
-            # small marks in the band keep their place relative to it
-            for x in band:
-                if x["type"] != "text" and x["id"] not in P.props:
-                    rx = (x["x"] - e[0]) / bw
-                    ry = (x["y"] - e[1]) / bh
-                    w_, h_ = x["width"] * k, x["height"] * k
-                    P.set(x["id"], x=slot[0] + rx * slot[2], y=slot[1] + ry * slot[3], width=w_, height=h_)
-                    P.vis[x["id"]] = (slot[0] + rx * slot[2], slot[1] + ry * slot[3],
-                                      slot[0] + rx * slot[2] + w_, slot[1] + ry * slot[3] + h_)
-            continue
-        ox = slot[0] + (slot[2] - bw * k) / 2 - e[0] * k
-        oy = slot[1] + (slot[3] - bh * k) / 2 - e[1] * k
-        for x in band:
-            nx, ny, nw, nh = ox + x["x"] * k, oy + x["y"] * k, x["width"] * k, x["height"] * k
-            if x["type"] == "text":
-                fs = max(1, int(x["font_size"] * k))
-                P.set(x["id"], x=nx, y=ny, width=nw, height=nh, font_size=fs, content=x["content"])
-                P.vis[x["id"]] = tf.visual_box(x, nx, ny, nw, fs, tf.measure(x, fs, nw))
-            else:
-                P.set(x["id"], x=nx, y=ny, width=nw, height=nh)
-                P.vis[x["id"]] = (nx, ny, nx + nw, ny + nh)
-    # what was left out (turned pieces) keeps the source's relative place
-    for u in model["units"]:
-        if u.role in AXIS_SKIP:
-            continue
-        for x in u.els:
-            if x["id"] not in P.props:
-                k = min(W / Ws, H / Hs)
-                P.set(x["id"], x=x["x"] / Ws * W, y=x["y"] / Hs * H, width=x["width"] * k, height=x["height"] * k)
-                P.vis[x["id"]] = _rot_box(x["x"] / Ws * W, x["y"] / Hs * H, x["width"] * k, x["height"] * k,
-                                          x.get("rotation", 0))
-    for x in surfaces:
-        # the surface keeps its insets from the canvas edges (scaled)
-        k = min(W, H) / min(Ws, Hs)
-        l, t = max(0.0, x["x"]) * k, max(0.0, x["y"]) * k
-        r, b = max(0.0, Ws - x["x"] - x["width"]) * k, max(0.0, Hs - x["y"] - x["height"]) * k
-        P.set(x["id"], x=l, y=t, width=W - l - r, height=H - t - b, fit="cover")
-        P.vis[x["id"]] = (l, t, W - r, H - b)
+        elif stack(ctx, sub, units, rect, al, t_cap(ctx, rect[2]) * 2) is None:
+            return None
+        for kk, v in sub.props.items():
+            P.set(kk, rotation=0, **v)
+        P.vis.update(sub.vis)
     P.same = True
-    P.meta = {"template": f"axis-{len(bands)}", "t": scale}
+    P.meta = {"template": "turn", "t": s / ctx.t_star if ctx.t_star else 1.0}
     return P
