@@ -2,7 +2,7 @@
 pair in a Crello pair folder, a few pairs per page.
 
 usage (repo root):
-  python tools/sheet.py ROOT OUT_PREFIX DIR[,DIR...] [--labels A,B,...] [--per 8] [--scores FILE] [--no-designer]
+  python tools/sheet.py ROOT OUT_PREFIX DIR[,DIR...] [--labels A,B,...] [--per 8] [--scores FILE] [--designer]
 Writes OUT_PREFIX_1.png, OUT_PREFIX_2.png, ... An engine folder named v_* or
 sprint is a partner engine and is rendered in the brand-kit fonts it measured
 with. --scores takes a scoreboard -v dump to print each engine's distance and
@@ -48,7 +48,7 @@ def main():
     textfit.FONTS_PICKLE, textfit._FM = f"{root}/fonts_subset.pickle", None
     idx = json.load(open(f"{root}/index.json"))
     F, Fs = font(22), font(18)
-    designer = "--no-designer" not in args
+    designer = "--designer" in args            # the designer's resize column only on request
     cols = ["Original"] + (["Designer"] if designer else []) + labels
     lead = len(cols) - len(labels)
     rows = []

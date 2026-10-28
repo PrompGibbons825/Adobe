@@ -1,4 +1,4 @@
-"""Contact sheet: designer | A | B for chosen Crello pairs.
+"""Contact sheet: original | A | B for chosen Crello pairs.
 
 usage (repo root):
   python tools/beforeafter.py OUT.png DIR_A DIR_B KEY [KEY ...]
@@ -39,8 +39,7 @@ def main(out, a, b, keys):
         p = int(key[len(root) + 2:].split("_")[0])
         wh = key.rsplit("_", 1)[1]
         idx = json.load(open(f"{root}/index.json"))
-        ref = next(v for v in idx[p][1:] if f"{v['w']}x{v['h']}" == wh)
-        ims = [legible.render(json.load(open(f"{root}/designs/{ref['file']}")))]
+        ims = [legible.render(json.load(open(f"{root}/designs/{idx[p][0]['file']}")))]   # the original
         for d in (a, b):
             f = d / f"{key}.json"
             ims.append(legible.render(json.load(open(f)), fonts_for(d)) if f.is_file() else None)
@@ -60,7 +59,7 @@ def main(out, a, b, keys):
         rows.append(r)
     head = Image.new("RGB", (rows[0].width, 40), "white")
     d = ImageDraw.Draw(head)
-    for k, label in enumerate(["Designer", a.name, b.name]):
+    for k, label in enumerate(["Original", a.name, b.name]):
         d.text((10 + k * 640, 6), label, fill=(90, 90, 90), font=F)
     rows = [head] + rows
     sheet = Image.new("RGB", (rows[0].width, sum(r.height for r in rows)), "white")
