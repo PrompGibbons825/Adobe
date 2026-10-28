@@ -147,3 +147,28 @@ def relevance(im: Image.Image, boxes, text: str):
     crops = [im.crop((int(b[0] * W), int(b[1] * H), int(b[2] * W), int(b[3] * H))) for b in boxes]
     v = _clip_image(crops)
     return None if v is None else (v @ t[0]).tolist()
+
+
+_LOGO_LABELS = ["a brand logo", "a company logo or emblem", "a decorative shape", "a geometric icon",
+                "a photograph", "a line or divider", "a pattern of confetti or stars"]
+_LOGO_T = None
+
+
+def logo_prob(im: Image.Image):
+    """CLIP's probability that a small image is a logo or emblem (on white), or None."""
+    global _LOGO_T
+    if _LOGO_T is None:
+        _LOGO_T = _clip_text(_LOGO_LABELS)
+        if _LOGO_T is None:
+            _LOGO_T = False
+    if _LOGO_T is False:
+        return None
+    rgba = im.convert("RGBA")
+    bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    bg.alpha_composite(rgba)
+    v = _clip_image([bg.convert("RGB")])
+    if v is None:
+        return None
+    p = np.exp(100 * (v @ _LOGO_T.T))[0]
+    p /= p.sum()
+    return float(p[0] + p[1])

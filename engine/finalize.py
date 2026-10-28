@@ -721,11 +721,11 @@ def finalize(ctx, P, model, float_threshold=0.0):
 
 
 def min_type(ctx, P, model):
-    """No text smaller than about 11 px when the design is seen at 768 px on
+    """No text smaller than about 14 px when the design is seen at 768 px on
     its long side: a smaller line is set at that size, its box widened to hold
     its lines (around the same anchor its alignment uses)."""
     from . import textfit as tf
-    fmin = int(math.ceil(11.0 * max(ctx.W, ctx.H) / 768))
+    fmin = int(math.ceil(14.0 * max(ctx.W, ctx.H) / 768))
     for eid, p in P.props.items():
         el = model["els"].get(eid)
         if el is None or el["type"] != "text" or eid in P.hidden:
@@ -760,7 +760,12 @@ def min_type(ctx, P, model):
             under = oe["type"] != "text" and oe.get("z_index", 0) < z and _box_overlap(old, ob) >= 0.9 * max(
                 1.0, (old[2] - old[0]) * (old[3] - old[1]))
             if under:
-                if _box_overlap(nv, ob) < 0.95 * (nv[2] - nv[0]) * (nv[3] - nv[1]):
+                room = ob
+                if oe["type"] == "image" and (saliency.analyze(oe.get("asset_id") or "") or {}).get("opaque_frac", 1) < 0.9:
+                    # a shaped plate (a circle, a badge): only its inner part holds text
+                    iw_, ih_ = 0.15 * (ob[2] - ob[0]), 0.15 * (ob[3] - ob[1])
+                    room = (ob[0] + iw_, ob[1] + ih_, ob[2] - iw_, ob[3] - ih_)
+                if _box_overlap(nv, room) < 0.95 * (nv[2] - nv[0]) * (nv[3] - nv[1]):
                     ok = False          # it would spill off its plate
                 continue
             big = (ob[2] - ob[0]) * (ob[3] - ob[1]) > 0.5 * ctx.W * ctx.H

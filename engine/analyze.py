@@ -557,6 +557,23 @@ def _cluster(cand, carea, mind, cw_=None, ch_=None, compose=True, on_scene=False
     return out
 
 
+def _logo_prob(e):
+    """CLIP's logo probability for an image element (cached by asset), or None."""
+    from PIL import Image
+    from . import vision
+    aid = e.get("asset_id") or ""
+    if aid not in _LOGO_CACHE:
+        p = saliency.asset_file(aid)
+        try:
+            _LOGO_CACHE[aid] = vision.logo_prob(Image.open(p)) if p else None
+        except Exception:
+            _LOGO_CACHE[aid] = None
+    return _LOGO_CACHE[aid]
+
+
+_LOGO_CACHE: dict = {}
+
+
 def _find_container(members):
     """The element that encloses most of the others (a frame, card, pill)."""
     best = None
@@ -836,6 +853,32 @@ def analyze(source: dict, compose: bool = True) -> dict:
                  and _area(e) < 0.08 * carea and e["y"] < 0.25 * ch]
         if cands:
             logo_ids.add(min(cands, key=lambda e: e["y"])["id"])
+    if not logo_ids and not any(u.role == "logo" for u in units):
+        # a compact mark set right above the copy, over its column: the brand
+        # (a monogram, a face in a circle), not a scattered ornament. One of a
+        # kind: no other image of about its size.
+        texts_ = [e for e in els if e["type"] == "text"]
+        if texts_:
+            tb = (min(e["x"] for e in texts_), min(e["y"] for e in texts_),
+                  max(e["x"] + e["width"] for e in texts_), max(e["y"] + e["height"] for e in texts_))
+            marks = []
+            for e in real:
+                r = e["width"] / max(1.0, e["height"])
+                a = _area(e)
+                if not (0.6 <= r <= 1.7 and 0.01 * carea <= a <= 0.12 * carea):
+                    continue
+                if any(o is not e and 0.5 * a <= _area(o) <= 2 * a for o in real):
+                    continue          # one of a set (paw prints, icons): decoration
+                cx, cy = e["x"] + e["width"] / 2, e["y"] + e["height"] / 2
+                near = (tb[0] - 0.15 * cw <= cx <= tb[2] + 0.15 * cw) and (tb[1] - 0.25 * ch <= cy <= tb[3] + 0.1 * ch)
+                if not near:
+                    continue
+                lp = _logo_prob(e)
+                if lp is not None and lp >= 0.6:
+                    marks.append((lp, e))
+            marks = [e for _, e in sorted(marks, key=lambda t: -t[0])[:1]]
+            if marks:
+                logo_ids.add(marks[0]["id"])
     rest = [e for e in real if e["id"] not in logo_ids]
     hero_id = max(rest, key=_area)["id"] if rest else None
     for e in real:
