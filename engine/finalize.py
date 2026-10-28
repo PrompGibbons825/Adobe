@@ -199,6 +199,27 @@ def _box_overlap(a, b):
     return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
 
 
+def _turned_info(info, k):
+    """The image analysis as seen after turning the picture a quarter turn
+    (k=+1 counter-clockwise, -1 clockwise)."""
+    def pt(u, v):
+        return (v, 1 - u) if k == 1 else (1 - v, u)
+
+    def box(b):
+        a, c = pt(b[0], b[1]), pt(b[2], b[3])
+        return (min(a[0], c[0]), min(a[1], c[1]), max(a[0], c[0]), max(a[1], c[1]))
+    out = dict(info)
+    w, h = info["size"]
+    out["size"] = (h, w)
+    for m in ("sal", "busy", "lum"):
+        out[m] = np.rot90(info[m], k)
+    out["sal_box"] = box(info["sal_box"])
+    out["centroid"] = pt(*info["centroid"])
+    out["faces"] = [box(f) for f in info.get("faces", [])]
+    out["eyes"] = [pt(*e) for e in info.get("eyes", [])]
+    return out
+
+
 def place_bg(ctx, P, unit, model=None):
     el = unit.els[0]
     W, H = ctx.W, ctx.H
@@ -206,6 +227,16 @@ def place_bg(ctx, P, unit, model=None):
     if info is None:
         P.set(el["id"], x=0, y=0, width=W, height=H)
         return
+    from .analyze import norm_rot
+    rot = norm_rot(el.get("rotation", 0) or 0)
+    turned = 0
+    if abs(abs(rot) - 90) <= 30 or abs(abs(rot) - 270) <= 30:
+        # a photo turned on its side: crop it as the upright picture the viewer
+        # sees (its maps turned with it), then turn the box back
+        turned = 1 if (rot % 360) > 180 else -1        # numpy turns: +1 counter-clockwise
+        info = _turned_info(info, turned)
+        bx = rot_bounds(el["x"], el["y"], el["width"], el["height"], rot)
+        el = dict(el, x=bx[0], y=bx[1], width=bx[2] - bx[0], height=bx[3] - bx[1], rotation=0)
     iw, ih = info["size"]
     s = max(W / iw, H / ih)
     bw, bh = iw * s, ih * s
@@ -227,7 +258,11 @@ def place_bg(ctx, P, unit, model=None):
             y0 = min(max(fy - ty * wy, 0.0), 1 - wy)
     if model is not None and (wx < 0.98 or wy < 0.98):
         x0, y0 = _best_window(ctx, P, el, model, info, (x0, y0), wx, wy, bw, bh)
-    if abs(x0 - cx0) < 1e-3 and abs(y0 - cy0) < 1e-3 and el.get("fit", "contain") == "cover":
+    if turned:
+        # the upright view's box, turned back about the same centre
+        cx, cy = -x0 * bw + bw / 2, -y0 * bh + bh / 2
+        P.set(el["id"], x=cx - bh / 2, y=cy - bw / 2, width=bh, height=bw)
+    elif abs(x0 - cx0) < 1e-3 and abs(y0 - cy0) < 1e-3 and el.get("fit", "contain") == "cover":
         P.set(el["id"], x=0, y=0, width=W, height=H)
     else:
         P.set(el["id"], x=-x0 * bw, y=-y0 * bh, width=bw, height=bh)
