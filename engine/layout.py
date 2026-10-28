@@ -1221,3 +1221,168 @@ def _has_picture(units, k, span, Ws, Hs):
 def _rot_box(x, y, w, h, rot):
     from .blocks import rot_bounds
     return rot_bounds(x, y, w, h, rot)
+
+
+# ---------------------------------------------------------------------------
+# The design turned onto the new axis. A skyscraper made into a leaderboard (or
+# the reverse) is a sequence of bands along its long side: badge, photo, copy
+# panel. They are laid out in the same order along the new long side, each in
+# a slot sized to its content; a band keeps its own arrangement (scaled to fit
+# its slot) unless that leaves its text too small to read, then its units are
+# re-stacked to fill the slot.
+
+AXIS_SKIP = {"bg", "border"}
+
+
+def _bands(els, along, tol):
+    """Elements grouped into bands along one axis (0 = x, 1 = y), in order:
+    a band ends where nothing crosses the gap to the next."""
+    from .analyze import _box
+    spans = sorted(((_box(e)[along], _box(e)[along + 2], e) for e in els), key=lambda t: t[0])
+    bands, cur, hi = [], [], None
+    for lo, h, e in spans:
+        # a new band starts where a piece reaches past the current one and
+        # overlaps it by less than tol (a panel tucked under a photo's edge)
+        if cur and lo > hi - tol and h > hi:
+            bands.append(cur)
+            cur = []
+        hi = h if not cur else max(hi, h)
+        cur.append(e)
+    if cur:
+        bands.append(cur)
+    return bands
+
+
+def _box_is_picture(x):
+    """A detailed picture (a photo), not a flat panel."""
+    if x["type"] != "image":
+        return False
+    info = saliency.analyze(x.get("asset_id") or "")
+    return bool(info and info["busyness"] > 0.03 and info["opaque_frac"] > 0.6)
+
+
+def tmpl_axis(ctx, model):
+    from .analyze import Unit, _box, norm_rot
+    W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
+    src_long = 1 if Hs >= Ws else 0
+    new_long = 0 if W >= H else 1
+    if src_long == new_long:
+        return None
+    els = [e for u in model["units"] if u.role not in AXIS_SKIP for e in u.els
+           if abs(norm_rot(e.get("rotation", 0) or 0)) <= 1]
+    if len(els) < 3:
+        return None
+    srcL = Hs if src_long == 1 else Ws
+    # what runs most of the length (a full-height panel, a frame) is a
+    # surface: it fills the new canvas instead of taking a slot
+    surfaces = [e for e in els if _box(e)[src_long + 2] - _box(e)[src_long] >= 0.7 * srcL]
+    els = [e for e in els if e not in surfaces]
+    bands = [b for b in _bands(els, src_long, 0.1 * srcL)]
+    # tiny bands (a lone rule, a dot) join their neighbour
+    merged = []
+    for b in bands:
+        bs = [_box(e) for e in b]
+        size = max(x[src_long + 2] for x in bs) - min(x[src_long] for x in bs)
+        if merged and size < 0.06 * srcL:
+            merged[-1] += b
+        else:
+            merged.append(list(b))
+    bands = merged
+    if len(bands) < 2 or len(bands) > 5:
+        return None
+    if not any(e["type"] == "text" for b in bands for e in b):
+        return None
+    P = Placed()
+    L, S = (W, H) if new_long == 0 else (H, W)
+    m = 0.06 * S
+    gap = 0.02 * L
+
+    def ext(band):
+        bs = [_box(e) for e in band]
+        return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+    exts = [ext(b) for b in bands]
+    fmin = 11.0 * max(W, H) / 768
+    need = []
+    for band, e in zip(bands, exts):
+        bw, bh = e[2] - e[0], e[3] - e[1]
+        short_src, long_src = (bw, bh) if new_long == 1 else (bh, bw)
+        k = (S - 2 * m) / max(1e-6, short_src)
+        texty = any(x["type"] == "text" for x in band)
+        # a band of copy turned onto its side gets room to set its lines across
+        need.append(max(long_src * k, 2.2 * (S - 2 * m) if texty else 0.0))
+    avail = L - 2 * m - gap * (len(bands) - 1)
+    scale = min(1.0, avail / max(1e-6, sum(need)))
+    pos = m + (avail - sum(n * scale for n in need)) / 2
+    troles = model.get("troles", {})
+    for band, e, n in zip(bands, exts, need):
+        slot_len = n * scale
+        slot = (pos, m, slot_len, S - 2 * m) if new_long == 0 else (m, pos, S - 2 * m, slot_len)
+        pos += slot_len + gap
+        bw, bh = max(1e-6, e[2] - e[0]), max(1e-6, e[3] - e[1])
+        k = min(slot[2] / bw, slot[3] / bh)
+        texts = [x for x in band if x["type"] == "text"]
+        pic = sum(x["width"] * x["height"] for x in band if x["type"] != "text"
+                  and x["width"] * x["height"] >= 0.4 * bw * bh and _box_is_picture(x))
+        if texts and min(x["font_size"] * k for x in texts) < fmin and pic == 0:
+            # re-set the band: its surface fills the slot, its copy is stacked across it
+            barea = bw * bh
+            for x in band:
+                if x["type"] == "text":
+                    continue
+                if x["width"] * x["height"] >= 0.4 * barea:
+                    sx = slot[0] - m * 0.5 if new_long == 0 else slot[0] - m
+                    P.set(x["id"], x=slot[0] - 0.5 * m, y=slot[1] - m, width=slot[2] + m, height=slot[3] + 2 * m,
+                          fit="cover")
+                    P.vis[x["id"]] = (slot[0], slot[1], slot[0] + slot[2], slot[1] + slot[3])
+            tunits = [Unit(x["id"], troles.get(x["id"], "body"), "text", [x]) for x in
+                      sorted(texts, key=lambda x: (_box(x)[1], _box(x)[0]))]
+            inner = (slot[0] + 0.05 * slot[2], slot[1], 0.9 * slot[2], slot[3])
+            sub = Placed()
+            # no line larger than the band's biggest type would be at a share of the slot
+            t = stack(ctx, sub, tunits, inner, "left", min(t_cap(ctx, inner[2]), 1.6 * k / max(1e-6, ctx.t_star)))
+            if t is None:
+                return None
+            for kk, v in sub.props.items():
+                P.set(kk, **v)
+            P.vis.update(sub.vis)
+            # small marks in the band keep their place relative to it
+            for x in band:
+                if x["type"] != "text" and x["id"] not in P.props:
+                    rx = (x["x"] - e[0]) / bw
+                    ry = (x["y"] - e[1]) / bh
+                    w_, h_ = x["width"] * k, x["height"] * k
+                    P.set(x["id"], x=slot[0] + rx * slot[2], y=slot[1] + ry * slot[3], width=w_, height=h_)
+                    P.vis[x["id"]] = (slot[0] + rx * slot[2], slot[1] + ry * slot[3],
+                                      slot[0] + rx * slot[2] + w_, slot[1] + ry * slot[3] + h_)
+            continue
+        ox = slot[0] + (slot[2] - bw * k) / 2 - e[0] * k
+        oy = slot[1] + (slot[3] - bh * k) / 2 - e[1] * k
+        for x in band:
+            nx, ny, nw, nh = ox + x["x"] * k, oy + x["y"] * k, x["width"] * k, x["height"] * k
+            if x["type"] == "text":
+                fs = max(1, int(x["font_size"] * k))
+                P.set(x["id"], x=nx, y=ny, width=nw, height=nh, font_size=fs, content=x["content"])
+                P.vis[x["id"]] = tf.visual_box(x, nx, ny, nw, fs, tf.measure(x, fs, nw))
+            else:
+                P.set(x["id"], x=nx, y=ny, width=nw, height=nh)
+                P.vis[x["id"]] = (nx, ny, nx + nw, ny + nh)
+    # what was left out (turned pieces) keeps the source's relative place
+    for u in model["units"]:
+        if u.role in AXIS_SKIP:
+            continue
+        for x in u.els:
+            if x["id"] not in P.props:
+                k = min(W / Ws, H / Hs)
+                P.set(x["id"], x=x["x"] / Ws * W, y=x["y"] / Hs * H, width=x["width"] * k, height=x["height"] * k)
+                P.vis[x["id"]] = _rot_box(x["x"] / Ws * W, x["y"] / Hs * H, x["width"] * k, x["height"] * k,
+                                          x.get("rotation", 0))
+    for x in surfaces:
+        # the surface keeps its insets from the canvas edges (scaled)
+        k = min(W, H) / min(Ws, Hs)
+        l, t = max(0.0, x["x"]) * k, max(0.0, x["y"]) * k
+        r, b = max(0.0, Ws - x["x"] - x["width"]) * k, max(0.0, Hs - x["y"] - x["height"]) * k
+        P.set(x["id"], x=l, y=t, width=W - l - r, height=H - t - b, fit="cover")
+        P.vis[x["id"]] = (l, t, W - r, H - b)
+    P.same = True
+    P.meta = {"template": f"axis-{len(bands)}", "t": scale}
+    return P

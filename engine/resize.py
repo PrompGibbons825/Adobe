@@ -42,6 +42,9 @@ def _candidates(ctx, model):
             ("pinned", "spread") if _fade(ctx) < 1.0 else ("pinned",)
         for mode in modes:
             yield 0.0, lambda m=mode: tmpl_same(ctx, model, m)
+    if not getattr(ctx, "grids", False) and _fade(ctx) < 0.5:
+        from .layout import tmpl_axis
+        yield 0.0, lambda: tmpl_axis(ctx, model)
     flow = [u for u in model["units"] if u.role in FLOW_ROLES]
     if not flow:
         return
