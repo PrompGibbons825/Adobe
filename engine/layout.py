@@ -1278,12 +1278,15 @@ def tmpl_turn(ctx, model):
             P.set(e["id"], x=tb[0], y=tb[1], width=tb[2] - tb[0], height=tb[3] - tb[1], rotation=0, fit="cover")
             P.vis[e["id"]] = tb
             continue
+        from .analyze import _opaque_frac
+        if _opaque_frac(e) < 0.5:
+            # a shape or drawing keeps its proportions: one scale on both axes
+            w, h = e["width"] * s, e["height"] * s
         P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h, rotation=r)
         if e["type"] == "image" and abs(w / max(1e-6, h) - e["width"] / max(1e-6, e["height"])) > 0.02 * e["width"] / max(1e-6, e["height"]):
-            from .analyze import _fills_box
-            if _fills_box(e):
-                P.set(e["id"], fit="cover")
-        P.vis[e["id"]] = turn_box(_box(e))
+            P.set(e["id"], fit="cover")      # a flat panel is cropped, never stretched
+        fw, fh = (h, w) if abs(abs(r) - 90) < 45 else (w, h)
+        P.vis[e["id"]] = (cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2)
     # each text belongs to the smallest solid piece under it (its panel, its badge)
     def holder(t):
         tb = _box(t)
@@ -1297,8 +1300,8 @@ def tmpl_turn(ctx, model):
         groups.setdefault(holder(t), []).append(t)
     troles = model.get("troles", {})
     for hid, ts in groups.items():
-        if hid is not None:
-            hb = turn_box(_box(model["els"][hid]))
+        if hid is not None and not isinstance(hid, tuple):
+            hb = P.vis[hid]                 # the holder as actually drawn
             pad = 0.08 * min(hb[2] - hb[0], hb[3] - hb[1])
             rect = (hb[0] + pad, hb[1] + pad, hb[2] - hb[0] - 2 * pad, hb[3] - hb[1] - 2 * pad)
         else:

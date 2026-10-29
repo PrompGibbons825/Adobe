@@ -45,8 +45,7 @@ def _candidates(ctx, model):
     # turning the design is for real strip conversions only (a skyscraper into
     # a leaderboard, ~30x): a 2:1 portrait into a 1:2 landscape (4x) is an
     # ordinary orientation change and keeps the design upright
-    if not getattr(ctx, "grids", False) and \
-            abs(math.log((ctx.W / ctx.H) / (ctx.Ws / ctx.Hs))) >= math.log(8.0):
+    if not getattr(ctx, "grids", False) and _fade(ctx) == 0.0:
         from .layout import tmpl_turn
         yield 0.0, lambda: tmpl_turn(ctx, model)
     flow = [u for u in model["units"] if u.role in FLOW_ROLES]
@@ -140,6 +139,14 @@ def _build(source, target, P):
         e.pop("_flow", None)
         for k, v in P.props.get(el["id"], {}).items():
             e[k] = round(v, 2) if isinstance(v, float) else v
+        if e["type"] == "image" and e.get("fit", "fill") == "fill" and el["width"] > 0 and el["height"] > 0 \
+                and e["width"] > 0 and e["height"] > 0:
+            # guard: no image is ever drawn stretched. A box that changed shape
+            # crops a solid picture or panel (cover) and fits anything else (contain)
+            a0, a1 = el["width"] / el["height"], e["width"] / e["height"]
+            if abs(a1 - a0) > 0.01 * a0:
+                from .analyze import _fills_box
+                e["fit"] = "cover" if _fills_box(el) else "contain"
         if e["type"] == "text":
             e["font_size"] = max(1, int(round(e["font_size"])))
             # tracking is set in ems: it scales with the type
@@ -179,6 +186,7 @@ def _broken(tight, loose):
 BREAK_COST = 2.0   # per composition taken apart: it has to buy readability or space
 RESTACK_COST = 0.5  # per composition re-stacked along the other axis
 ROTATE_COST = 0.5   # per text piece turned into a vertical strip
+TURN_BONUS = 4.0    # the turned design, offered only from a 4x change of aspect
 SAME_BONUS = 3.0    # the same design, rescaled, at a near-same shape (fades to 0 by a 4x change)
 UPRIGHT_COST = 0.5  # per turned text set upright (a restructure, like turning one)
 
@@ -399,7 +407,11 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
                 if DEBUG:
                     print(f"    {('loose ' if broken else '') + P.meta['template']:<34} score={s:7.2f} "
                           + " ".join(f"{k}={v:.1f}" for k, v in br.items()))
-                if P.meta["template"].startswith(("same-", "turn")):
+                if P.meta["template"] == "turn":
+                    # the design turned onto the new axis keeps its whole look
+                    br["same_design"] = TURN_BONUS
+                    s += br["same_design"]
+                elif P.meta["template"].startswith("same-"):
                     # faithfulness first: for a standard change of format the
                     # designer's own arrangement wins unless clearly beaten
                     br["same_design"] = SAME_BONUS * _fade(ctx)
