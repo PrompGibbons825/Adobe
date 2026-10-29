@@ -1315,12 +1315,6 @@ def tmpl_turn(ctx, model):
     groups = {}
     for t in texts:
         groups.setdefault(holder(t), []).append(t)
-            nb += 1
-            blk = []
-        end = b_[k_ + 2] if not blk else max(end, b_[k_ + 2])
-        blk.append(t)
-    if blk:
-        groups[("free", nb)] = blk
     troles = model.get("troles", {})
     for hid, ts in groups.items():
         if hid is not None and not isinstance(hid, tuple):
