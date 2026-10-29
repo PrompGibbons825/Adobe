@@ -706,6 +706,33 @@ def analyze(source: dict, compose: bool = True) -> dict:
     units: list[Unit] = []
     used = set()
 
+    # 0. Fail-safe: a piece entirely off the canvas never showed in the
+    #    design; it is kept (ids must survive) but hidden in the output.
+    for e in els:
+        b = _box(e)
+        if b[2] <= 0 or b[3] <= 0 or b[0] >= cw or b[1] >= ch:
+            units.append(Unit(e["id"], "offcanvas", "text" if e["type"] == "text" else "image", [e]))
+            used.add(e["id"])
+
+    # 0b. Edge bands: a solid strip running edge to edge along one side (a bar
+    #     under the design, a header band). It belongs to that edge, not to
+    #     whatever happens to overlap it.
+    tol0 = 0.015 * mind
+    for e in els:
+        if e["id"] in used or e["type"] == "text" or abs(norm_rot(e.get("rotation", 0))) > 1 or not _fills_box(e):
+            continue
+        b = _box(e)
+        l, t, r, bt = b[0] <= tol0, b[1] <= tol0, b[2] >= cw - tol0, b[3] >= ch - tol0
+        horiz = l and r and (t != bt) and (b[3] - b[1]) <= 0.15 * ch
+        vert = t and bt and (l != r) and (b[2] - b[0]) <= 0.15 * cw
+        if horiz or vert:
+            if e["type"] == "image" and (saliency.analyze(e.get("asset_id") or "") or {}).get("busyness", 0) > 0.03:
+                continue          # a photo strip is a picture, not a band
+            u = Unit(e["id"], "rule", "bg", [e])
+            u.band = "t" if horiz and t else "b" if horiz else "l" if l else "r"
+            units.append(u)
+            used.add(e["id"])
+
     # 1a. Borders: outlines that echo the canvas edge (even insets on all sides).
     #     A designer keeps these hugging the edge at the same inset, whatever the shape.
     borders = []
@@ -939,11 +966,17 @@ def analyze(source: dict, compose: bool = True) -> dict:
         return sum(ink_w(e) for e in els_ if (e["type"] == "text") == (kind == "text"))
 
     def pictorial(u):
-        """Carries something to look at: at least one image that is not a plain shape."""
+        """Carries something to look at: at least one image that is not a plain
+        shape. A one-colour drawing counts when it is detailed (a line-art
+        illustration has edges everywhere; a circle or a bar has a simple outline)."""
         for e in u.els:
             if e["type"] == "image":
                 info = saliency.analyze(e.get("asset_id") or "")
-                if info is not None and info.get("plain", 1.0) < 0.85:
+                if info is None:
+                    continue
+                if info.get("plain", 1.0) < 0.85:
+                    return True
+                if info.get("busyness", 0) > 0.03 and _area(e) >= 0.08 * carea:
                     return True
         return False
 

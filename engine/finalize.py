@@ -11,7 +11,7 @@ import numpy as np
 from . import saliency
 from .blocks import GroupBlock, ImageBlock, img_vis_frac, rot_bounds
 
-HIDE_ROLES = {"missing"}
+HIDE_ROLES = {"missing", "offcanvas"}
 
 
 def _text_center(P, model):
@@ -333,6 +333,16 @@ def place_rule(ctx, P, unit):
     el = unit.els[0]
     sx, sy = ctx.W / ctx.Ws, ctx.H / ctx.Hs
     k = max(1e-6, ctx.border_scale)
+    band = getattr(unit, "band", None)
+    if band:
+        # an edge band stays on its edge, full length, its thickness scaled
+        if band in ("t", "b"):
+            th = max(1.0, el["height"] * min(sx, sy))
+            P.set(el["id"], x=0, y=0 if band == "t" else ctx.H - th, width=ctx.W, height=th)
+        else:
+            th = max(1.0, el["width"] * min(sx, sy))
+            P.set(el["id"], x=0 if band == "l" else ctx.W - th, y=0, width=th, height=ctx.H)
+        return
     if el["width"] >= el["height"]:
         P.set(el["id"], x=el["x"] * sx, y=el["y"] * sy, width=el["width"] * sx, height=max(1.0, el["height"] * k))
     else:
