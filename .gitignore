@@ -37,3 +37,5 @@ output/*
 /crello_fresh/
 /crello_val/
 /crello_train/
+/crello_hard/
+/crello_hard_all/
