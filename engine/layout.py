@@ -1381,6 +1381,15 @@ def tmpl_turn(ctx, model):
     for hid, ts in groups.items():
         if hid is not None and not isinstance(hid, tuple):
             hb = P.vis[hid]                 # the holder as actually drawn
+            he = model["els"][hid]
+            if he["type"] == "image" and (saliency.analyze(he.get("asset_id") or "") or {}).get("opaque_frac", 0) >= 0.5:
+                # its inner area as shaped (inside an arch's curve, a circle's round)
+                hr = norm_rot(P.props[hid].get("rotation", 0) or 0)
+                qt = 0 if abs(hr) < 45 else (1 if hr < 0 else -1)
+                ir = saliency.inner_rect(he.get("asset_id") or "", qt)
+                if ir is not None:
+                    w0, h0 = hb[2] - hb[0], hb[3] - hb[1]
+                    hb = (hb[0] + ir[0] * w0, hb[1] + ir[1] * h0, hb[0] + ir[2] * w0, hb[1] + ir[3] * h0)
             pad = 0.08 * min(hb[2] - hb[0], hb[3] - hb[1])
             rect = (hb[0] + pad, hb[1] + pad, hb[2] - hb[0] - 2 * pad, hb[3] - hb[1] - 2 * pad)
         else:

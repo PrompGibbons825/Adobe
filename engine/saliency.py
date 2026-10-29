@@ -352,3 +352,37 @@ def region_mean(map_: np.ndarray, fx0: float, fy0: float, fx1: float, fy1: float
     if x1 <= x0 or y1 <= y0:
         return 0.0
     return float(map_[y0:y1, x0:x1].mean())
+
+
+@lru_cache(maxsize=256)
+def inner_rect(asset_id: str, quarter_turns: int = 0):
+    """The largest rectangle inside a shape's visible pixels (fractions of its
+    box), for setting copy inside an arch, a circle or a badge; turned by the
+    given number of quarter turns (numpy's rot90 sense). None if unknown."""
+    im = _load(asset_id)
+    if im is None:
+        return None
+    n = 32
+    a = np.asarray(im.split()[-1].resize((n, n), Image.BILINEAR)) > 128
+    a = np.rot90(a, quarter_turns)
+    if a.mean() > 0.97:
+        return (0.0, 0.0, 1.0, 1.0)
+    # largest all-opaque rectangle (row histogram + stack), on the coarse grid
+    best, h = (0, None), np.zeros(n, int)
+    for y in range(n):
+        h = np.where(a[y], h + 1, 0)
+        st = []
+        for x in range(n + 1):
+            cur = h[x] if x < n else 0
+            start = x
+            while st and st[-1][1] >= cur:
+                sx, sh = st.pop()
+                area = sh * (x - sx)
+                if area > best[0]:
+                    best = (area, (sx, y - sh + 1, x, y + 1))
+                start = sx
+            st.append((start, cur))
+    if best[1] is None:
+        return None
+    x0, y0, x1, y1 = best[1]
+    return (x0 / n, y0 / n, x1 / n, y1 / n)

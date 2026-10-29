@@ -113,6 +113,32 @@ def _behind_lum(P, model, eid, v):
     return 1.0                    # an empty canvas renders white
 
 
+def _src_holder(model, eid):
+    """The panel a text sat inside in the source (an opaque card or shape
+    under it holding at least 95% of its ink, at most 60% of the canvas)."""
+    cache = model.setdefault("_src_holder", {})
+    if eid in cache:
+        return cache[eid]
+    from .analyze import _box, _fills_box
+    t = model["els"][eid]
+    tb = _box(t)
+    ta = max(1.0, _area(tb))
+    Ws_, Hs_ = model["canvas"]
+    best = None
+    for oid, o in model["els"].items():
+        if o["type"] == "text" or o.get("z_index", 0) >= t.get("z_index", 0):
+            continue
+        ob = _box(o)
+        if _area(ob) > 0.85 * Ws_ * Hs_ or _area(ob) < 1.5 * ta:
+            continue
+        if not (_fills_box(o) or (o["type"] == "image" and (saliency.analyze(o.get("asset_id") or "") or {}).get("opaque_frac", 0) >= 0.5)):
+            continue
+        if _overlap(tb, ob) >= 0.95 * ta and (best is None or _area(ob) < _area(_box(model["els"][best]))):
+            best = oid
+    cache[eid] = best
+    return best
+
+
 def _src_overlap(model, a, b):
     """How much two elements overlapped in the source (share of the smaller)."""
     from .analyze import _box
@@ -548,6 +574,7 @@ def score(ctx, P, model):
             # only overlap beyond what the designer set is a collision
             col -= w * max(0.0, frac - _src_overlap(model, a, b) - 0.02)
     br["collisions"] = col
+
 
     # 5. text on busy background
     busy = 0.0
