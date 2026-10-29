@@ -536,6 +536,7 @@ def clamp_inside(ctx, P, model):
         skip.add(pn["id"])        # a full-bleed panel runs off the canvas edges it touches
     if getattr(P, "backdrop", None) is not None:
         skip.update(P.backdrop.ids)
+    skip |= getattr(P, "bleed", set())
     for eid, p in P.props.items():
         if eid in skip or eid in P.hidden:
             continue

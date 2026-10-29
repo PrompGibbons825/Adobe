@@ -1321,12 +1321,41 @@ def tmpl_turn(ctx, model):
         w, h = e["width"] * sy, e["height"] * sx
         r = (float(e.get("rotation", 0) or 0) + (-90 if ccw else 90)) % 360
         r = r - 360 if r > 180 else r
-        if _keeps_upright(e) and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1:
+        if e["width"] * e["height"] >= 0.08 * Ws * Hs and _keeps_upright(e) \
+                and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1:
             # people, faces, buildings, rooms, landscapes have an up: the photo
             # stays upright, cropped into the area its turned box covers
             tb = turn_box(_box(e))
-            P.set(e["id"], x=tb[0], y=tb[1], width=tb[2] - tb[0], height=tb[3] - tb[1], rotation=0, fit="cover")
+            info_ = saliency.analyze(e.get("asset_id") or "")
+            iw_, ih_ = e["width"], e["height"]      # the picture as the design showed it
+            tw_, th_ = tb[2] - tb[0], tb[3] - tb[1]
+            k_ = max(tw_ / iw_, th_ / ih_)
+            bw_, bh_ = iw_ * k_, ih_ * k_
+            # the crop aims at the eyes (or the subject), as the background crop does
+            fx_, fy_ = (sum(q[0] for q in info_["eyes"]) / len(info_["eyes"]),
+                        sum(q[1] for q in info_["eyes"]) / len(info_["eyes"])) if info_.get("eyes") \
+                else info_["centroid"]
+            x_ = min(tb[0], max(tb[2] - bw_, tb[0] + tw_ / 2 - fx_ * bw_))
+            y_ = min(tb[1], max(tb[3] - bh_, tb[1] + th_ / 3 - fy_ * bh_))
+            # the subject (the faces, else the salient box) must fit the crop;
+            # if not, the whole picture is shown upright in its slot instead
+            sb_ = info_["sal_box"]
+            if info_.get("faces"):
+                fs_ = info_["faces"]
+                sb_ = (min(f[0] for f in fs_), min(f[1] for f in fs_), max(f[2] for f in fs_), max(f[3] for f in fs_))
+            wx0, wy0 = (tb[0] - x_) / bw_, (tb[1] - y_) / bh_
+            wx1, wy1 = wx0 + tw_ / bw_, wy0 + th_ / bh_
+            fits_ = sb_[0] >= wx0 - 0.03 and sb_[2] <= wx1 + 0.03 and sb_[1] >= wy0 - 0.03 and sb_[3] <= wy1 + 0.03
+            if not fits_:
+                k_ = min(tw_ / iw_, th_ / ih_)
+                bw_, bh_ = iw_ * k_, ih_ * k_
+                x_, y_ = tb[0] + (tw_ - bw_) / 2, tb[1] + (th_ - bh_) / 2
+                P.set(e["id"], x=x_, y=y_, width=bw_, height=bh_, rotation=0, fit="fill")
+                P.vis[e["id"]] = (x_, y_, x_ + bw_, y_ + bh_)
+                continue
+            P.set(e["id"], x=x_, y=y_, width=bw_, height=bh_, rotation=0, fit="fill")
             P.vis[e["id"]] = tb
+            P.bleed = getattr(P, "bleed", set()) | {e["id"]}     # cropped by the canvas edge, like a backdrop
             continue
         from .analyze import _opaque_frac
         if _opaque_frac(e) < 0.5:
