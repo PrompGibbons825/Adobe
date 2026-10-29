@@ -4,3 +4,4 @@ numpy>=1.24
 opencv-python-headless>=4.8,<5   # bundled Haar face cascades (no network at run time)
 onnxruntime==1.31.0              # engine/vision.py: CPU inference for the OCR read check (offline)
 rapidocr-onnxruntime==1.4.4      # PP-OCRv4 mobile, models bundled in the wheel (no download at run time)
+tokenizers==0.23.3               # CLIP text tokenizer (logo detection), offline

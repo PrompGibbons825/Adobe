@@ -1,0 +1,11 @@
+review/
+crello*/
+research_notes/
+reports/
+.venv/
+output/*
+*.pyc
+__pycache__/
+engine/models/isnet-general-use.onnx
+engine/models/clip/
+engine/models/u2netp.onnx
