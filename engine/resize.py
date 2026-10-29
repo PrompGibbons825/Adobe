@@ -418,6 +418,13 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
             print(f"  -> {best_meta['template']} score={best_s:.2f}")
         if READ_CHECK and len(pool) > 1:
             best, best_s, best_br, best_model, best_meta = _read_check(source, target_canvas, pool)
+        # finishing touch on the chosen layout only (it never changes which
+        # layout wins): in a strip, copy inside a shape grows to fill it
+        if max(target_canvas["width"], target_canvas["height"]) >= 4 * min(target_canvas["width"], target_canvas["height"]):
+            from .finalize import fill_holders, clamp_inside
+            bctx = Ctx(best_model, target_canvas)
+            fill_holders(bctx, best, best_model)
+            clamp_inside(bctx, best, best_model)
         resize.last_choice = (best_meta, best_s, best_br)
         resize.last_P = best
         resize.last_model = best_model

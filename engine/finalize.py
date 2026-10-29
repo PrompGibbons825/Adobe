@@ -720,6 +720,83 @@ def finalize(ctx, P, model, float_threshold=0.0):
     return P
 
 
+def fill_holders(ctx, P, model):
+    """In a strip, copy set inside a shape (a circle, a ribbon, a badge) grows
+    to fill it: all its lines by one factor, so their relative sizes hold,
+    re-flowed and centred in the shape's inner area."""
+    from . import textfit as tf
+    from .analyze import norm_rot
+    els = model["els"]
+    texts = [i for i in P.vis if els.get(i, {}).get("type") == "text" and i not in P.hidden
+             and abs(norm_rot(P.props.get(i, {}).get("rotation", els[i].get("rotation", 0)) or 0)) <= 1]
+    shapes = [i for i in P.vis if els.get(i, {}).get("type") in ("image", "shape") and i not in P.hidden
+              and (P.vis[i][2] - P.vis[i][0]) * (P.vis[i][3] - P.vis[i][1]) < 0.25 * ctx.W * ctx.H]
+    groups = {}
+    for t in texts:
+        v = P.vis[t]
+        cx, cy = (v[0] + v[2]) / 2, (v[1] + v[3]) / 2
+        st = els[t]
+        sx_, sy_ = st["x"] + st["width"] / 2, st["y"] + st["height"] / 2
+        hs = [h for h in shapes if els[h].get("z_index", 0) < els[t].get("z_index", 0)
+              and P.vis[h][0] <= cx <= P.vis[h][2] and P.vis[h][1] <= cy <= P.vis[h][3]
+              # the designer put it there: it sat inside this shape in the source too
+              and els[h]["x"] <= sx_ <= els[h]["x"] + els[h]["width"]
+              and els[h]["y"] <= sy_ <= els[h]["y"] + els[h]["height"]
+              and _box_overlap(v, P.vis[h]) >= 0.8 * max(1.0, (v[2] - v[0]) * (v[3] - v[1]))]
+        if hs:
+            h = min(hs, key=lambda h: (P.vis[h][2] - P.vis[h][0]) * (P.vis[h][3] - P.vis[h][1]))
+            groups.setdefault(h, []).append(t)
+    for h, ts in groups.items():
+        hb = P.vis[h]
+        info = saliency.analyze(els[h].get("asset_id") or "") if els[h]["type"] == "image" else None
+        shaped = info is not None and info["opaque_frac"] < 0.9
+        if els[h]["type"] == "shape":
+            shaped = els[h].get("shape_type") in ("circle", "ellipse") or bool(els[h].get("corner_radius"))
+        if not shaped:
+            continue              # a flat panel holds a layout of its own: left as it is
+        # only a holder of nothing but these words (marks and rules aside)
+        ha = (hb[2] - hb[0]) * (hb[3] - hb[1])
+        busy = [j for j in shapes if j != h and _box_overlap(P.vis[j], hb) > 0.02 * ha
+                and els[j].get("z_index", 0) > els[h].get("z_index", 0)
+                and (P.vis[j][2] - P.vis[j][0]) * (P.vis[j][3] - P.vis[j][1]) > 0.03 * ha]
+        if busy:
+            continue
+        f = 0.17 if shaped else 0.06              # a circle's inner square; a plate's padding
+        bw, bh = hb[2] - hb[0], hb[3] - hb[1]
+        inner = (hb[0] + f * bw, hb[1] + f * bh, hb[2] - f * bw, hb[3] - f * bh)
+        iw, ih = inner[2] - inner[0], inner[3] - inner[1]
+        ts = sorted(ts, key=lambda t: (P.vis[t][1], P.vis[t][0]))
+        cur = [P.props[t].get("font_size", els[t]["font_size"]) for t in ts]
+        flow = [dict(els[t], content=" ".join(str(P.props[t].get("content", els[t]["content"])).split())) for t in ts]
+
+        def fits(k):
+            ms = [tf.measure(e, max(1, int(c * k)), iw) for e, c in zip(flow, cur)]
+            if any(m["word_w"] > iw for m in ms):
+                return None
+            tot = sum(m["height"] for m in ms) + sum(0.25 * c * k for c in cur[1:])
+            return ms if tot <= ih else None
+        lo, hi = 1.0, 6.0
+        if fits(lo) is None:
+            continue
+        for _ in range(14):
+            mid = (lo + hi) / 2
+            if fits(mid) is not None:
+                lo = mid
+            else:
+                hi = mid
+        if lo < 1.15:
+            continue
+        ms = fits(lo)
+        tot = sum(m["height"] for m in ms) + sum(0.25 * c * lo for c in cur[1:])
+        y = inner[1] + (ih - tot) / 2
+        for t, e, c, m in zip(ts, flow, cur, ms):
+            fs = max(1, int(c * lo))
+            P.props[t].update(x=inner[0], y=y, width=iw, height=m["height"], font_size=fs,
+                              content=e["content"], text_align="center")
+            P.vis[t] = tf.visual_box(dict(e, text_align="center"), inner[0], y, iw, fs, m)
+            y += m["height"] + 0.25 * c * lo
+
+
 def min_type(ctx, P, model):
     """No text smaller than about 14 px when the design is seen at 768 px on
     its long side: a smaller line is set at that size, its box widened to hold
