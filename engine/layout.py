@@ -311,7 +311,8 @@ def _upright(u):
     for e in u.els:
         cx, cy = e["x"] + e["width"] / 2 - gx, e["y"] + e["height"] / 2 - gy
         nx, ny = cx * ca - cy * sa, cx * sa + cy * ca
-        nr = norm_rot((e.get("rotation", 0) or 0) - r)
+        # only the words turn back; a picture or drawing keeps its own angle
+        nr = norm_rot((e.get("rotation", 0) or 0) - r) if e["type"] == "text" else norm_rot(e.get("rotation", 0) or 0)
         c = dict(e, rotation=nr)
         c["x"], c["y"] = gx + nx - e["width"] / 2, gy + ny - e["height"] / 2
         els.append(c)
