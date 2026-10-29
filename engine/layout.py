@@ -1263,6 +1263,32 @@ def tmpl_turn(ctx, model):
     els = [e for u in model["units"] if u.role not in ("bg", "border") for e in _uels(u)]
     texts = [e for e in els if e["type"] == "text"]
     others = [e for e in els if e["type"] != "text"]
+    # inlay bars: a thin rule or separator set between two lines of copy keeps
+    # that relation (and its own orientation) instead of turning with the design
+    def _thin(e):
+        w_, h_ = e["width"], e["height"]
+        return min(w_, h_) < 0.03 * min(Ws, Hs) and max(w_, h_) > 4 * max(1e-6, min(w_, h_)) \
+            and max(w_, h_) < 0.8 * max(Ws, Hs)
+    inlays = {}
+    for e in others:
+        if not _thin(e):
+            continue
+        b = _box(e)
+        cx_ = (b[0] + b[2]) / 2
+        over = [t for t in texts if _box(t)[3] <= b[1] + 2 and _box(t)[0] - 2 <= cx_ <= _box(t)[2] + 2
+                or _box(t)[3] <= b[1] + 2 and _box(t)[0] <= b[2] and b[0] <= _box(t)[2]]
+        under = [t for t in texts if _box(t)[1] >= b[3] - 2 and _box(t)[0] <= b[2] and b[0] <= _box(t)[2]]
+        a_ = max(over, key=lambda t: _box(t)[3]) if over else None
+        c_ = min(under, key=lambda t: _box(t)[1]) if under else None
+        near = 0.05 * max(Ws, Hs)
+        if a_ is not None and b[1] - _box(a_)[3] > near:
+            a_ = None
+        if c_ is not None and _box(c_)[1] - b[3] > near:
+            c_ = None
+        if a_ is not None or c_ is not None:
+            # between two lines, under one (an underline) or over one (an overline)
+            inlays[e["id"]] = (a_["id"] if a_ else None, c_["id"] if c_ else None)
+    others = [e for e in others if e["id"] not in inlays]
     for e in others:
         cx, cy = turn_pt(e["x"] + e["width"] / 2, e["y"] + e["height"] / 2)
         # before the turn the box's width runs along the new height
@@ -1387,6 +1413,45 @@ def tmpl_turn(ctx, model):
         for kk, v in sub.props.items():
             P.set(kk, rotation=0, **v)
         P.vis.update(sub.vis)
+    for bid, (aid, cid) in inlays.items():
+        e = model["els"][bid]
+        va, vc = P.vis.get(aid) if aid else None, P.vis.get(cid) if cid else None
+        if va is None and vc is None:
+            return None
+        th = max(1.0, min(e["width"], e["height"]) * s)
+        if va is None or vc is None:
+            # attached to one line: under it (or over it), its length relative to it
+            ref, rid = (va, aid) if va is not None else (vc, cid)
+            tr = model["els"][rid]
+            rel = min(1.0, max(e["width"], e["height"]) / max(1e-6, tr["width"]))
+            ln = max(4.0, rel * (ref[2] - ref[0]))
+            gap = max(2.0, 0.12 * (ref[3] - ref[1]))
+            y = ref[3] + gap if va is not None else ref[1] - gap - th
+            al = tr.get("text_align", "left")
+            x = ref[0] if al == "left" else (ref[2] - ln if al == "right" else (ref[0] + ref[2]) / 2 - ln / 2)
+            P.set(bid, x=x, y=y, width=ln, height=th, rotation=0, fit="contain")
+            P.vis[bid] = (x, y, x + ln, y + th)
+            continue
+        ta, tc = model["els"][aid], model["els"][cid]
+        # its length relative to the copy above it, centred or aligned as it was
+        rel = e["width"] / max(1e-6, ta["width"]) if e["width"] >= e["height"] else 1.0
+        cw_ = max(va[2] - va[0], vc[2] - vc[0])
+        ln = min(cw_, max(4.0, rel * (va[2] - va[0])))
+        th = max(1.0, min(e["width"], e["height"]) * s)
+        al = ta.get("text_align", "left")
+        if vc[1] - va[3] >= th + 2:
+            y = (va[3] + vc[1]) / 2 - th / 2          # still between the two lines
+            x0, x1 = min(va[0], vc[0]), max(va[2], vc[2])
+        else:
+            # the lines now sit side by side: it stays under the line it followed
+            y = va[3] + max(2.0, 0.12 * (va[3] - va[1]))
+            x0, x1 = va[0], va[2]
+            ln = min(ln, x1 - x0)
+        x = x0 if al == "left" else (x1 - ln if al == "right" else (x0 + x1) / 2 - ln / 2)
+        horiz = e["width"] >= e["height"]
+        P.set(bid, x=x, y=y, width=ln if horiz else th, height=th if horiz else ln, rotation=0, fit="contain")
+        P.vis[bid] = (x, y, x + (ln if horiz else th), y + (th if horiz else ln))
+
     # copy may sit on its holder, never under a picture drawn over it
     for t in texts:
         v = P.vis.get(t["id"])
