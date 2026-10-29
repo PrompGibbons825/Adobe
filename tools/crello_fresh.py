@@ -34,7 +34,7 @@ def main():
     (out / "designs").mkdir(parents=True, exist_ok=True)
 
     used = set()
-    for r in ("crello", "crello_holdout", "crello_fresh"):
+    for r in ("crello", "crello_holdout", "crello_fresh", "crello_val"):
         p = Path(r) / "index.json"
         if p.is_file():
             used |= {vs[0]["title"] for vs in json.load(open(p))}

@@ -36,3 +36,4 @@ output/*
 /engine/models/clip/
 /crello_fresh/
 /crello_val/
+/crello_train/
