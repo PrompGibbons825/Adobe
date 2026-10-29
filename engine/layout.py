@@ -1014,6 +1014,11 @@ def tmpl_grid(ctx, flow, k=2, tiers=False, panel=None, align=None):
 SAME_ROLES_SKIP = {"bg", "border"}     # laid out by finalize (cover, edge-hugging)
 
 
+def _uels(u):
+    """A unit's elements, including those of its members (a badge row)."""
+    return u.els or [e for m in getattr(u, "members", []) for e in m.els]
+
+
 def tmpl_same(ctx, model, mode="center"):
     from .analyze import norm_rot
     W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
@@ -1027,8 +1032,8 @@ def tmpl_same(ctx, model, mode="center"):
     # cropped, and everything set on it keeps its place relative to the canvas
     if mode != "center":
         for u in units:
-            e = u.els[0]
-            if len(u.els) != 1 or e["type"] != "image" or abs(norm_rot(e.get("rotation", 0) or 0)) > 1:
+            e = _uels(u)[0]
+            if len(_uels(u)) != 1 or e["type"] != "image" or abs(norm_rot(e.get("rotation", 0) or 0)) > 1:
                 continue
             l, t = e["x"], e["y"]
             r, b = Ws - e["x"] - e["width"], Hs - e["y"] - e["height"]
@@ -1044,7 +1049,7 @@ def tmpl_same(ctx, model, mode="center"):
     for u in units:
         # a unit moves with its block: pieces set close together in the source
         # (a ruled grid, a photo and its caption) move as one
-        blk = [e for v in blocks[id(u)] for e in v.els]
+        blk = [e for v in blocks[id(u)] for e in _uels(v)]
         xs = [e["x"] for e in blk] + [e["x"] + e["width"] for e in blk]
         ys = [e["y"] for e in blk] + [e["y"] + e["height"] for e in blk]
         ux, uy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
@@ -1068,8 +1073,8 @@ def tmpl_same(ctx, model, mode="center"):
             def sides(k):
                 """The block split at its widest gap along axis k: (this unit's
                 part, the other part), each as (lo, hi); other is None if no gap."""
-                spans = sorted(((min(e["x" if k == 0 else "y"] for e in v.els),
-                                 max(e["x" if k == 0 else "y"] + e["width" if k == 0 else "height"] for e in v.els))
+                spans = sorted(((min(e["x" if k == 0 else "y"] for e in _uels(v)),
+                                 max(e["x" if k == 0 else "y"] + e["width" if k == 0 else "height"] for e in _uels(v)))
                                 for v in blocks[id(u)]))
                 best, cut, reach = 0.0, None, spans[0][1]
                 for lo_, hi_ in spans[1:]:
@@ -1078,7 +1083,7 @@ def tmpl_same(ctx, model, mode="center"):
                     reach = max(reach, hi_)
                 if cut is None:
                     return (spans[0][0], max(t[1] for t in spans)), None
-                me = min(e["x" if k == 0 else "y"] for e in u.els) >= cut
+                me = min(e["x" if k == 0 else "y"] for e in _uels(u)) >= cut
                 mine = [t for t in spans if (t[0] >= cut) == me]
                 other = [t for t in spans if (t[0] >= cut) != me]
                 return (min(t[0] for t in mine), max(t[1] for t in mine)), \
@@ -1116,7 +1121,7 @@ def tmpl_same(ctx, model, mode="center"):
             dx, dy = cx - ux * s, cy - uy * s
         else:
             dx, dy = ox, oy
-        for e in u.els:
+        for e in _uels(u):
             x, y, w, h = dx + e["x"] * s, dy + e["y"] * s, e["width"] * s, e["height"] * s
             if e["type"] == "text":
                 fs = max(1, int(e["font_size"] * s))          # never larger: keeps the designed lines
@@ -1177,7 +1182,7 @@ def _same_blocks(units, Ws, Hs):
     tol, gap = 0.02 * min(Ws, Hs), 0.07 * min(Ws, Hs)
 
     def bb(u):
-        bs = [_box(e) for e in u.els]
+        bs = [_box(e) for e in _uels(u)]
         return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
     boxes = {id(u): bb(u) for u in units}
 
@@ -1210,7 +1215,7 @@ def _has_picture(units, k, span, Ws, Hs):
     """Whether the part of a block within span (along axis k) holds a sizeable picture."""
     lo, hi = span
     for v in units:
-        for e in v.els:
+        for e in _uels(v):
             p0 = e["x"] if k == 0 else e["y"]
             p1 = p0 + (e["width"] if k == 0 else e["height"])
             if e["type"] == "image" and lo - 1 <= p0 and p1 <= hi + 1 and e["width"] * e["height"] > 0.1 * Ws * Hs:
@@ -1239,7 +1244,7 @@ def tmpl_turn(ctx, model):
     # the turned design fills the new canvas: its length along the new width,
     # its breadth along the new height (pictures are cropped, never distorted)
     # the design's content (not its outer margin) is mapped edge to edge
-    allb = [_box(e) for u in model["units"] if u.role not in ("bg", "border") for e in u.els]
+    allb = [_box(e) for u in model["units"] if u.role not in ("bg", "border") for e in _uels(u)]
     cx0, cy0 = max(0.0, min(b[0] for b in allb)), max(0.0, min(b[1] for b in allb))
     cx1, cy1 = min(Ws, max(b[2] for b in allb)), min(Hs, max(b[3] for b in allb))
     m = 0.03 * min(W, H)
@@ -1254,7 +1259,7 @@ def tmpl_turn(ctx, model):
         a, c = turn_pt(b[0], b[1]), turn_pt(b[2], b[3])
         return (min(a[0], c[0]), min(a[1], c[1]), max(a[0], c[0]), max(a[1], c[1]))
     P = Placed()
-    els = [e for u in model["units"] if u.role not in ("bg", "border") for e in u.els]
+    els = [e for u in model["units"] if u.role not in ("bg", "border") for e in _uels(u)]
     texts = [e for e in els if e["type"] == "text"]
     others = [e for e in els if e["type"] != "text"]
     for e in others:
@@ -1263,6 +1268,15 @@ def tmpl_turn(ctx, model):
         w, h = e["width"] * sy, e["height"] * sx
         r = (float(e.get("rotation", 0) or 0) + (-90 if ccw else 90)) % 360
         r = r - 360 if r > 180 else r
+        info = saliency.analyze(e.get("asset_id") or "") if e["type"] == "image" else None
+        if info is not None and info["busyness"] > 0.03 and info["opaque_frac"] > 0.6 \
+                and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1:
+            # a photograph never lies on its side: it stays upright and is
+            # cropped into the area its turned box covers
+            tb = turn_box(_box(e))
+            P.set(e["id"], x=tb[0], y=tb[1], width=tb[2] - tb[0], height=tb[3] - tb[1], rotation=0, fit="cover")
+            P.vis[e["id"]] = tb
+            continue
         P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h, rotation=r)
         if e["type"] == "image" and abs(w / max(1e-6, h) - e["width"] / max(1e-6, e["height"])) > 0.02 * e["width"] / max(1e-6, e["height"]):
             from .analyze import _fills_box
@@ -1369,6 +1383,19 @@ def tmpl_turn(ctx, model):
         for kk, v in sub.props.items():
             P.set(kk, rotation=0, **v)
         P.vis.update(sub.vis)
+    # copy may sit on its holder, never under a picture drawn over it
+    for t in texts:
+        v = P.vis.get(t["id"])
+        if v is None:
+            continue
+        ta = max(1.0, (v[2] - v[0]) * (v[3] - v[1]))
+        for o in others:
+            ov = P.vis.get(o["id"])
+            if ov is None or o.get("z_index", 0) <= t.get("z_index", 0):
+                continue
+            ix = max(0.0, min(v[2], ov[2]) - max(v[0], ov[0])) * max(0.0, min(v[3], ov[3]) - max(v[1], ov[1]))
+            if ix > 0.2 * ta:
+                return None
     P.same = True
     P.meta = {"template": "turn", "t": s / ctx.t_star if ctx.t_star else 1.0}
     return P

@@ -133,8 +133,10 @@ def _src_contrast(model, eid):
     from .analyze import _box
     src = SimpleNamespace(vis={i: _box(e) for i, e in model["els"].items()}, hidden=set(), bg_lum=None)
     for u in model["units"]:
+        if u.role != "bg" or not u.els:
+            continue
         g = u.els[0]
-        if u.role == "bg" and g["type"] == "image":
+        if g["type"] == "image":
             info = saliency.analyze(g.get("asset_id") or "")
             if info is not None:
                 src.bg_lum = (info["lum"], g["x"], g["y"], max(1e-6, g["width"]), max(1e-6, g["height"]))
