@@ -1236,6 +1236,32 @@ def _rot_box(x, y, w, h, rot):
 # words alone are set upright again, each group of them in the turned box of
 # whatever held it (a copy panel, a badge), in its reading order.
 
+_UPRIGHT_CACHE: dict = {}
+
+
+def _keeps_upright(e):
+    """A photograph with a natural up: a face is found in it, or CLIP rates it
+    as people, hands, a building, a room or a landscape (p >= 0.15)."""
+    if e["type"] != "image":
+        return False
+    info = saliency.analyze(e.get("asset_id") or "")
+    if info is None or info["opaque_frac"] <= 0.6 or (info.get("plain", 1) >= 0.85 and info["busyness"] <= 0.03):
+        return False                       # a shape, a drawing, a flat panel
+    if info.get("faces"):
+        return True
+    aid = e.get("asset_id") or ""
+    if aid not in _UPRIGHT_CACHE:
+        from PIL import Image
+        from . import vision
+        p = saliency.asset_file(aid)
+        try:
+            _UPRIGHT_CACHE[aid] = vision.needs_upright(Image.open(p)) if p else None
+        except Exception:
+            _UPRIGHT_CACHE[aid] = None
+    pu = _UPRIGHT_CACHE[aid]
+    return pu is None or pu >= 0.15         # when in doubt (or no model) it stays upright
+
+
 def tmpl_turn(ctx, model):
     from .analyze import Unit, _box, norm_rot
     W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
@@ -1295,6 +1321,13 @@ def tmpl_turn(ctx, model):
         w, h = e["width"] * sy, e["height"] * sx
         r = (float(e.get("rotation", 0) or 0) + (-90 if ccw else 90)) % 360
         r = r - 360 if r > 180 else r
+        if _keeps_upright(e) and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1:
+            # people, faces, buildings, rooms, landscapes have an up: the photo
+            # stays upright, cropped into the area its turned box covers
+            tb = turn_box(_box(e))
+            P.set(e["id"], x=tb[0], y=tb[1], width=tb[2] - tb[0], height=tb[3] - tb[1], rotation=0, fit="cover")
+            P.vis[e["id"]] = tb
+            continue
         from .analyze import _opaque_frac
         if _opaque_frac(e) < 0.5:
             # a shape or drawing keeps its proportions: one scale on both axes

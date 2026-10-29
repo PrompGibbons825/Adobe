@@ -172,3 +172,30 @@ def logo_prob(im: Image.Image):
     p = np.exp(100 * (v @ _LOGO_T.T))[0]
     p /= p.sum()
     return float(p[0] + p[1])
+
+
+_ORIENT_LABELS = ["a photo of a person", "a photo of people", "a portrait of a face",
+                  "a human hand", "a photo of a building", "architecture or a city street",
+                  "a room interior", "a landscape with sky",
+                  "a flower", "a product or object", "food", "an abstract texture or pattern",
+                  "a plant or leaves"]
+_ORIENT_UPRIGHT = 8          # the first eight labels have a top and a bottom
+_ORIENT_T = None
+
+
+def needs_upright(im: Image.Image):
+    """CLIP's probability that a picture has a natural up (people, faces,
+    buildings, rooms, landscapes) and must not be turned; None if unavailable."""
+    global _ORIENT_T
+    if _ORIENT_T is None:
+        _ORIENT_T = _clip_text(_ORIENT_LABELS)
+        if _ORIENT_T is None:
+            _ORIENT_T = False
+    if _ORIENT_T is False:
+        return None
+    v = _clip_image([im.convert("RGB")])
+    if v is None:
+        return None
+    p = np.exp(100 * (v @ _ORIENT_T.T))[0]
+    p /= p.sum()
+    return float(p[:_ORIENT_UPRIGHT].sum())
