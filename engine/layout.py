@@ -1295,15 +1295,6 @@ def tmpl_turn(ctx, model):
         w, h = e["width"] * sy, e["height"] * sx
         r = (float(e.get("rotation", 0) or 0) + (-90 if ccw else 90)) % 360
         r = r - 360 if r > 180 else r
-        info = saliency.analyze(e.get("asset_id") or "") if e["type"] == "image" else None
-        if info is not None and info["busyness"] > 0.03 and info["opaque_frac"] > 0.6 \
-                and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1:
-            # a photograph never lies on its side: it stays upright and is
-            # cropped into the area its turned box covers
-            tb = turn_box(_box(e))
-            P.set(e["id"], x=tb[0], y=tb[1], width=tb[2] - tb[0], height=tb[3] - tb[1], rotation=0, fit="cover")
-            P.vis[e["id"]] = tb
-            continue
         from .analyze import _opaque_frac
         if _opaque_frac(e) < 0.5:
             # a shape or drawing keeps its proportions: one scale on both axes
@@ -1324,6 +1315,12 @@ def tmpl_turn(ctx, model):
     groups = {}
     for t in texts:
         groups.setdefault(holder(t), []).append(t)
+            nb += 1
+            blk = []
+        end = b_[k_ + 2] if not blk else max(end, b_[k_ + 2])
+        blk.append(t)
+    if blk:
+        groups[("free", nb)] = blk
     troles = model.get("troles", {})
     for hid, ts in groups.items():
         if hid is not None and not isinstance(hid, tuple):
