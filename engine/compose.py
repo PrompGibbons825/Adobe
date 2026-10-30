@@ -82,7 +82,7 @@ class Unit:
             wd = avail_w if avail_w is not None else el["width"] * k
             wd = max(1.0, wd)
             fs, n, bh, _ = M.fit_text(el, wd, fs0 * k, CANVAS[1])
-            e = copy.deepcopy(el)
+            e = dict(el)
             e.update(x=0.0, y=0.0, width=R2(wd), height=R2(math.ceil(bh)), font_size=fs)
             if e.get("letter_spacing"):
                 e["letter_spacing"] = R2(e["letter_spacing"] * fs / fs0)
@@ -92,7 +92,7 @@ class Unit:
             ke = avail_w / self.w
         out = []
         for el in self.members:
-            e = copy.deepcopy(el)
+            e = dict(el)
             e["x"] = (el["x"] - self.x0) * ke
             e["y"] = (el["y"] - self.y0) * ke
             e["width"] = el["width"] * ke
@@ -266,11 +266,11 @@ def layout_pin(units, W, H, sW, sH):
     return L
 
 
-def stack_panes(panes, rects, k, gap, W, H):
+def stack_panes(panes, rects, k, gap, W, H, nu=1.0):
     """panes: list of list of units; rects: pane rects. Returns placed list or None if overflow."""
     placed = []
     for units, (px, py, pw, ph) in zip(panes, rects):
-        fits = [u.fit(k, avail_w=pw) for u in units]
+        fits = [u.fit(k if (u.texts or nu == 1.0) else k * nu, avail_w=pw) for u in units]
         tot = sum(f.h for f in fits) + gap * (len(fits) - 1)
         if tot > ph + 0.5:
             return None
@@ -291,7 +291,7 @@ def stack_panes(panes, rects, k, gap, W, H):
     return placed
 
 
-def layout_panes(name, panes, weights, W, H, sW, sH, s_ref):
+def layout_panes(name, panes, weights, W, H, sW, sH, s_ref, nu=1.0):
     m = min(max(3.0, 0.05 * min(W, H)), 60.0)
     gutter = m
     p = len(panes)
@@ -311,7 +311,7 @@ def layout_panes(name, panes, weights, W, H, sW, sH, s_ref):
 
     def attempt(k):
         gap = min(max(gmed * k, 0.012 * mn), 0.06 * mn)
-        return stack_panes(panes, rects, k, gap, W, H)
+        return stack_panes(panes, rects, k, gap, W, H, nu)
 
     grid = [1.6 * s_ref * 0.92 ** j for j in range(40)]  # descending
     res = attempt(grid[0])
@@ -348,7 +348,8 @@ def partitions(order, maxp):
         for j in range(1, p):
             tgt = tot * j / p
             base.append(min(range(1, n), key=lambda i: abs(cum[i - 1] - tgt)))
-        for sh in itertools.product((-1, 0, 1), repeat=p - 1):
+        shifts = itertools.product((-1, 0, 1), repeat=p - 1) if p <= 3 else [(0,) * (p - 1), (-1,) * (p - 1), (1,) * (p - 1)]
+        for sh in shifts:
             cuts = [b + d for b, d in zip(base, sh)]
             if any(not (1 <= x < n) for x in cuts) or cuts != sorted(set(cuts)):
                 continue
@@ -384,10 +385,11 @@ def candidates(units, W, H, sW, sH, s_ref):
             ar = [sum(u.area for u in pn) ** .5 for pn in panes]
             wopts.append(ar)
         for wo in wopts:
-            L = layout_panes(f"panes{p}", panes, wo, W, H, sW, sH, s_ref)
-            if L is not None:
-                L.panes = [[u.members[0]["id"] for u in pn] for pn in panes]
-                cands.append(L)
+            for nu in ((1.0, 0.55) if any(not u.texts for pn in panes for u in pn) else (1.0,)):
+                L = layout_panes(f"panes{p}", panes, wo, W, H, sW, sH, s_ref, nu)
+                if L is not None:
+                    L.panes = [[u.members[0]["id"] for u in pn] for pn in panes]
+                    cands.append(L)
     return cands
 
 

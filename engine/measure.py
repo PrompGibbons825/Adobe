@@ -44,12 +44,15 @@ def _widths(family, weight, style, size, text):
 def layout(el, size, width):
     """Wrap `el`'s content at integer font `size` into `width` like the converter.
     Returns (n_lines, max_line_width)."""
-    text = str(el.get("content", ""))
     weight, style = style_of(el)
-    fam = el.get("font_family", "Montserrat")
-    w = _widths(fam, weight, style, float(size), text)
+    return _layout(str(el.get("content", "")), el.get("font_family", "Montserrat"), weight, style,
+                   float(size), float(width), float(el.get("letter_spacing", 0) or 0))
+
+
+@lru_cache(maxsize=300000)
+def _layout(text, fam, weight, style, size, width, ls):
+    w = _widths(fam, weight, style, size, text)
     wrapped = wrap_text(text, list(w), width)
-    ls = float(el.get("letter_spacing", 0) or 0)
     lines = wrapped.split("\n")
     mx, i = 0.0, 0
     for ln in lines:
