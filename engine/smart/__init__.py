@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Optional
 
+from . import switches
 from .analyze import Design, Item, analyze, as_number
 from .color import normalize as normalize_colour
 from .compose import Plan, display_room, generate
@@ -58,15 +59,10 @@ def plan_design(source: dict, target: dict):
                 plans[:] = _diverse(plans, RERANK)
                 _pixel_rerank(plans, d, ctx, RERANK + _quiet_extras(plans, RERANK))
                 keep_everything_first(plans)
-                if plans:
-                    from .repair import maybe_repair
+                if plans and switches.on("repair"):
+                    from .repair import repair_overflow
 
-                    def _rescore_one(trial):
-                        score_plans([trial], d, ctx)
-                        vision.rank([trial], d, ctx, _decor_rects(d, ctx))
-                        _pixel_rerank([trial], d, ctx, 1)
-
-                    maybe_repair(plans, d, ctx, source, lambda pl, dd, cc: emit(pl, dd, cc), _rescore_one)
+                    repair_overflow(plans, d, ctx, emit)
                 if _promote_passing(plans, source, d, ctx):
                     return d, ctx, plans
                 reason = "every candidate draws copy over copy or past the canvas"

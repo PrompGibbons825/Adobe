@@ -22,6 +22,7 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from . import switches
 from .analyze import Design, Item
 from .geom import Box, el_box, el_visual_box, union_all
 from .items import (LABEL_LIFT, PILL_ROLES, Ctx, Real, display_size, keep_floor, min_floor, realize,
@@ -1290,7 +1291,7 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
             if subject_bg and ctx.H > 1.05 * ctx.W:  # or at the top or bottom of a tall canvas
                 yield "stack-top", plan_stack, dict(vside="top")
                 yield "stack-bottom", plan_stack, dict(vside="bottom")
-            if subject_bg:
+            if subject_bg and switches.on("quiet"):
                 yield "stack-quiet", plan_stack, dict(quiet_headline=True)
                 yield "stack-quiet-end", plan_stack, dict(force_align="end", quiet_headline=True)
                 yield "stack-quiet-start", plan_stack, dict(force_align="start", quiet_headline=True)

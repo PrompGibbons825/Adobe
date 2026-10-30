@@ -40,7 +40,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
-from . import paths
+from . import paths, switches
 
 try:
     import numpy as np
@@ -133,14 +133,14 @@ def _vision(rgba, path: str = "") -> Optional[Vision]:
     from . import vision_models as _vm
 
     opaque = alpha.mean() > 0.9  # a photo, not a cut-out (its alpha already outlines the subject) or a logo
-    u2 = _vm.u2_saliency(rgba, alpha, sh, sw) if opaque else None
+    u2 = _vm.u2_saliency(rgba, alpha, sh, sw) if opaque and switches.on("saliency") else None
     if u2 is not None:
         imp = np.maximum(imp, 0.68 * u2)
     faces = _faces(rgba) if opaque else []
     heads = tuple(_pad(f, 0.25, 0.45, 0.25, 0.25) for f in faces)
     people = tuple(_pad(f, 0.5, 0.45, 0.5, 0.8) for f in faces)
     baked: Tuple[Frac, ...] = ()
-    if opaque:
+    if opaque and switches.on("ocr"):
         baked = tuple(f for f in _vm.baked_text(rgba) if (f[2] - f[0]) * (f[3] - f[1]) >= 0.003
                       and not any(_iou(f, h) > 0.25 for h in heads))
     for f in baked:
