@@ -388,6 +388,7 @@ class _Px:
         self.sc = Scene(design, assets, fonts)
         self.s = min(1.0, VIEW / max(self.sc.W, self.sc.H))
         self.full = self.sc.draw(scale=self.s).astype("int16")
+        self._fulls = {}
         self.ids = list(self.sc.rows)
 
     def without(self, eid):
@@ -397,14 +398,36 @@ class _Px:
         return self.sc.draw([eid], scale=self.s, transparent=True)[..., 3]
 
     def visible(self, eid) -> Optional[float]:
+        """How much of what the element would show on top of everything still shows in the full
+        render: sum |full - without| / sum |on_top - without| over its own pixels (so a faint
+        or thin element is judged against its own contrast, not a fixed threshold). Small
+        elements (< 64 px at the view scale) are measured at full resolution. None when the
+        element shows nothing even on top (white on white)."""
         import numpy as np
 
-        own = self.alone(eid) > 0
-        n = int(own.sum())
-        if n == 0:
-            return None
-        changed = np.abs(self.full - self.without(eid))[..., :3].max(axis=2) > DIFF
-        return float((changed & own).sum()) / n
+        def measure(scale, full):
+            alone = self.sc.draw([eid], scale=scale, transparent=True).astype("float32")
+            a = alone[..., 3:4] / 255.0
+            own = a[..., 0] > 0
+            if not own.any():
+                return None, 0
+            without = self.sc.draw([i for i in self.ids if i != eid], scale=scale).astype("float32")
+            top = a * alone[..., :3] + (1 - a) * without[..., :3]
+            want = np.abs(top - without[..., :3]).max(axis=2)[own].sum()
+            got = np.abs(full[..., :3].astype("float32") - without[..., :3]).max(axis=2)[own].sum()
+            if want < 2.0 * DIFF:
+                return None, int(own.sum())
+            return float(min(1.0, got / want)), int(own.sum())
+
+        v, n = measure(self.s, self.full)
+        if n < 64 and self.s < 1.0:  # zoom (by powers of 2) until it is >= 64 px or at full size
+            scale = self.s
+            while n < 64 and scale < 1.0:
+                scale = min(1.0, scale * 2.0)
+                if scale not in self._fulls:
+                    self._fulls[scale] = self.sc.draw(scale=scale).astype("int16")
+                v, n = measure(scale, self._fulls[scale])
+        return v
 
     def contrast(self, e) -> Optional[float]:
         import numpy as np
