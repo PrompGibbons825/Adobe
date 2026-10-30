@@ -147,3 +147,8 @@ incumbent, its notes, README or any other lane.
   repair shrank under the floor is restored when the taller block fits and touches no copy):
   promise tiles 73 -> 63, hidden tiles 104 -> 85 (elements 170 -> 118), sim 0.380 -> 0.381,
   hard 0 -> 0. Stress 900: 0 faults.
+- Final head (this commit's parent 2c132e9 engine). B0 bench, tournament set: 160 tiles, 0
+  crashes, 0 fallbacks, 0 hard; promise 49 tiles (93), audit 50, hidden 39 tiles / 78 elements;
+  sim 0.362 (mid 0.41, wide 0.34, tall 0.26); p95 0.56 s on the loaded host. Docker:
+  input/ OK; 900 stress outputs 0 faults, p95 0.14 s, max 0.63 s. A tried in-cluster
+  copy-separation variant was neutral on the dev set (64 vs 63 promise tiles) and reverted.
