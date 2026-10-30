@@ -205,14 +205,15 @@ def _collapsed(placed, d: Design) -> float:
     """Importance of the copy set level with (within 10% of) copy it was at
     least 1.5x smaller than, as the legibility floor does on tiny formats: a
     subhead the size of its headline no longer reads as a subhead, only as
-    clutter, and a designer leaves it out."""
+    clutter, and a designer leaves it out. A wordmark is not part of that hierarchy: it is set
+    at its art's proportion, and copy level with it reads as no less ordered."""
     out, item = {}, {}
     for r, _, _ in placed:
         for tid, fs in r.fonts.items():
             out[tid], item[tid] = fs, r.item
     src = {tid: float(d.by_id[tid].get("font_size") or 0) for tid in out if tid in d.by_id}
     level = {id(item[b]): item[b].importance for a in src for b in src
-             if item[a] is not item[b] and src[a] >= 1.5 * src[b] and out[b] * 1.1 >= out[a]}
+             if item[a] is not item[b] and item[a].role != "logo" and src[a] >= 1.5 * src[b] and out[b] * 1.1 >= out[a]}
     return float(sum(level.values()))
 
 

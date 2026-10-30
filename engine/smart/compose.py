@@ -44,7 +44,13 @@ TALL_AD = 1.6  # a canvas this many times taller than wide ...
 SMALL_AD = 400  # ... with a short side under this (px) is a tall ad unit (half-page, skyscraper)
 TALL_CTA = 0.3  # ... whose CTA label is at least this share of its display size ...
 BOLD_CTA_KEEP = 0.95  # ... when that costs the rest of the layout no more than 5% of its scale
+HELD_STEP = 1.0  # px between the rungs of a held squeeze (held_rungs)
+REGRADE_WORK = 20_000  # items sized: the regrade's own allowance, kept off the resize's budget (Budget)
+REGRADE_MISSES = 3  # the regrade stops after this many variants found no room for a held rung
+REGRADE_CORE_KEEP = 0.85  # a held rung may cost the headline and the hero no more than 15% of their size
 LIFT_KEEP = 0.9  # a button label lifted off the type floor may cost the rest up to 10% of its scale
+LIFT_CORE_KEEP = 0.9  # ... and the headline and the hero (a fill that may shrink faster than the scale) as much
+LIFT_CORE = ("headline", "hero")
 HERO_SHARE = 0.2  # in a column, a hero may grow into leftover room until it covers this share of the zone
 COPY_POSTER = 1.4  # a design of copy alone on a tall canvas may set its headline this much past display size
 COLUMN_ROOM = 1.35  # how much further than sqrt(area) a column may grow on a taller canvas
@@ -880,9 +886,12 @@ def legible_cta(root: Node, d: Design, ctx: Ctx, zone: Box, lo: float, hi: float
     if laid is None or ctx.cta_min or not ctx.lift_cta:
         return plain
     floor = ctx.floor("cta", relax)
-    fonts = [fs for r, _, _ in laid.place(0.0, 0.0) if r.item.role == "cta" for fs in r.fonts.values()]
+    placed = laid.place(0.0, 0.0)
+    fonts = [fs for r, _, _ in placed if r.item.role == "cta" for fs in r.fonts.values()]
     if not fonts or min(fonts) > floor + 0.5:
         return plain
+    core = {r.item.key: r.scale for r, _, _ in placed if r.item.role in LIFT_CORE}
+    level = _cta_level(placed, d)
     for lift in LABEL_LIFT:  # the larger lift first, then a step that costs less room
         lifted = replace(ctx, cta_min=float(math.ceil(lift * floor)))
         bs, blaid, brelax = solve(root, lifted, zone, lo, hi)
@@ -891,11 +900,45 @@ def legible_cta(root: Node, d: Design, ctx: Ctx, zone: Box, lo: float, hi: float
         bplaced = blaid.place(0.0, 0.0)
         bfonts = [fs for r, _, _ in bplaced if r.item.role == "cta" for fs in r.fonts.values()]
         # the label must really be larger (a lifted label that did not fit falls back to the
-        # layout's size, and only the rest would have paid for it)
-        if min(bfonts, default=0) > min(fonts) and _cta_in_rank(bplaced, d, measure=True):
+        # layout's size, and only the rest would have paid for it); the headline and the hero
+        # pay for it with no more than LIFT_CORE_KEEP of their size, and the label is not set
+        # level with secondary copy the source set far larger (_cta_level: a sticker's FREE as
+        # small as the button's Book reads as no hierarchy at all). The step that cannot pay is
+        # passed over, and a layout that can pay for none keeps its label at the floor: the
+        # scorer then weighs it against the other arrangements, where the CTA may have room
+        if min(bfonts, default=0) <= min(fonts) or not _cta_in_rank(bplaced, d, measure=True):
+            continue
+        if any(r.scale < LIFT_CORE_KEEP * core[r.item.key] for r, _, _ in bplaced if r.item.key in core):
+            continue
+        if _cta_level(bplaced, d) <= level:
             _LIFTED[0] += 1
             return bs, blaid, brelax
     return plain
+
+
+def _cta_level(placed: List[Placement], d: Design) -> set:
+    """The (copy, CTA label) pairs where the label is set level with (within 10% of) copy the
+    source set at least 1.5x larger (score._collapsed, which costs a plan the label's
+    importance). The headline is left to _cta_in_rank: in a squeezed plan it sits at the usual
+    floor, where any legible button label comes near it, and outranking it is what counts; a
+    wordmark is art, not copy in the hierarchy (score._collapsed)."""
+    out, role = {}, {}
+    for r, _, _ in placed:
+        for tid, fs in r.fonts.items():
+            out[tid], role[tid] = fs, r.item.role
+    src = {tid: float(d.by_id[tid].get("font_size") or 0) for tid in out if tid in d.by_id}
+    return {(a, c) for c in src if role[c] == "cta" for a in src
+            if role[a] not in ("cta", "headline", "logo") and src[a] >= 1.5 * src[c] and out[c] * 1.1 >= out[a]}
+
+
+def held_rungs(top: float, least: float) -> List[float]:
+    """The floors a held squeeze tries for the pill labels, a HELD_STEP at a time from ``top``
+    down to just above ``least``, the size the plain squeeze already set them at."""
+    out, px = [], float(top)
+    while px > least + 0.5:
+        out.append(px)
+        px -= HELD_STEP
+    return out
 
 
 def _lifted(root: Node, d: Design, ctx: Ctx, zone: Box, lo: float, hi: float, plain, placed, fl, floaters,
@@ -1320,12 +1363,59 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
                 plans.append(p)
                 fitted.add(name)
                 tried[key] = True
+                if not regrade(fn, kw, c, hidden, name + tag, p):
+                    return False
                 if p.relax >= 1.0 and p.capped:
                     done.add(name + tag)
         return True
 
     def kept() -> bool:
         return settle and any(p.lost() == 0 for p in plans)
+
+    # the source sizes of the pill labels (badges, ribbon): the held squeezes (Ctx.hold_fs)
+    held = [float(lab.get("font_size") or 0) for it in d.items for p in (it, *it.sats)
+            if p.role in PILL_ROLES for lab in p.labels]
+    hold_fs = min(held) if held and min(held) > 0 else 0.0
+    misses = [0]  # variants regrade found no room in (it stops after REGRADE_MISSES)
+    spent = [0]  # items sized by regrade (it stops past REGRADE_WORK)
+
+    def regrade(fn, kw, c: Ctx, hidden: List[Item], name: str, p: Plan) -> bool:
+        """A squeezed plan that keeps everything with its pill labels at the minimum is laid out
+        again with them held a rung at a time above it (held_rungs, from the top): only this
+        variant is solved again, so it is cheap. The first that still keeps everything is a
+        candidate too, and the scorer weighs its larger labels against what the rest gave up.
+        A badge a pixel or two under the usual floor still reads as a label; at the minimum it
+        reads as a smudge. False when out of budget."""
+        if not hold_fs or c.hold_fs or not c.keep_px or c.keep_px >= c.usual_floor or p.lost():
+            return True
+        if spent[0] >= REGRADE_WORK or misses[0] >= REGRADE_MISSES or BUDGET.economy:
+            return True
+        sizes = [fs for r, _, _ in p.placed + p.floaters for q in (r.item, *r.item.sats) if q.role in PILL_ROLES
+                 for lab in q.labels for fs in [r.fonts.get(lab["id"])] if fs is not None]
+        if not sizes or min(sizes) >= c.usual_floor - 0.5:
+            return True
+        core = {r.item.key: r.scale for r, _, _ in p.placed + p.floaters if r.item.role in LIFT_CORE}
+        w0, e0 = BUDGET.work, BUDGET.economy
+        try:
+            for px in held_rungs(c.usual_floor - HELD_STEP, min(sizes)):
+                q = _with_insets(fn, d, replace(c, hold_fs=hold_fs, hold_px=px), hidden,
+                                 name=f"{name}-held{px:g}", **kw)
+                if q is None:
+                    continue
+                q.specks = _specks(q, d, c)
+                if not q.lost() and all(r.scale >= REGRADE_CORE_KEEP * core[r.item.key]
+                                        for r, _, _ in q.placed + q.floaters if r.item.key in core):
+                    plans.append(q)
+                    return True
+            misses[0] += 1
+            return True
+        except BudgetExceeded:
+            return False
+        finally:
+            # the regrade's work is its own (REGRADE_WORK): the search after it runs on the same
+            # budget as without it, so it cannot tip a heavy design into economy mode
+            spent[0] += BUDGET.work - w0
+            BUDGET.work, BUDGET.economy = w0, e0
 
     # S1 (loop/STEERING.md): every candidate places every element. Hiding is no longer a move a
     # layout may choose; it is the repair of last resort, tried only when nothing else keeps all.
@@ -1368,10 +1458,8 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
         # first with the pill labels (badges, ribbon) held at the usual floor, and with them all
         # copy the source set at least as large: only the smaller copy gives up the room, and the
         # badge stays legible (items.PILL_ROLES)
-        held = [float(lab.get("font_size") or 0) for it in d.items for p in (it, *it.sats)
-                if p.role in PILL_ROLES for lab in p.labels]
-        if held and min(held) > 0:
-            hctx = replace(sctx, hold_fs=min(held))
+        if hold_fs:
+            hctx = replace(sctx, hold_fs=hold_fs)
             if not attempt([], True, hctx, "!squeeze-held") or kept():
                 return plans
             if not cornered(hctx, "!squeeze-held-corner") or kept():

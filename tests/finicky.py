@@ -471,7 +471,7 @@ def all_of(*checks: Check) -> Check:
 
 def cases() -> List[Case]:
     return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_b_cases() + sprint_c_cases() \
-        + split_cases() + r12_cases() + r13_cases() + collage_cases() + r14_cases() + r15_cases()
+        + split_cases() + r12_cases() + r13_cases() + collage_cases() + r14_cases() + r15_cases() + r16_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -1931,4 +1931,54 @@ def r15_cases() -> List[Case]:
              show=("headline", "cta_label", "photo", "panel"), background=False,
              check=all_of(split_kept("photo", "panel", ("headline", "subhead", "cta_label")),
                           copy_has_room("headline", 0.06, 4))),
+    ]
+
+
+def art_keeps(pid: str, share: float) -> Check:
+    """A product's shorter side covers at least ``share`` of the canvas's shorter side."""
+    def check(src, out, tgt):
+        o = {e["id"]: e for e in out["elements"]}
+        e = o[pid]
+        got = min(e["width"], e["height"]) / float(min(tgt["width"], tgt["height"]))
+        return [f"{pid}: short side {got:.0%} of the canvas's (< {share:.0%})"] if got < share else []
+    return check
+
+
+def not_level(big: str, small: str) -> Check:
+    """Copy the source set at least 1.5x larger than ``small`` stays more than 10% larger than it
+    (the hierarchy score._collapsed holds a plan to)."""
+    def check(src, out, tgt):
+        o = {e["id"]: e for e in out["elements"]}
+        fb, fs = float(o[big].get("font_size", 0)), float(o[small].get("font_size", 0))
+        return [f"{small}: font {fs:g} level with {big}'s {fb:g}"] if fs * 1.1 >= fb else []
+    return check
+
+
+def r16_cases() -> List[Case]:
+    """r16a: a button label lifted off the type floor (compose.legible_cta) is lifted only as far as
+    the layout can pay for it. In r15 the lift set the label level with a big sticker on the
+    product, the scorer charged that layout for the flattened hierarchy, and a layout with the
+    product a quarter smaller won instead."""
+    BG = "rgba(250,240,228,1)"
+    return [
+        Case("cta_lift_keeps_product",
+             "a wide post: a wordmark, a headline, a small 'Book' button, and a product with a large "
+             "round FREE sticker: on a 336x280 or 300x250 unit the product keeps its size (the button "
+             "label is not lifted at the cost of a layout with a smaller product), and the button "
+             "label is never set level with the sticker's",
+             1280, 720, [
+                 shape("background", 0, 0, 1280, 720, BG),
+                 text("logo", 55.5, 71.7, 194.4, 32.4, "SOLSTICE", 27, "Solstice Serif", True, color=PLUM,
+                      align="left", letter_spacing=4.9),
+                 image("product", 821.3, 91.2, 403.2, 537.6, z=3),
+                 text("headline", 55.5, 313.9, 584.5, 144.0,
+                      "Join the club that makes Monday mornings feel like a reward", 40, "Solstice Serif", True,
+                      color=PLUM, align="left"),
+                 *button("cta", 55.5, 475.7, 74.1, 28.5, "Book", 12),
+                 shape("badge_bg", 1109, 91, 169, 169, "rgba(196,120,20,1)", z=7, kind="ellipse",
+                       group_id="badge"),
+                 text("badge_label", 1109, 145, 169, 61, "FREE", 41, bold=True, color=PLUM, z=8, group_id="badge"),
+             ], targets=("336x280", "med-rect"), background=False,
+             show=("headline", "cta_label", "product", "badge_label"),
+             check=all_of(nothing_hidden(), art_keeps("product", 0.45), not_level("badge_label", "cta_label"))),
     ]

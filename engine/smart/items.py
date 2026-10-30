@@ -46,7 +46,8 @@ class Ctx:
     scale_cap: float = 0.0  # when set, the most the layout scale may be in this plan (quiet.py)
     copy_fs: float = 0.0  # px: the design's typical copy size in the source (median), for the rank floor
     lift_cta: bool = True  # a CTA label left at its floor may be offered larger (compose.legible_cta)
-    hold_fs: float = 0.0  # px: in a squeezed plan, source copy at least this large (the pill labels) keeps the usual floor
+    hold_fs: float = 0.0  # px: in a squeezed plan, source copy at least this large (the pill labels) keeps the held floor
+    hold_px: float = 0.0  # px: the held floor (0: the usual floor); a rung between the usual floor and the minimum
 
     @property
     def display_max(self) -> float:
@@ -70,10 +71,24 @@ class Ctx:
     def usual_floor(self) -> int:
         return max(10, math.ceil(10.0 * max(self.W, self.H) / 1024.0))
 
+    @property
+    def held_floor(self) -> float:
+        """The floor of the pill labels (and the copy as large) in a held squeeze (hold_fs)."""
+        return float(min(self.usual_floor, self.hold_px or self.usual_floor))
+
+    @property
+    def held_copy_floor(self) -> float:
+        """The floor of the copy the source set as large as the held pill labels: the held floor, or
+        on a rung under the usual floor a pixel below it (a pixel is within the rank the scorer and
+        the checks hold copy to, score._inversions, and it is the room a crowded plan needs)."""
+        return self.held_floor if not self.hold_px or self.hold_px >= self.usual_floor else self.held_floor - 1.0
+
     def floor(self, role: str, relax: float = 1.0) -> float:
         jf = float(self.judge_floor)
-        if role in LEGIBLE_ROLES or (self.hold_fs and role in PILL_ROLES):
-            jf = max(jf, float(self.usual_floor))  # a plan squeezed under the usual floor keeps these at it
+        if role in LEGIBLE_ROLES:  # a plan squeezed under the usual floor keeps these at it
+            jf = max(jf, float(self.usual_floor))
+        elif self.hold_fs and role in PILL_ROLES:  # and the pill labels at the held floor
+            jf = max(jf, self.held_floor)
         return max(jf, FLOOR_MULT.get(role, 1.0) * self.base_fs * relax)
 
 
@@ -125,7 +140,7 @@ def rank_floor(fs0: float, role: str, ctx: Ctx, relax: float = 1.0) -> float:
     if ctx.keep_px and ctx.copy_fs > 0 and fs0 >= RANK * ctx.copy_fs:
         floor = max(floor, float(ctx.usual_floor))
     if ctx.hold_fs and fs0 >= ctx.hold_fs - 0.01:  # copy the source set as large as the held pill labels
-        floor = max(floor, float(ctx.usual_floor))  # is held with them: holding a badge never inverts rank
+        floor = max(floor, ctx.held_copy_floor)  # is held with them: holding a badge never inverts rank
     return floor
 
 
@@ -133,8 +148,10 @@ def lockup_floor(big: float, ctx: Ctx) -> float:
     """The least size of a lockup's smallest part (its parts keep their proportions): the judge
     floor, or the usual floor for a lockup of display copy in a squeezed plan (rank_floor: the
     cents of a price are as much the price as its figure)."""
-    if ctx.keep_px and ((ctx.copy_fs > 0 and big >= RANK * ctx.copy_fs) or (ctx.hold_fs and big >= ctx.hold_fs - 0.01)):
+    if ctx.keep_px and ctx.copy_fs > 0 and big >= RANK * ctx.copy_fs:
         return float(max(ctx.judge_floor, ctx.usual_floor))
+    if ctx.keep_px and ctx.hold_fs and big >= ctx.hold_fs - 0.01:
+        return float(max(ctx.judge_floor, ctx.held_copy_floor))
     return float(ctx.judge_floor)
 
 
@@ -947,7 +964,7 @@ def realize(it: Item, s: float, ctx: Ctx, max_w: float = INF, max_h: float = INF
     heads = it.role == "headline" or any(sat.role == "headline" for sat in it.sats)
     key = (id(it), s, max_w, max_h, relax, k, mode, nowrap, ctx.W, ctx.H, ctx.W0, ctx.H0, ctx.display_room,
            ctx.emphasis if heads else 1.0, ctx.measure if it.kind == "text" else 1.0,
-           ctx.cta_min if it.role == "cta" else 0.0, ctx.keep_px, ctx.hold_fs)
+           ctx.cta_min if it.role == "cta" else 0.0, ctx.keep_px, ctx.hold_fs, ctx.hold_px)
     r = _REALIZED.get(key, _MISS)
     if r is _MISS:
         BUDGET.tick()
