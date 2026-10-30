@@ -7,6 +7,7 @@ import math
 from . import measure as M
 from . import scoring as S
 
+CANVAS = [10 ** 9, 10 ** 9]
 R2 = lambda v: round(float(v), 2)
 
 
@@ -80,7 +81,7 @@ class Unit:
             fs0 = float(el["font_size"])
             wd = avail_w if avail_w is not None else el["width"] * k
             wd = max(1.0, wd)
-            fs, n, bh, _ = M.fit_text(el, wd, fs0 * k)
+            fs, n, bh, _ = M.fit_text(el, wd, fs0 * k, CANVAS[1])
             e = copy.deepcopy(el)
             e.update(x=0.0, y=0.0, width=R2(wd), height=R2(math.ceil(bh)), font_size=fs)
             if e.get("letter_spacing"):
@@ -100,7 +101,7 @@ class Unit:
                 fs0 = float(el["font_size"])
                 n0, b0 = text_block(el)
                 maxh = max(b0, el["height"]) * ke * 1.05 + 1
-                fs, n, bh, _ = M.fit_text(el, e["width"], fs0 * ke, maxh)
+                fs, n, bh, _ = M.fit_text(el, e["width"], fs0 * ke, min(maxh, CANVAS[1]))
                 c0 = (el["y"] - self.y0 + b0 / 2) * ke
                 e["y"] = c0 - bh / 2
                 e["height"] = math.ceil(bh)
@@ -396,6 +397,7 @@ def plan(src, tgt):
     W, H = int(tgt["width"]), int(tgt["height"])
     bgs, decs, units = build_units(src)
     s_ref = math.sqrt(W * H / (sW * sH))
+    CANVAS[0], CANVAS[1] = W, H
     ctx = dict(src=src, W=W, H=H, bg=bg_elements(bgs, W, H), decor=decor_elements(decs, W, H, sW, sH, s_ref), cands=[])
     if units:
         for L in [layout_pin(units, W, H, sW, sH)] + candidates(units, W, H, sW, sH, s_ref):
