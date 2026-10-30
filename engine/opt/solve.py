@@ -84,7 +84,7 @@ def search(S: Scene, W: float, H: float, p: Params = None, refine: bool = True):
         pl, s = keep_layout(S, W, H, p, spread)
         cands.append((("keep-spread" if spread else "keep"), pl, None))
     for name, topo in topologies(S, W, H):
-        for va in ("spread", "center"):
+        for va in (("spread", "center") if not name.startswith("cols") else ("spread",)):
             pl, s = realise(S, topo, W, H, p, s_cap, g0, valign=va)
             cands.append((f"{name}/{va}", pl, (topo, va)))
     scored = [(energy(S, pl, W, H), k, name, pl) for k, (name, pl, _) in enumerate(cands)]
@@ -111,7 +111,61 @@ def search(S: Scene, W: float, H: float, p: Params = None, refine: bool = True):
                             cur, pl, e_cur = trial, pl2, e2
             extra.append((e_cur, len(cands) + len(extra), name + "/refined", pl))
         scored = sorted(scored + extra, key=lambda t: (t[0], t[1]))
+        e0, k0, n0, pl0 = scored[0]
+        pl1, e1 = polish(S, pl0, W, H, e0)
+        if e1 < e0:
+            scored.insert(0, (e1, -1, n0 + "/polished", pl1))
     return scored
+
+
+def polish(S: Scene, placed, W: float, H: float, e_cur: float, budget: float = 1.0):
+    """Per-block coordinate descent on the energy: move / shrink blocks that collide."""
+    import copy
+    import time
+    t0 = time.time()
+    pl = copy.deepcopy(placed)
+
+    def colliding():
+        ids = list(pl)
+        bad = set()
+        for a in range(len(ids)):
+            for c in range(a + 1, len(ids)):
+                p, q = pl[ids[a]], pl[ids[c]]
+                if min(p.x + p.w, q.x + q.w) - max(p.x, q.x) > 1 and min(p.y + p.h, q.y + q.h) - max(p.y, q.y) > 1:
+                    bad.add(ids[a])
+                    bad.add(ids[c])
+        return sorted(bad)
+
+    for step in (0.12, 0.05, 0.02):
+        improved = True
+        while improved and time.time() - t0 < budget:
+            improved = False
+            for bid in colliding():
+                p = pl[bid]
+                best = None
+                for dx, dy, f in ((1, 0, 1), (-1, 0, 1), (0, 1, 1), (0, -1, 1), (0, 0, 0.85)):
+                    q = copy.copy(p)
+                    q.x = min(max(0.0, p.x + dx * step * W), W - p.w)
+                    q.y = min(max(0.0, p.y + dy * step * H), H - p.h)
+                    if f != 1:
+                        if p.fs and p.fs * f < 6:
+                            continue
+                        q.w, q.h = p.w * f, p.h * f
+                        q.x, q.y = p.x + (p.w - q.w) / 2, p.y + (p.h - q.h) / 2
+                        q.s = p.s * f
+                        if p.fs:
+                            q.fs = max(1, int(p.fs * f))
+                    pl[bid] = q
+                    e = energy(S, pl, W, H)
+                    if e < e_cur - 1e-6 and (best is None or e < best[0]):
+                        best = (e, q)
+                    pl[bid] = p
+                if best:
+                    e_cur, pl[bid] = best
+                    improved = True
+                if time.time() - t0 > budget:
+                    break
+    return pl, e_cur
 
 
 def _clamp_box(x, y, w, h, W, H):

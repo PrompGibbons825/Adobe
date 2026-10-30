@@ -1,12 +1,12 @@
 {
  "w": {
-  "overlap": 3.0,
+  "overlap": 10.0,
   "outside": 50.0,
   "fill_deficit": 1.9329977657821753,
   "span_deficit": 2.8676110953227667,
   "shrink": 2.516823488531159,
   "grow": 0.0,
-  "legib": 0.8258775812441326,
+  "legib": 12.0,
   "order": 0.0,
   "drift": 15.78447316790187,
   "balance": 3.6950402681675216,
@@ -43,7 +43,8 @@
   "overlap",
   "outside",
   "busy",
-  "contrast"
+  "contrast",
+  "legib"
  ],
  "lam": 0.01,
  "n_pairs": 500,
@@ -53,5 +54,5 @@
   "sel_iou": 0.4582900804935965,
   "oracle_iou": 0.4797955079792036
  },
- "note": "overlap floored at 3 (held-out sel IoU 0.430 vs 0.458 unfloored, 0.371 at 30); busy/contrast prior (no pixels in fit data)"
+ "note": "constraint terms floored: overlap 10 (held-out sel IoU 0.419 vs 0.458 unfloored), legib 12 (no IoU cost: inactive on Crello pairs); busy/contrast prior (no pixels in fit data)"
 }

@@ -65,7 +65,12 @@ def size_block(S: Scene, b: Block, s: float, slot_w: float, kw: float, W: float,
         n, maxw, h = fast_block(el, fs, width)
         width = max(width, maxw + 1)
         return Placed(0, 0, width, h, s=fs / fs0, fs=fs, lines=n)
-    k = max(s, 1.0 / max(1e-6, min(b.w, b.h)))
+    k = s
+    tfs = [float(S.els[i].get("font_size", 16) or 16) for i in b.members if S.els[i].get("type") == "text"]
+    if tfs:
+        # legibility floor for text inside a rigid group (badge, button), bounded by the slot
+        k = max(k, min(fs_floor(W, H) / min(tfs), slot_w / b.w, 0.9 * H / b.h))
+    k = max(k, 1.0 / max(1e-6, min(b.w, b.h)))
     return Placed(0, 0, b.w * k, b.h * k, s=k)
 
 

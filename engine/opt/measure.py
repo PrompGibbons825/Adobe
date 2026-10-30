@@ -216,6 +216,14 @@ def fast_block(el, fs: float, width: float):
 
 def fast_longest(el, fs: float) -> float:
     wf, asc, desc, words, cache = _fast_base(el)
+    key = ("lw", int(fs), float(el.get("font_size", fs) or fs))
+    r = cache.get(key)
+    if r is None:
+        r = cache[key] = _fast_longest(el, fs, words)
+    return r
+
+
+def _fast_longest(el, fs, words) -> float:
     ls = float(el.get("letter_spacing", 0.0) or 0.0) * fs / max(1e-6, float(el.get("font_size", fs) or fs))
     k = int(fs) / 100.0
     return max((w * k + ls * max(0, c - 1) for w, c in words), default=0.0)

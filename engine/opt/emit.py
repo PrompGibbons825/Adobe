@@ -69,7 +69,15 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
         if b.kind == "text":
             e = out[b.text_idx]
             e["x"], e["y"], e["width"], e["height"] = pl.x, pl.y, pl.w, pl.h
-            _set_fs(e, int(pl.fs or e.get("font_size", 16)))
+            fs = int(pl.fs or e.get("font_size", 16))
+            # exact measure: keep the planned box (fast advances can differ by a wrap)
+            fs = _fit_text(e, fs, pl.w)
+            while fs > 1:
+                n, maxw, th = text_block(e, fs, pl.w)
+                if th <= pl.h * 1.03 + 1:
+                    break
+                fs -= 1
+            _set_fs(e, fs)
             continue
         s = pl.w / b.w
         for i in b.members:

@@ -121,6 +121,13 @@ def features(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> List[fl
             fs = placed[b.bid].fs or fs0
             leg += max(0.0, math.log(floor / max(1.0, fs)))
             texts.append((fs0, fs, b.bid))
+        elif b.kind == "group":
+            sb = math.sqrt(tgt[b.bid][2] * tgt[b.bid][3] / max(1.0, src[b.bid][2] * src[b.bid][3]))
+            for i in b.members:
+                el = S.els[i]
+                if el.get("type") == "text":
+                    fs0 = float(el.get("font_size", 16) or 16)
+                    leg += max(0.0, math.log(floor / max(1.0, fs0 * sb)))
     f["legib"] = leg
     hv, hp = 0, 0
     for i in range(len(texts)):
@@ -193,13 +200,26 @@ def _lum_of(color) -> float:
         return 0.0
 
 
-def _under(S, boxes_img, tb, tz):
+_RS = {}
+
+
+def _rs(el, box, tb):
     from .pixels import region_stats
+    key = (el.get("asset_id"), el.get("fit"), tuple(round(v) for v in box), tuple(round(v) for v in tb))
+    r = _RS.get(key, 0)
+    if r == 0:
+        if len(_RS) > 50000:
+            _RS.clear()
+        r = _RS[key] = region_stats(el, box, tb[0], tb[1], tb[0] + tb[2], tb[1] + tb[3])
+    return r
+
+
+def _under(S, boxes_img, tb, tz):
     best = None
     for z, el, box in boxes_img:
         if z >= tz:
             continue
-        r = region_stats(el, box, tb[0], tb[1], tb[0] + tb[2], tb[1] + tb[3])
+        r = _rs(el, box, tb)
         if r is not None and r[2] > 0.5 and (best is None or z > best[3]):
             best = (r[0], r[1], r[2], z)
     return best
