@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Optional
 
+from . import designer
 from .analyze import Design, Item, analyze, as_number
 from .color import normalize as normalize_colour
 from .compose import Plan, display_room, generate
@@ -37,6 +38,7 @@ def plan_design(source: dict, target: dict):
         if plans:
             score_plans(plans, d, ctx)
             plans.sort(key=lambda p: -p.score)
+            designer.apply(plans, source, target, d, ctx)
             plans[:] = _diverse(plans, RERANK)
             _pixel_rerank(plans, d, ctx, RERANK)
             if _promote_passing(plans, source, d, ctx):
