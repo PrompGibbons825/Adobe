@@ -106,7 +106,7 @@ def text_block(el: dict, fs: int, width: float) -> Tuple[int, float, float]:
     """(n_lines, max rendered line width, rendered height) for text el at font size fs in a box of width."""
     content = str(el.get("content", ""))
     lh = float(el.get("line_height", 1.2) or 1.2)
-    ls = float(el.get("letter_spacing", 0.0) or 0.0)
+    ls = float(el.get("letter_spacing", 0.0) or 0.0) * fs / max(1e-6, float(el.get("font_size", fs) or fs))
     fam = el.get("font_family", "Montserrat")
     if _fm() is None:
         # crude fallback: 0.55 em per char
@@ -197,7 +197,7 @@ def fast_block(el, fs: float, width: float):
         return r
     content = str(el.get("content", ""))
     lh = float(el.get("line_height", 1.2) or 1.2)
-    ls = float(el.get("letter_spacing", 0.0) or 0.0)
+    ls = float(el.get("letter_spacing", 0.0) or 0.0) * fs / max(1e-6, float(el.get("font_size", fs) or fs))
     k = int(fs) / 100.0
     ws = [x * k for x in wf]
     wrapped = _wrap(content, ws, width)
@@ -216,7 +216,7 @@ def fast_block(el, fs: float, width: float):
 
 def fast_longest(el, fs: float) -> float:
     wf, asc, desc, words, cache = _fast_base(el)
-    ls = float(el.get("letter_spacing", 0.0) or 0.0)
+    ls = float(el.get("letter_spacing", 0.0) or 0.0) * fs / max(1e-6, float(el.get("font_size", fs) or fs))
     k = int(fs) / 100.0
     return max((w * k + ls * max(0, c - 1) for w, c in words), default=0.0)
 
@@ -224,7 +224,7 @@ def fast_longest(el, fs: float) -> float:
 def fast_natural(el, fs: float) -> float:
     wf, asc, desc, words, cache = _fast_base(el)
     content = str(el.get("content", ""))
-    ls = float(el.get("letter_spacing", 0.0) or 0.0)
+    ls = float(el.get("letter_spacing", 0.0) or 0.0) * fs / max(1e-6, float(el.get("font_size", fs) or fs))
     k = int(fs) / 100.0
     best = 0.0
     pos = 0

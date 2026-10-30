@@ -39,6 +39,13 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
             e["fit"] = "cover"
     for i in S.panels:
         e = out[i]
+        if e.get("type") == "image" and e.get("fit") != "cover":
+            k = min(W / S.W, H / S.H)
+            w, h = float(e["width"]) * k, float(e["height"]) * k
+            cx = (float(e["x"]) + float(e["width"]) / 2) / S.W * W
+            cy = (float(e["y"]) + float(e["height"]) / 2) / S.H * H
+            e["x"], e["y"], e["width"], e["height"] = cx - w / 2, cy - h / 2, w, h
+            continue
         e["x"] = e["x"] / S.W * W
         e["y"] = e["y"] / S.H * H
         e["width"] = max(1.0, e["width"] / S.W * W)
@@ -62,7 +69,7 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
         if b.kind == "text":
             e = out[b.text_idx]
             e["x"], e["y"], e["width"], e["height"] = pl.x, pl.y, pl.w, pl.h
-            e["font_size"] = int(pl.fs or e.get("font_size", 16))
+            _set_fs(e, int(pl.fs or e.get("font_size", 16)))
             continue
         s = pl.w / b.w
         for i in b.members:
@@ -80,7 +87,7 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
                 fs0 = float(src.get("font_size", 16) or 16)
                 fs = max(1, int(fs0 * s))
                 fs = _fit_text(e, fs, nw)
-                e["font_size"] = fs
+                _set_fs(e, fs)
                 n, maxw, th = text_block(e, fs, nw)
                 if maxw > nw:
                     e["x"] = nx + nw / 2 - (maxw + 1) / 2
@@ -93,6 +100,14 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
     return finalize(S, {"canvas": {"width": W, "height": H}, "elements": out})
 
 
+def _set_fs(e: dict, fs: int) -> None:
+    """Change font size; letter spacing is in px, so it scales with the font."""
+    old = float(e.get("font_size", fs) or fs)
+    if e.get("letter_spacing"):
+        e["letter_spacing"] = float(e["letter_spacing"]) * fs / max(1e-6, old)
+    e["font_size"] = fs
+
+
 def finalize(S: Scene, design: dict) -> dict:
     W = float(design["canvas"]["width"])
     H = float(design["canvas"]["height"])
@@ -101,7 +116,8 @@ def finalize(S: Scene, design: dict) -> dict:
         for key in ("x", "y", "width", "height"):
             e[key] = float(e.get(key, 0.0))
         if e.get("type") == "text":
-            fs = int(max(1, round(float(e.get("font_size", 12)))))
+            _set_fs(e, int(max(1, round(float(e.get("font_size", 12))))))
+            fs = int(e["font_size"])
             # make sure text fits the canvas, then the box covers the rendered text
             w = min(e["width"], W)
             fs = _fit_text(e, fs, w)
@@ -109,15 +125,14 @@ def finalize(S: Scene, design: dict) -> dict:
             while th > H and fs > 1:
                 fs -= 1
                 n, maxw, th = text_block(e, fs, w)
-            e["font_size"] = fs
+            _set_fs(e, fs)
             if maxw > w:
                 w2 = min(W, maxw + 1)
                 e["x"] -= (w2 - w) / 2
                 w = w2
                 n, maxw, th = text_block(e, fs, w)
             e["width"] = w
-            if th > e["height"]:
-                e["height"] = th
+            e["height"] = th      # text draws from the box top; hug the rendered lines
         if k in bleed_ok:
             src = S.els[k]
             sx, sy, sw, sh = float(src["x"]), float(src["y"]), float(src["width"]), float(src["height"])
@@ -125,6 +140,18 @@ def finalize(S: Scene, design: dict) -> dict:
                 continue
         rot = float(e.get("rotation", 0) or 0)
         ax, ay, aw, ah = _rot_aabb(e["x"], e["y"], e["width"], e["height"], rot)
+        if (aw > W or ah > H) and e.get("type") == "text" and not rot:
+            fs = int(e["font_size"])
+            w = min(e["width"], W)
+            while fs > 1:
+                n, maxw, th = text_block(e, fs, w)
+                if th <= H and maxw <= w + 0.5:
+                    break
+                fs -= 1
+            n, maxw, th = text_block(e, fs, w)
+            _set_fs(e, fs)
+            e["width"], e["height"] = w, min(H, max(th, 1.0))
+            ax, ay, aw, ah = e["x"], e["y"], e["width"], e["height"]
         if aw > W or ah > H:
             f = min(W / aw, H / ah) * 0.999
             cx, cy = e["x"] + e["width"] / 2, e["y"] + e["height"] / 2
@@ -132,7 +159,7 @@ def finalize(S: Scene, design: dict) -> dict:
             e["height"] *= f
             e["x"], e["y"] = cx - e["width"] / 2, cy - e["height"] / 2
             if e.get("type") == "text":
-                e["font_size"] = max(1, int(e["font_size"] * f))
+                _set_fs(e, max(1, int(e["font_size"] * f)))
             ax, ay, aw, ah = _rot_aabb(e["x"], e["y"], e["width"], e["height"], rot)
         dx = -ax if ax < 0 else (W - (ax + aw) if ax + aw > W else 0.0)
         dy = -ay if ay < 0 else (H - (ay + ah) if ay + ah > H else 0.0)

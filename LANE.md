@@ -56,8 +56,34 @@ of a tall canvas; text over a busy photo region.
 6. **Emit + finalize** (`resize.py`): write boxes, clamp to canvas, integer fonts, rule check;
    on any exception fall back to a safe uniform-fit layout. Owns: hard-rule guarantee.
 
+## 3. Research for this process
+
+- O'Donovan, Agarwala, Hertzmann, "Learning Layouts for Single-Page Graphic Designs", TVCG 2014
+  (Adobe Research). Energy = weighted sum of design-principle terms (alignment, balance, white
+  space, overlap, flow/reading order, text size/hierarchy, emphasis, boundary), weights by
+  Nonlinear Inverse Optimization from example layouts; retargeting = minimise E at the new size
+  by annealing. Copied: the term list, "designer layout must have lower energy than alternatives"
+  as the learning signal (here: convex surrogate = pairwise logistic, weights >= 0, L2 to a prior).
+  No code/licence published; nothing vendored. (Notes: context/research/2026-10-30-buildable-tonight.md.)
+- Not copied: CP-SAT. The decision that matters is topology (stack / columns / hero split), a
+  small discrete set; enumerating it beats a MIP under a 3 s cap. Continuous knobs (margin, gap,
+  text widening) are refined by coordinate descent on E.
+- Data: Crello families (B0 index, CDLA-Permissive-2.0), geometry only.
+
 ## Log
 - 06:40Z walking skeleton: analyse -> topologies (stack, column, line, k-cols, hero split, pairs,
   keep, keep-spread) x valign -> energy (hand prior) -> emit/finalize. 3 inputs x 20 formats:
   0 rule faults (own checker `tools/lane.py`; L0 `fundamentals.check` not landed yet). Search is
   fast-path (size-100 advances scaled), exact measure only at emit. Box load avg ~59.
+- 07:05Z learned weights (`tools/fit.py`): 500 Crello pairs (families.jsonl minus all 302 dev
+  `cases/` families, so the tournament set is unseen), family-disjoint 80/20 split. Pairs: designer
+  beats each of our ~40 candidates + 4 perturbations of the designer; plus listwise (candidate
+  closer to designer, IoU, beats farther). Held-out: pairwise acc 0.64 -> 0.93; IoU of the
+  selected candidate with the designer 0.313 -> 0.458 (oracle over our candidates 0.480).
+  Learned: drift (keep normalised positions) dominates, then balance, span/fill, shrink, lines,
+  hierarchy, align; grow, order, relsize, margin_uneven -> 0. Overlap fitted ~0.26 (Crello
+  designers do overlap); floored to 3 as a constraint term (held-out IoU 0.430). busy/contrast
+  stay at prior (no pixels in the fit data).
+- Fixes from looking at Crello renders: letter spacing scales with font size; large photo below
+  all text = backdrop (cover); large non-backdrop images = aspect-kept panels; text on its plate
+  is one block; text boxes hug rendered lines.

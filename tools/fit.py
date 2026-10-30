@@ -175,7 +175,7 @@ def build(n_pairs: int, seed: int):
             continue
         W, H = float(b["W"]), float(b["H"])
         try:
-            scored = search(S, W, H)
+            scored = search(S, W, H, refine=False)
         except Exception:  # noqa: BLE001
             continue
         fd = features(S, des, W, H)
@@ -189,7 +189,7 @@ def build(n_pairs: int, seed: int):
     return rows
 
 
-def fit(rows, prior, lam=0.05, iters=3000, lr=0.05):
+def fit(rows, prior, lam=0.05, iters=600, lr=0.3):
     X = []
     for r in rows:
         fd = np.array(r["fd"])
@@ -207,6 +207,8 @@ def fit(rows, prior, lam=0.05, iters=3000, lr=0.05):
                     if np.abs(d).sum() > 1e-9:
                         X.append(d * 0.5)
     X = np.array(X)
+    if len(X) > 20000:
+        X = X[np.random.default_rng(0).choice(len(X), 20000, replace=False)]
     scale = X.std(0) + 1e-6
     Xs = X / scale
     w0 = np.array([prior[k] for k in NAMES]) * scale
@@ -257,7 +259,7 @@ def main():
     print("pairs", len(rows), "train", len(tr), "test", len(te))
     print("prior   test", evaluate(te, d), "train", evaluate(tr, d))
     best = None
-    for lam in (0.3, 0.1, 0.03, 0.01):
+    for lam in (0.1, 0.01):
         w = fit(tr, DEFAULT, lam=lam)
         ev = evaluate(te, w)
         print(f"lam {lam} test", ev, "train", evaluate(tr, w))

@@ -91,7 +91,7 @@ def render_sheet(tiles, path, cell=300, kit=None):
     from renderer.converter.convert import render_design_to_png
     kit = Path(kit or os.environ.get("CHAMELEON_BRAND_KIT", ROOT / "brand_kit"))
     fonts = ROOT / "brand_kit" / "fonts"
-    cols = 5
+    cols = 6 if any(t[1] == 'src' for t in tiles) else 5
     rows = math.ceil(len(tiles) / cols)
     sheet = Image.new("RGB", (cols * (cell + 10), rows * (cell + 26)), (90, 90, 90))
     dr = ImageDraw.Draw(sheet)
@@ -121,6 +121,25 @@ if __name__ == "__main__":
     a = ap.parse_args()
     files = a.files or sorted(str(p) for p in (ROOT / "input").glob("*.json"))
     fm = None
+    if a.cmd == "crello":
+        import random
+        os_env = __import__("os").environ
+        os_env.setdefault("CHAMELEON_BRAND_KIT", "/data/agents/work/crello-wide/cases")
+        from engine.resize import resize
+        cases = sorted(Path("/data/agents/work/crello-wide/cases").glob("*.json"))
+        random.Random(int(a.only or 0)).shuffle(cases)
+        tiles = []
+        for c in cases[:10]:
+            f = json.loads(c.read_text())
+            t = f["targets"][0]
+            out = resize(json.loads(json.dumps(f["source"])), dict(t["canvas"]))
+            errs = check(f["source"], out, t["canvas"])
+            if errs:
+                print(c.stem, errs)
+            tiles += [(c.stem, "src", f["source"]), (c.stem, f"ours {t['canvas']['width']}x{t['canvas']['height']}", out),
+                      (c.stem, "designer", t)]
+        render_sheet(tiles, a.sheet, kit="/data/agents/work/crello-wide/cases")
+        sys.exit(0)
     if a.only:
         fm = {k: FORMATS[k] for k in a.only.split(",")}
     run(files, a.sheet, fm)

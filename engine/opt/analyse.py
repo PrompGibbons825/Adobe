@@ -59,15 +59,22 @@ def analyse(source: dict) -> Scene:
     boxes = [_box(e) for e in els]
     order = sorted(range(n), key=lambda i: (els[i].get("z_index", 0), i))
 
-    # backdrop: covers >= 85% of canvas, and nothing under it is foreground
+    # backdrop: non-text, covers >= 85% of canvas, below every text
+    zt = min([els[i].get("z_index", 0) for i in order if els[i].get("type") == "text"] or [float("inf")])
     for i in order:
         e = els[i]
-        if e.get("type") == "text":
+        if e.get("type") == "text" or e.get("z_index", 0) >= zt:
             break
-        if _inter(boxes[i], cv) >= 0.85 * A:
+        if _inter(boxes[i], cv) >= 0.85 * A and not e.get("rotation"):
             S.backdrop.append(i)
-        else:
-            break
+    # a large photo at the bottom of the foreground stack acts as the backdrop (designers bleed it)
+    for i in order:
+        if i in S.backdrop:
+            continue
+        e = els[i]
+        if e.get("type") == "image" and _inter(boxes[i], cv) >= 0.45 * A:
+            S.backdrop.append(i)
+        break
     rest = [i for i in order if i not in S.backdrop]
 
     for i in rest:
@@ -84,7 +91,7 @@ def analyse(source: dict) -> Scene:
             if not holds or vis < 0.5:
                 S.decor.append(i)
                 continue
-        if e.get("type") == "shape" and w * h >= 0.45 * A:
+        if (e.get("type") == "shape" and w * h >= 0.45 * A) or _inter(boxes[i], cv) >= 0.6 * A:
             S.panels.append(i)
     fg = [i for i in rest if i not in S.decor and i not in S.panels]
 
@@ -123,7 +130,9 @@ def analyse(source: dict) -> Scene:
                 continue
             tb = els[big].get("type")
             ts = els[small].get("type")
-            if ba <= 0.30 * A and inter >= 0.6 * sa:
+            if ts == "text" and tb != "text" and ba <= 0.6 * A and inter >= 0.6 * sa:
+                union(a, b)       # text on its plate / art: one block
+            elif ba <= 0.30 * A and inter >= 0.6 * sa:
                 # small thing on a modest container (badge, button, composite art)
                 if tb == "text" and ts == "text" and inter < 0.9 * sa:
                     continue

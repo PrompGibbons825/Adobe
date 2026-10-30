@@ -74,7 +74,7 @@ def _gap0(S: Scene) -> float:
     return min(max(gaps[len(gaps) // 2], 0.015 * md), 0.08 * md)
 
 
-def search(S: Scene, W: float, H: float, p: Params = None):
+def search(S: Scene, W: float, H: float, p: Params = None, refine: bool = True):
     p = p or Params()
     s_cap = max(W / S.W, H / S.H) * 1.0
     s_cap = min(s_cap, 1.6 * math.sqrt(W * H / (S.W * S.H)))
@@ -82,13 +82,35 @@ def search(S: Scene, W: float, H: float, p: Params = None):
     cands = []
     for spread in (False, True):
         pl, s = keep_layout(S, W, H, p, spread)
-        cands.append((("keep-spread" if spread else "keep"), pl))
+        cands.append((("keep-spread" if spread else "keep"), pl, None))
     for name, topo in topologies(S, W, H):
         for va in ("spread", "center"):
             pl, s = realise(S, topo, W, H, p, s_cap, g0, valign=va)
-            cands.append((f"{name}/{va}", pl))
-    scored = [(energy(S, pl, W, H), k, name, pl) for k, (name, pl) in enumerate(cands)]
+            cands.append((f"{name}/{va}", pl, (topo, va)))
+    scored = [(energy(S, pl, W, H), k, name, pl) for k, (name, pl, _) in enumerate(cands)]
     scored.sort(key=lambda t: (t[0], t[1]))
+    if refine:
+        # coordinate descent over the global geometry knobs for the 2 best topologies
+        extra = []
+        tops = [cands[k] for _, k, _, _ in scored if cands[k][2] is not None][:2]
+        for name, _, (topo, va) in tops:
+            cur = Params(p.margin_frac, p.gap_frac, p.text_widen)
+            pl, _ = realise(S, topo, W, H, cur, s_cap, g0, valign=va)
+            e_cur = energy(S, pl, W, H)
+            for _sweep in range(2):
+                for attr, vals in (("margin_frac", (0.025, 0.05, 0.08)), ("gap_frac", (0.6, 1.0, 1.6)),
+                                   ("text_widen", (0.5, 1.0, 1.6))):
+                    for v in vals:
+                        if getattr(cur, attr) == v:
+                            continue
+                        trial = Params(cur.margin_frac, cur.gap_frac, cur.text_widen)
+                        setattr(trial, attr, v)
+                        pl2, _ = realise(S, topo, W, H, trial, s_cap, g0, valign=va)
+                        e2 = energy(S, pl2, W, H)
+                        if e2 < e_cur - 1e-9:
+                            cur, pl, e_cur = trial, pl2, e2
+            extra.append((e_cur, len(cands) + len(extra), name + "/refined", pl))
+        scored = sorted(scored + extra, key=lambda t: (t[0], t[1]))
     return scored
 
 

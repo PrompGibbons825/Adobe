@@ -1,0 +1,57 @@
+{
+ "w": {
+  "overlap": 3.0,
+  "outside": 50.0,
+  "fill_deficit": 1.9329977657821753,
+  "span_deficit": 2.8676110953227667,
+  "shrink": 2.516823488531159,
+  "grow": 0.0,
+  "legib": 0.8258775812441326,
+  "order": 0.0,
+  "drift": 15.78447316790187,
+  "balance": 3.6950402681675216,
+  "margin_uneven": 0.0,
+  "hier": 1.9538784118925023,
+  "lines": 2.6648246146908217,
+  "relsize": 0.0,
+  "align": 2.0355485911608238,
+  "smallest": 0.25990940815246255,
+  "busy": 20.0,
+  "contrast": 4.0
+ },
+ "fitted": {
+  "overlap": 0.25660277608091087,
+  "outside": 3.283235939470928,
+  "fill_deficit": 1.9329977657821753,
+  "span_deficit": 2.8676110953227667,
+  "shrink": 2.516823488531159,
+  "grow": 0.0,
+  "legib": 0.8258775812441326,
+  "order": 0.0,
+  "drift": 15.78447316790187,
+  "balance": 3.6950402681675216,
+  "margin_uneven": 0.0,
+  "hier": 1.9538784118925023,
+  "lines": 2.6648246146908217,
+  "relsize": 0.0,
+  "align": 2.0355485911608238,
+  "smallest": 0.25990940815246255,
+  "busy": 1.6779936795640122,
+  "contrast": 0.3355987359128025
+ },
+ "constraint_terms": [
+  "overlap",
+  "outside",
+  "busy",
+  "contrast"
+ ],
+ "lam": 0.01,
+ "n_pairs": 500,
+ "data": "crello-wide families.jsonl minus cases/",
+ "test": {
+  "pair_acc": 0.9263188073394495,
+  "sel_iou": 0.4582900804935965,
+  "oracle_iou": 0.4797955079792036
+ },
+ "note": "overlap floored at 3 (held-out sel IoU 0.430 vs 0.458 unfloored, 0.371 at 30); busy/contrast prior (no pixels in fit data)"
+}
