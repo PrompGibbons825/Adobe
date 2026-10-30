@@ -72,6 +72,7 @@ def main():
     rng = random.Random(a.seed)
     fmts = list(FORMATS.items())
     bad = 0
+    early = []
     times = []
     for i in range(a.n):
         src = rand_design(rng)
@@ -83,9 +84,15 @@ def main():
         out2 = resize(json.loads(json.dumps(src)), {"width": W, "height": H})
         if json.dumps(out2, sort_keys=True) != json.dumps(out, sort_keys=True):
             errs.append("nondeterministic")
+        if i < 25:
+            early.append((src, (W, H), json.dumps(out, sort_keys=True)))
         if errs:
             bad += 1
             print(i, name, errs[:6], flush=True)
+    for k, (src, (W, H), ref) in enumerate(early):   # order independence: recompute after warm caches
+        if json.dumps(resize(json.loads(json.dumps(src)), {"width": W, "height": H}), sort_keys=True) != ref:
+            bad += 1
+            print("order-dependent", k, flush=True)
     times.sort()
     print(f"stress n={a.n} faulty={bad} p50={times[len(times)//2]:.2f}s p95={times[int(.95*len(times))]:.2f}s max={times[-1]:.2f}s")
 

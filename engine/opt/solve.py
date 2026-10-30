@@ -80,9 +80,9 @@ def search(S: Scene, W: float, H: float, p: Params = None, refine: bool = True):
     s_cap = min(s_cap, 1.6 * math.sqrt(W * H / (S.W * S.H)))
     g0 = _gap0(S)
     cands = []
-    for spread in (False, True):
+    for spread, nm in ((False, "keep"), (True, "keep-spread"), ("canvas", "keep-canvas")):
         pl, s = keep_layout(S, W, H, p, spread)
-        cands.append((("keep-spread" if spread else "keep"), pl, None))
+        cands.append((nm, pl, None))
     for name, topo in topologies(S, W, H):
         for va in (("spread", "center") if not name.startswith("cols") else ("spread",)):
             pl, s = realise(S, topo, W, H, p, s_cap, g0, valign=va)
@@ -118,11 +118,10 @@ def search(S: Scene, W: float, H: float, p: Params = None, refine: bool = True):
     return scored
 
 
-def polish(S: Scene, placed, W: float, H: float, e_cur: float, budget: float = 1.0):
+def polish(S: Scene, placed, W: float, H: float, e_cur: float, budget: int = 250):
     """Per-block coordinate descent on the energy: move / shrink blocks that collide."""
     import copy
-    import time
-    t0 = time.time()
+    evals = 0
     pl = copy.deepcopy(placed)
 
     def colliding():
@@ -138,7 +137,7 @@ def polish(S: Scene, placed, W: float, H: float, e_cur: float, budget: float = 1
 
     for step in (0.12, 0.05, 0.02):
         improved = True
-        while improved and time.time() - t0 < budget:
+        while improved and evals < budget:
             improved = False
             for bid in colliding():
                 p = pl[bid]
@@ -157,13 +156,14 @@ def polish(S: Scene, placed, W: float, H: float, e_cur: float, budget: float = 1
                             q.fs = max(1, int(p.fs * f))
                     pl[bid] = q
                     e = energy(S, pl, W, H)
+                    evals += 1
                     if e < e_cur - 1e-6 and (best is None or e < best[0]):
                         best = (e, q)
                     pl[bid] = p
                 if best:
                     e_cur, pl[bid] = best
                     improved = True
-                if time.time() - t0 > budget:
+                if evals >= budget:
                     break
     return pl, e_cur
 

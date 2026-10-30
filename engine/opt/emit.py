@@ -50,7 +50,7 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
         e["y"] = e["y"] / S.H * H
         e["width"] = max(1.0, e["width"] / S.W * W)
         e["height"] = max(1.0, e["height"] / S.H * H)
-    sd = min(W / S.W, H / S.H) * 0.5 + 0.5 * math.sqrt(W * H / (S.W * S.H))
+    sd = min(W / S.W, H / S.H)   # decor keeps its share of the short side
     sd = min(sd, max(W / S.W, H / S.H))
     for i in S.decor:
         e = out[i]

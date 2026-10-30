@@ -44,7 +44,7 @@ def margins(W, H, p: Params) -> Tuple[float, float]:
     return mx, my
 
 
-def size_block(S: Scene, b: Block, s: float, slot_w: float, kw: float, W: float, H: float) -> Placed:
+def size_block(S: Scene, b: Block, s: float, slot_w: float, kw: float, W: float, H: float, hug: bool = True) -> Placed:
     if b.kind == "text":
         el = S.els[b.text_idx]
         fs0 = float(el.get("font_size", 16) or 16)
@@ -61,7 +61,8 @@ def size_block(S: Scene, b: Block, s: float, slot_w: float, kw: float, W: float,
         want = b.w * s * kw
         nat = fast_natural(el, fs)
         width = max(lw + 1, min(slot_w, max(want, 1.0)))
-        width = min(width, nat * 1.05 + 4)
+        if hug:
+            width = min(width, nat * 1.05 + 4)
         n, maxw, h = fast_block(el, fs, width)
         width = max(width, maxw + 1)
         return Placed(0, 0, width, h, s=fs / fs0, fs=fs, lines=n)
@@ -164,7 +165,7 @@ def realise(S: Scene, topo: Topo, W: float, H: float, p: Params, s_cap: float, g
     return placed, s
 
 
-def keep_layout(S: Scene, W: float, H: float, p: Params, spread: bool) -> Tuple[Dict[int, Placed], float]:
+def keep_layout(S: Scene, W: float, H: float, p: Params, spread) -> Tuple[Dict[int, Placed], float]:
     """Uniform scale of the whole composition (spread=False), or each block at its normalised
     centre with the uniform scale (spread=True)."""
     mx, my = margins(W, H, p)
@@ -176,11 +177,16 @@ def keep_layout(S: Scene, W: float, H: float, p: Params, spread: bool) -> Tuple[
     y1 = max(b.y + b.h for b in S.blocks)
     cw, chh = max(1, x1 - x0), max(1, y1 - y0)
     s = min((W - 2 * mx) / cw, (H - 2 * my) / chh, max(W / S.W, H / S.H))
+    if spread == "canvas":
+        s = min(W / S.W, H / S.H)
     placed = {}
     kw = 1.0
     for b in S.blocks:
-        pl = size_block(S, b, s, max(4.0, W - 2 * mx), kw, W, H)
-        if spread:
+        pl = size_block(S, b, s, max(4.0, W - 2 * mx), kw, W, H, hug=False)
+        if spread == "canvas":
+            cx = W / 2 + ((b.x + b.w / 2) - S.W / 2) * s
+            cy = H / 2 + ((b.y + b.h / 2) - S.H / 2) * s
+        elif spread:
             cx = (b.x + b.w / 2) / S.W * W
             cy = (b.y + b.h / 2) / S.H * H
         else:

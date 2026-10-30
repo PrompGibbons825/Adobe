@@ -191,7 +191,9 @@ def _fast_base(el):
 def fast_block(el, fs: float, width: float):
     """Approximate (n_lines, max line width, height) — linear scaling of size-100 advances."""
     wf, asc, desc, words, cache = _fast_base(el)
-    key = (int(fs), round(width, 1))
+    width = round(width, 1)
+    fs = int(fs)
+    key = (fs, width, float(el.get("font_size", fs) or fs))
     r = cache.get(key)
     if r is not None:
         return r

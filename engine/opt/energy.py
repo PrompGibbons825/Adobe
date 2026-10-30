@@ -212,7 +212,9 @@ _RS = {}
 
 def _rs(el, box, tb):
     from .pixels import region_stats
-    key = (el.get("asset_id"), el.get("fit"), tuple(round(v) for v in box), tuple(round(v) for v in tb))
+    box = tuple(float(round(v)) for v in box)
+    tb = tuple(float(round(v)) for v in tb)
+    key = (el.get("asset_id"), el.get("fit"), box, tb)
     r = _RS.get(key, 0)
     if r == 0:
         if len(_RS) > 50000:
