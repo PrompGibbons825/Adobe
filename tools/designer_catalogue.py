@@ -35,7 +35,7 @@ ARR = {"restack": "re-stacked the copy and the image vertically", "to_row": "put
 LAYOUT = {"stack": "stacked", "row": "side-by-side", "split": "split-panel", "overlay": "copy-on-image",
           "single": "single-block"}
 PHOTO = {"bleed": "kept the photo full-bleed", "crop_bleed": "cropped the photo to fill the canvas",
-         "framed": "kept the photo framed inside the canvas"}
+         "framed": "kept the main image framed inside the canvas"}
 
 
 def zone_words(z: str) -> str:
@@ -88,7 +88,7 @@ def words(src: dict, out: dict, dec: dict, keep: dict, f: dict) -> str:
             if dec[k] != keep.get(k):
                 parts.append(f"{name} moved to {zone_words(dec[k])}")
     if dec.get("align") not in (None, keep.get("align"), "none"):
-        parts.append(f"copy re-aligned {dec['align']}")
+        parts.append("copy alignment became mixed" if dec["align"] == "mixed" else f"copy re-aligned {dec['align']}")
     if dec.get("emphasis") == "up":
         parts.append("headline emphasis raised")
     elif dec.get("emphasis") == "down":
@@ -117,7 +117,7 @@ def reasoning(f: dict, resizes: list) -> str:
         bits.append(f"the {LAYOUT[f['layout']]} composition survives every size, so the designer kept it and rescaled")
     else:
         ch = [a for a in arr if a != "kept"]
-        bits.append("the composition did not fit the " + ("extreme " if big else "") + "shapes, so the designer "
+        bits.append("the composition did not fit " + ("the extreme" if big else "some of the new") + " shapes, so the designer "
                     + " / ".join(ARR[a] for a in ch))
     if moved:
         bits.append(f"the headline was repositioned in {moved} of {len(resizes)} sizes to follow the new shape")
