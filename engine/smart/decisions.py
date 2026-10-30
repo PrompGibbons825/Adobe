@@ -328,7 +328,7 @@ def source_features(source: dict, target: dict) -> Dict[str, object]:
     head = br["headline"][0] if br["headline"] else None
     sa, ta = W / H, Wt / Ht
     lac = math.log(ta / sa)
-    return {
+    feats = {
         "bg_kind": bgk,
         "copy_on_photo": "yes" if on_photo else "no",
         "cut": kind,
@@ -347,6 +347,12 @@ def source_features(source: dict, target: dict) -> Dict[str, object]:
         "abs_aspect_change": abs(lac),
         "area_ratio": math.log((Wt * Ht) / (W * H)),
     }
+    # the source's own value of each decision (anchor zones, alignment, photo, coverage...), so a
+    # tree can learn "keep it unless the shape change says otherwise"
+    for k, v in keep_source(source).items():
+        if not k.startswith("drop:") and k not in ("arrangement", "group_kept", "order_kept", "emphasis"):
+            feats["src_" + k] = v
+    return feats
 
 
 def decisions_of(source: dict, out: dict) -> Dict[str, str]:
@@ -399,7 +405,10 @@ def decisions_of(source: dict, out: dict) -> Dict[str, str]:
         kept = [sid for sid in src_r if m.get(sid) is not None and _visible(m[sid], Wo, Ho)]
         d["drop:" + r] = "no" if len(kept) == len(src_r) else ("all" if not kept else "some")
         if r in ANCHOR_ROLES and kept:
-            d["anchor:" + r] = _zone(_union(_clip(_box(m[s]), Wo, Ho) for s in kept), Wo, Ho)
+            z = _zone(_union(_clip(_box(m[s]), Wo, Ho) for s in kept), Wo, Ho)
+            d["anchor:" + r] = z
+            d["anchor_row:" + r] = {"t": "top", "m": "middle", "b": "bottom"}[z[0]]
+            d["anchor_col:" + r] = {"l": "left", "c": "center", "r": "right"}[z[1]]
         if r in SCALE_ROLES and kept:
             sid = max(kept, key=lambda s: _area(_box(next(e for e in source["elements"] if e.get("id") == s))))
             se = next(e for e in source["elements"] if e.get("id") == sid)
@@ -455,9 +464,13 @@ def _walk(node, feats):
 
 def predict(features: Dict[str, object]) -> Dict[str, Tuple[str, float]]:
     """decision -> (value, confidence = leaf purity). Empty if designer_tree.json is missing.
-    Decisions about a role the source lacks are still returned; ignore them."""
+    Decisions about a role the source lacks are still returned; ignore them. Leaves with value "="
+    mean "keep the source's own value" and are resolved from features["src_<decision>"]."""
     out = {}
     for name, tree in _load().items():
         leaf = _walk(tree, features)
-        out[name] = (leaf["v"], float(leaf["p"]))
+        v = leaf["v"]
+        if v == "=":  # relative leaf: keep the source's own value
+            v = str(features.get("src_" + name, "="))
+        out[name] = (v, float(leaf["p"]))
     return out

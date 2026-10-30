@@ -1,0 +1,6020 @@
+{
+ "version": 1,
+ "depth": 4,
+ "min_leaf": 30,
+ "features": [
+  "cut_n",
+  "n_images",
+  "text_only",
+  "headline_share",
+  "hero_share",
+  "n_text",
+  "log_src_ar",
+  "log_tgt_ar",
+  "log_aspect_change",
+  "abs_aspect_change",
+  "area_ratio",
+  "bg_kind=image",
+  "bg_kind=none",
+  "bg_kind=shape",
+  "copy_on_photo=no",
+  "copy_on_photo=yes",
+  "cut=h",
+  "cut=leaf",
+  "cut=v",
+  "layout=overlay",
+  "layout=row",
+  "layout=single",
+  "layout=split",
+  "layout=stack",
+  "src_aspect=landscape",
+  "src_aspect=portrait",
+  "src_aspect=square",
+  "src_aspect=tall",
+  "src_aspect=wide",
+  "tgt_aspect=landscape",
+  "tgt_aspect=portrait",
+  "tgt_aspect=square",
+  "tgt_aspect=tall",
+  "tgt_aspect=wide",
+  "src_anchor:headline=bc",
+  "src_anchor:headline=bl",
+  "src_anchor:headline=br",
+  "src_anchor:headline=mc",
+  "src_anchor:headline=ml",
+  "src_anchor:headline=mr",
+  "src_anchor:headline=tc",
+  "src_anchor:headline=tl",
+  "src_anchor:headline=tr",
+  "src_anchor:hero=bc",
+  "src_anchor:hero=bl",
+  "src_anchor:hero=br",
+  "src_anchor:hero=mc",
+  "src_anchor:hero=ml",
+  "src_anchor:hero=mr",
+  "src_anchor:hero=tc",
+  "src_anchor:hero=tl",
+  "src_anchor:hero=tr",
+  "src_anchor:art=bc",
+  "src_anchor:art=bl",
+  "src_anchor:art=br",
+  "src_anchor:art=mc",
+  "src_anchor:art=ml",
+  "src_anchor:art=mr",
+  "src_anchor:art=tc",
+  "src_anchor:art=tl",
+  "src_anchor:art=tr",
+  "src_anchor:small=bc",
+  "src_anchor:small=bl",
+  "src_anchor:small=br",
+  "src_anchor:small=mc",
+  "src_anchor:small=ml",
+  "src_anchor:small=mr",
+  "src_anchor:small=tc",
+  "src_anchor:small=tl",
+  "src_anchor:small=tr",
+  "src_align=center",
+  "src_align=left",
+  "src_align=mixed",
+  "src_align=right",
+  "src_photo=bleed",
+  "src_photo=crop_bleed",
+  "src_photo=framed",
+  "src_photo=none",
+  "src_anchor_row:headline=bottom",
+  "src_anchor_row:headline=middle",
+  "src_anchor_row:headline=top",
+  "src_anchor_row:hero=bottom",
+  "src_anchor_row:hero=middle",
+  "src_anchor_row:hero=top",
+  "src_anchor_row:art=bottom",
+  "src_anchor_row:art=middle",
+  "src_anchor_row:art=top",
+  "src_anchor_row:small=bottom",
+  "src_anchor_row:small=middle",
+  "src_anchor_row:small=top",
+  "src_anchor_col:headline=center",
+  "src_anchor_col:headline=left",
+  "src_anchor_col:headline=right",
+  "src_anchor_col:hero=center",
+  "src_anchor_col:hero=left",
+  "src_anchor_col:hero=right",
+  "src_anchor_col:art=center",
+  "src_anchor_col:art=left",
+  "src_anchor_col:art=right",
+  "src_anchor_col:small=center",
+  "src_anchor_col:small=left",
+  "src_anchor_col:small=right",
+  "src_coverage=high",
+  "src_coverage=low",
+  "src_coverage=mid",
+  "src_scale:headline=same"
+ ],
+ "n_rows": 11514,
+ "trees": {
+  "arrangement": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "kept",
+        "p": 0.962,
+        "n": 8954,
+        "dist": {
+         "kept": 8613,
+         "to_row": 105,
+         "to_split": 99,
+         "restack": 84,
+         "overlay": 53
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "kept",
+        "p": 0.787,
+        "n": 572,
+        "dist": {
+         "kept": 450,
+         "to_row": 61,
+         "overlay": 36,
+         "to_split": 22,
+         "restack": 3
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": 0.8112240731716156
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "restack",
+        "p": 0.59,
+        "n": 100,
+        "dist": {
+         "restack": 59,
+         "kept": 28,
+         "overlay": 10,
+         "to_split": 3
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "kept",
+        "p": 0.837,
+        "n": 811,
+        "dist": {
+         "kept": 679,
+         "restack": 58,
+         "to_split": 54,
+         "overlay": 20
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -0.5843631625175476
+     },
+     "f": "layout",
+     "eq": "row"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "kept",
+        "p": 0.741,
+        "n": 479,
+        "dist": {
+         "kept": 355,
+         "overlay": 66,
+         "to_row": 56,
+         "restack": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "overlay",
+        "p": 0.345,
+        "n": 55,
+        "dist": {
+         "overlay": 19,
+         "to_row": 14,
+         "restack": 14,
+         "kept": 8
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.6986720860004425
+     },
+     "r": {
+      "leaf": {
+       "v": "overlay",
+       "p": 0.818,
+       "n": 33,
+       "dist": {
+        "overlay": 27,
+        "kept": 6
+       }
+      }
+     },
+     "f": "headline_share",
+     "t": 0.31036293506622314
+    },
+    "f": "layout",
+    "eq": "split"
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "restack",
+        "p": 0.732,
+        "n": 82,
+        "dist": {
+         "restack": 60,
+         "overlay": 15,
+         "kept": 7
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "overlay",
+        "p": 0.686,
+        "n": 35,
+        "dist": {
+         "overlay": 24,
+         "restack": 6,
+         "kept": 4,
+         "to_row": 1
+        }
+       }
+      },
+      "f": "src_photo",
+      "eq": "bleed"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "kept",
+        "p": 0.688,
+        "n": 80,
+        "dist": {
+         "kept": 55,
+         "to_row": 22,
+         "overlay": 3
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "to_row",
+        "p": 0.471,
+        "n": 70,
+        "dist": {
+         "to_row": 33,
+         "to_split": 20,
+         "overlay": 16,
+         "kept": 1
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.22675198316574097
+     },
+     "f": "layout",
+     "eq": "stack"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "kept",
+        "p": 0.931,
+        "n": 130,
+        "dist": {
+         "kept": 121,
+         "to_split": 5,
+         "restack": 3,
+         "to_row": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "kept",
+        "p": 0.744,
+        "n": 39,
+        "dist": {
+         "kept": 29,
+         "to_split": 6,
+         "to_row": 4
+        }
+       }
+      },
+      "f": "cut",
+      "eq": "v"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "kept",
+        "p": 0.909,
+        "n": 33,
+        "dist": {
+         "kept": 30,
+         "to_split": 2,
+         "restack": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "restack",
+        "p": 0.561,
+        "n": 41,
+        "dist": {
+         "restack": 23,
+         "kept": 18
+        }
+       }
+      },
+      "f": "tgt_aspect",
+      "eq": "portrait"
+     },
+     "f": "src_anchor_col:headline",
+     "eq": "left"
+    },
+    "f": "layout",
+    "eq": "overlay"
+   },
+   "f": "abs_aspect_change",
+   "t": 1.2750164270401
+  },
+  "group_kept": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.977,
+        "n": 1787,
+        "dist": {
+         "yes": 1746,
+         "no": 41
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.912,
+        "n": 783,
+        "dist": {
+         "yes": 714,
+         "no": 69
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 3.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.863,
+        "n": 1430,
+        "dist": {
+         "yes": 1234,
+         "no": 196
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.72,
+        "n": 1193,
+        "dist": {
+         "yes": 859,
+         "no": 334
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.17935167253017426
+     },
+     "f": "n_images",
+     "t": 4.5
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.915,
+        "n": 424,
+        "dist": {
+         "yes": 388,
+         "no": 36
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.67,
+        "n": 88,
+        "dist": {
+         "yes": 59,
+         "no": 29
+        }
+       }
+      },
+      "f": "src_anchor_row:headline",
+      "eq": "bottom"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.741,
+        "n": 505,
+        "dist": {
+         "yes": 374,
+         "no": 131
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "no",
+        "p": 0.693,
+        "n": 567,
+        "dist": {
+         "no": 393,
+         "yes": 174
+        }
+       }
+      },
+      "f": "src_coverage",
+      "eq": "high"
+     },
+     "f": "n_images",
+     "t": 3.5
+    },
+    "f": "abs_aspect_change",
+    "t": 0.5783787369728088
+   },
+   "r": {
+    "leaf": {
+     "v": "yes",
+     "p": 1.0,
+     "n": 4737,
+     "dist": {
+      "yes": 4737
+     }
+    }
+   },
+   "f": "cut",
+   "eq": "leaf"
+  },
+  "order_kept": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.992,
+        "n": 3896,
+        "dist": {
+         "yes": 3863,
+         "no": 33
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.888,
+        "n": 98,
+        "dist": {
+         "yes": 87,
+         "no": 11
+        }
+       }
+      },
+      "f": "log_src_ar",
+      "t": 1.2424533367156982
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.965,
+        "n": 310,
+        "dist": {
+         "yes": 299,
+         "no": 11
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.528,
+        "n": 36,
+        "dist": {
+         "yes": 19,
+         "no": 17
+        }
+       }
+      },
+      "f": "src_anchor:small",
+      "eq": "ml"
+     },
+     "f": "bg_kind",
+     "eq": "none"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.663,
+        "n": 403,
+        "dist": {
+         "yes": 267,
+         "no": 136
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.875,
+        "n": 489,
+        "dist": {
+         "yes": 428,
+         "no": 61
+        }
+       }
+      },
+      "f": "src_anchor_col:headline",
+      "eq": "center"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.916,
+        "n": 3142,
+        "dist": {
+         "yes": 2878,
+         "no": 264
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.55,
+        "n": 60,
+        "dist": {
+         "yes": 33,
+         "no": 27
+        }
+       }
+      },
+      "f": "log_tgt_ar",
+      "t": 1.2424533367156982
+     },
+     "f": "src_anchor_row:art",
+     "eq": "middle"
+    },
+    "f": "n_text",
+    "t": 3.5
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.855,
+        "n": 1505,
+        "dist": {
+         "yes": 1287,
+         "no": 218
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.664,
+        "n": 851,
+        "dist": {
+         "yes": 565,
+         "no": 286
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 7.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "no",
+        "p": 0.879,
+        "n": 107,
+        "dist": {
+         "no": 94,
+         "yes": 13
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.907,
+        "n": 43,
+        "dist": {
+         "yes": 39,
+         "no": 4
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.30307742953300476
+     },
+     "f": "src_anchor:art",
+     "eq": "ml"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "yes",
+        "p": 0.658,
+        "n": 243,
+        "dist": {
+         "yes": 160,
+         "no": 83
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "no",
+        "p": 0.845,
+        "n": 103,
+        "dist": {
+         "no": 87,
+         "yes": 16
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 9.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "no",
+        "p": 0.545,
+        "n": 33,
+        "dist": {
+         "no": 18,
+         "yes": 15
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "no",
+        "p": 0.933,
+        "n": 195,
+        "dist": {
+         "no": 182,
+         "yes": 13
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.02081640064716339
+     },
+     "f": "src_anchor_col:headline",
+     "eq": "left"
+    },
+    "f": "abs_aspect_change",
+    "t": 0.8107033967971802
+   },
+   "f": "n_text",
+   "t": 5.5
+  },
+  "drop:headline": {
+   "leaf": {
+    "v": "no",
+    "p": 1.0,
+    "n": 11514,
+    "dist": {
+     "no": 11514
+    }
+   }
+  },
+  "drop:body": {
+   "leaf": {
+    "v": "no",
+    "p": 1.0,
+    "n": 7208,
+    "dist": {
+     "no": 7208
+    }
+   }
+  },
+  "drop:small": {
+   "leaf": {
+    "v": "no",
+    "p": 1.0,
+    "n": 8800,
+    "dist": {
+     "no": 8800
+    }
+   }
+  },
+  "drop:hero": {
+   "leaf": {
+    "v": "no",
+    "p": 1.0,
+    "n": 9583,
+    "dist": {
+     "no": 9583
+    }
+   }
+  },
+  "drop:art": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "no",
+        "p": 0.967,
+        "n": 30,
+        "dist": {
+         "no": 29,
+         "some": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "no",
+        "p": 1.0,
+        "n": 10057,
+        "dist": {
+         "no": 10057
+        }
+       }
+      },
+      "f": "area_ratio",
+      "t": -3.5999536514282227
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "no",
+        "p": 0.933,
+        "n": 30,
+        "dist": {
+         "no": 28,
+         "some": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "no",
+        "p": 1.0,
+        "n": 48,
+        "dist": {
+         "no": 48
+        }
+       }
+      },
+      "f": "log_tgt_ar",
+      "t": -0.341548427939415
+     },
+     "f": "src_anchor:hero",
+     "eq": "tl"
+    },
+    "r": {
+     "l": {
+      "leaf": {
+       "v": "no",
+       "p": 0.896,
+       "n": 48,
+       "dist": {
+        "no": 43,
+        "some": 5
+       }
+      }
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "no",
+        "p": 1.0,
+        "n": 499,
+        "dist": {
+         "no": 499
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "no",
+        "p": 0.968,
+        "n": 94,
+        "dist": {
+         "no": 91,
+         "some": 3
+        }
+       }
+      },
+      "f": "layout",
+      "eq": "row"
+     },
+     "f": "area_ratio",
+     "t": -2.2499048709869385
+    },
+    "f": "src_anchor:headline",
+    "eq": "tl"
+   },
+   "r": {
+    "l": {
+     "leaf": {
+      "v": "no",
+      "p": 1.0,
+      "n": 117,
+      "dist": {
+       "no": 117
+      }
+     }
+    },
+    "r": {
+     "leaf": {
+      "v": "no",
+      "p": 0.882,
+      "n": 34,
+      "dist": {
+       "no": 30,
+       "some": 4
+      }
+     }
+    },
+    "f": "src_anchor:art",
+    "eq": "mr"
+   },
+   "f": "src_anchor:small",
+   "eq": "br"
+  },
+  "drop:background": {
+   "leaf": {
+    "v": "no",
+    "p": 1.0,
+    "n": 9286,
+    "dist": {
+     "no": 9286
+    }
+   }
+  },
+  "anchor:headline": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.882,
+        "n": 4236,
+        "dist": {
+         "=": 3735,
+         "mc": 129,
+         "ml": 91,
+         "mr": 74,
+         "tc": 51,
+         "tl": 36,
+         "bc": 34,
+         "tr": 31,
+         "bl": 30,
+         "br": 25
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.604,
+        "n": 53,
+        "dist": {
+         "=": 32,
+         "mc": 10,
+         "ml": 9,
+         "tc": 1,
+         "tl": 1
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 10.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.967,
+        "n": 1571,
+        "dist": {
+         "=": 1519,
+         "mc": 16,
+         "tc": 16,
+         "ml": 6,
+         "bl": 6,
+         "tl": 5,
+         "mr": 1,
+         "bc": 1,
+         "br": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.86,
+        "n": 200,
+        "dist": {
+         "=": 172,
+         "mc": 15,
+         "tc": 13
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 10.5
+     },
+     "f": "src_aspect",
+     "eq": "portrait"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.803,
+        "n": 2457,
+        "dist": {
+         "=": 1972,
+         "mc": 144,
+         "ml": 88,
+         "mr": 67,
+         "tc": 54,
+         "bc": 36,
+         "tr": 31,
+         "tl": 29,
+         "bl": 26,
+         "br": 10
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.612,
+        "n": 291,
+        "dist": {
+         "=": 178,
+         "mc": 40,
+         "tc": 23,
+         "mr": 15,
+         "tl": 10,
+         "tr": 6,
+         "br": 6,
+         "ml": 6,
+         "bc": 4,
+         "bl": 3
+        }
+       }
+      },
+      "f": "src_anchor_col:small",
+      "eq": "right"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.329,
+        "n": 82,
+        "dist": {
+         "=": 27,
+         "tc": 21,
+         "tl": 11,
+         "tr": 8,
+         "mc": 7,
+         "ml": 7,
+         "bl": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.702,
+        "n": 114,
+        "dist": {
+         "=": 80,
+         "ml": 14,
+         "tl": 9,
+         "bl": 7,
+         "bc": 4
+        }
+       }
+      },
+      "f": "src_anchor:hero",
+      "eq": "mc"
+     },
+     "f": "n_text",
+     "t": 8.5
+    },
+    "f": "abs_aspect_change",
+    "t": 0.34100013971328735
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "mc",
+        "p": 0.349,
+        "n": 301,
+        "dist": {
+         "mc": 105,
+         "bc": 61,
+         "=": 59,
+         "tc": 53,
+         "tr": 12,
+         "bl": 7,
+         "mr": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.603,
+        "n": 305,
+        "dist": {
+         "=": 184,
+         "mc": 54,
+         "tc": 21,
+         "ml": 21,
+         "bc": 19,
+         "bl": 4,
+         "tr": 2
+        }
+       }
+      },
+      "f": "src_anchor_col:headline",
+      "eq": "center"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "tc",
+        "p": 0.533,
+        "n": 45,
+        "dist": {
+         "tc": 24,
+         "=": 11,
+         "mc": 10
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "tc",
+        "p": 0.876,
+        "n": 89,
+        "dist": {
+         "tc": 78,
+         "bc": 9,
+         "=": 2
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.06461236253380775
+     },
+     "f": "src_anchor_col:small",
+     "eq": "left"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.389,
+        "n": 592,
+        "dist": {
+         "=": 230,
+         "ml": 119,
+         "mr": 53,
+         "tc": 48,
+         "bc": 41,
+         "br": 30,
+         "tl": 29,
+         "mc": 22,
+         "tr": 15,
+         "bl": 5
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "ml",
+        "p": 0.521,
+        "n": 140,
+        "dist": {
+         "ml": 73,
+         "tl": 27,
+         "mc": 23,
+         "mr": 6,
+         "br": 4,
+         "bl": 4,
+         "=": 2,
+         "tr": 1
+        }
+       }
+      },
+      "f": "src_anchor_row:hero",
+      "eq": "bottom"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.687,
+        "n": 550,
+        "dist": {
+         "=": 378,
+         "mc": 57,
+         "ml": 46,
+         "mr": 20,
+         "tc": 15,
+         "tl": 11,
+         "bc": 11,
+         "tr": 6,
+         "bl": 5,
+         "br": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.449,
+        "n": 488,
+        "dist": {
+         "=": 219,
+         "mc": 71,
+         "mr": 53,
+         "ml": 52,
+         "bc": 31,
+         "tc": 27,
+         "tl": 23,
+         "tr": 9,
+         "bl": 3
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.8112240731716156
+     },
+     "f": "log_src_ar",
+     "t": -0.14384104311466217
+    },
+    "f": "log_tgt_ar",
+    "t": -0.14384104311466217
+   },
+   "f": "abs_aspect_change",
+   "t": 0.6084169447422028
+  },
+  "anchor:hero": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.903,
+        "n": 2158,
+        "dist": {
+         "=": 1949,
+         "mc": 82,
+         "mr": 25,
+         "ml": 22,
+         "br": 19,
+         "bl": 19,
+         "bc": 15,
+         "tl": 14,
+         "tr": 9,
+         "tc": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.568,
+        "n": 81,
+        "dist": {
+         "=": 46,
+         "mc": 35
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.631547600030899
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.588,
+        "n": 352,
+        "dist": {
+         "=": 207,
+         "mc": 67,
+         "ml": 24,
+         "bc": 17,
+         "tr": 16,
+         "mr": 14,
+         "br": 3,
+         "bl": 2,
+         "tc": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.814,
+        "n": 947,
+        "dist": {
+         "=": 771,
+         "mc": 101,
+         "bl": 25,
+         "tc": 15,
+         "ml": 8,
+         "bc": 8,
+         "tl": 7,
+         "mr": 6,
+         "br": 4,
+         "tr": 2
+        }
+       }
+      },
+      "f": "src_anchor_row:hero",
+      "eq": "middle"
+     },
+     "f": "abs_aspect_change",
+     "t": 0.2944139987230301
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.914,
+        "n": 465,
+        "dist": {
+         "=": 425,
+         "mr": 19,
+         "ml": 13,
+         "bc": 3,
+         "tl": 3,
+         "tr": 1,
+         "tc": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.97,
+        "n": 1778,
+        "dist": {
+         "=": 1725,
+         "tc": 16,
+         "bc": 15,
+         "ml": 9,
+         "mr": 8,
+         "tl": 4,
+         "tr": 1
+        }
+       }
+      },
+      "f": "src_anchor_col:headline",
+      "eq": "center"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.895,
+        "n": 1616,
+        "dist": {
+         "=": 1447,
+         "ml": 57,
+         "mr": 40,
+         "tc": 39,
+         "bc": 29,
+         "tr": 2,
+         "bl": 1,
+         "tl": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.5,
+        "n": 36,
+        "dist": {
+         "=": 18,
+         "mr": 9,
+         "tc": 3,
+         "ml": 3,
+         "br": 2,
+         "tl": 1
+        }
+       }
+      },
+      "f": "src_anchor:headline",
+      "eq": "bl"
+     },
+     "f": "abs_aspect_change",
+     "t": 0.2261134386062622
+    },
+    "f": "src_anchor:hero",
+    "eq": "mc"
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "mc",
+        "p": 0.421,
+        "n": 318,
+        "dist": {
+         "mc": 134,
+         "ml": 48,
+         "=": 47,
+         "mr": 43,
+         "br": 18,
+         "bc": 9,
+         "tc": 9,
+         "tr": 6,
+         "bl": 2,
+         "tl": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "mr",
+        "p": 0.5,
+        "n": 90,
+        "dist": {
+         "mr": 45,
+         "tr": 15,
+         "ml": 12,
+         "mc": 9,
+         "bc": 3,
+         "=": 3,
+         "tc": 2,
+         "br": 1
+        }
+       }
+      },
+      "f": "src_anchor_row:art",
+      "eq": "bottom"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "mc",
+        "p": 0.365,
+        "n": 266,
+        "dist": {
+         "mc": 97,
+         "bc": 66,
+         "tc": 63,
+         "=": 36,
+         "br": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.659,
+        "n": 317,
+        "dist": {
+         "=": 209,
+         "mc": 51,
+         "tc": 32,
+         "bc": 8,
+         "bl": 7,
+         "tl": 5,
+         "ml": 2,
+         "br": 2,
+         "tr": 1
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -0.8628981113433838
+     },
+     "f": "src_anchor_row:hero",
+     "eq": "middle"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "mr",
+        "p": 0.547,
+        "n": 64,
+        "dist": {
+         "mr": 35,
+         "bc": 18,
+         "=": 7,
+         "ml": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.671,
+        "n": 450,
+        "dist": {
+         "=": 302,
+         "mr": 53,
+         "bc": 49,
+         "ml": 31,
+         "tc": 13,
+         "tl": 1,
+         "br": 1
+        }
+       }
+      },
+      "f": "layout",
+      "eq": "overlay"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.924,
+        "n": 615,
+        "dist": {
+         "=": 568,
+         "ml": 13,
+         "mr": 11,
+         "tc": 10,
+         "bc": 9,
+         "bl": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "ml",
+        "p": 0.467,
+        "n": 30,
+        "dist": {
+         "ml": 14,
+         "mr": 9,
+         "=": 5,
+         "tc": 2
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 8.5
+     },
+     "f": "n_text",
+     "t": 4.5
+    },
+    "f": "src_anchor:hero",
+    "eq": "mc"
+   },
+   "f": "abs_aspect_change",
+   "t": 0.6084169447422028
+  },
+  "anchor:art": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.942,
+        "n": 1403,
+        "dist": {
+         "=": 1322,
+         "mc": 57,
+         "br": 5,
+         "tl": 4,
+         "tc": 4,
+         "bc": 3,
+         "ml": 3,
+         "tr": 2,
+         "mr": 2,
+         "bl": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.796,
+        "n": 324,
+        "dist": {
+         "=": 258,
+         "mr": 23,
+         "mc": 15,
+         "ml": 12,
+         "br": 7,
+         "tr": 6,
+         "bl": 2,
+         "tl": 1
+        }
+       }
+      },
+      "f": "src_aspect",
+      "eq": "wide"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.761,
+        "n": 863,
+        "dist": {
+         "=": 657,
+         "mc": 132,
+         "br": 21,
+         "bc": 16,
+         "mr": 13,
+         "ml": 10,
+         "tc": 5,
+         "tl": 5,
+         "tr": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.41,
+        "n": 61,
+        "dist": {
+         "=": 25,
+         "mc": 16,
+         "br": 14,
+         "ml": 4,
+         "mr": 2
+        }
+       }
+      },
+      "f": "src_anchor_row:hero",
+      "eq": "top"
+     },
+     "f": "abs_aspect_change",
+     "t": 0.3037257790565491
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.452,
+        "n": 239,
+        "dist": {
+         "=": 108,
+         "mc": 67,
+         "br": 23,
+         "tc": 22,
+         "bc": 7,
+         "mr": 5,
+         "ml": 4,
+         "tr": 2,
+         "tl": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "mc",
+        "p": 0.546,
+        "n": 337,
+        "dist": {
+         "mc": 184,
+         "=": 68,
+         "bc": 28,
+         "ml": 28,
+         "mr": 14,
+         "tc": 10,
+         "tr": 2,
+         "bl": 1,
+         "br": 1,
+         "tl": 1
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.286259263753891
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "mr",
+        "p": 0.542,
+        "n": 72,
+        "dist": {
+         "mr": 39,
+         "=": 26,
+         "br": 3,
+         "mc": 3,
+         "tc": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "bc",
+        "p": 1.0,
+        "n": 35,
+        "dist": {
+         "bc": 35
+        }
+       }
+      },
+      "f": "src_anchor:small",
+      "eq": "bl"
+     },
+     "f": "bg_kind",
+     "eq": "shape"
+    },
+    "f": "abs_aspect_change",
+    "t": 0.5783787369728088
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.964,
+        "n": 611,
+        "dist": {
+         "=": 589,
+         "mr": 11,
+         "ml": 4,
+         "tc": 3,
+         "bc": 2,
+         "br": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.992,
+        "n": 3018,
+        "dist": {
+         "=": 2995,
+         "ml": 8,
+         "tc": 6,
+         "mr": 6,
+         "bc": 3
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 3.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.996,
+        "n": 238,
+        "dist": {
+         "=": 237,
+         "ml": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.754,
+        "n": 69,
+        "dist": {
+         "=": 52,
+         "bc": 7,
+         "tc": 5,
+         "ml": 5
+        }
+       }
+      },
+      "f": "src_coverage",
+      "eq": "mid"
+     },
+     "f": "src_anchor_row:hero",
+     "eq": "bottom"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.768,
+        "n": 724,
+        "dist": {
+         "=": 556,
+         "ml": 54,
+         "tc": 54,
+         "mr": 38,
+         "bc": 20,
+         "tr": 1,
+         "br": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 1.0,
+        "n": 324,
+        "dist": {
+         "=": 324
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 7.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.959,
+        "n": 2545,
+        "dist": {
+         "=": 2441,
+         "ml": 39,
+         "mr": 35,
+         "tc": 24,
+         "bc": 4,
+         "tr": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.798,
+        "n": 94,
+        "dist": {
+         "=": 75,
+         "tc": 12,
+         "bc": 4,
+         "ml": 3
+        }
+       }
+      },
+      "f": "src_anchor:hero",
+      "eq": "bc"
+     },
+     "f": "src_anchor_col:small",
+     "eq": "center"
+    },
+    "f": "abs_aspect_change",
+    "t": 0.34100013971328735
+   },
+   "f": "src_anchor:art",
+   "eq": "mc"
+  },
+  "anchor:small": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.86,
+        "n": 1327,
+        "dist": {
+         "=": 1141,
+         "mc": 73,
+         "ml": 37,
+         "mr": 28,
+         "br": 13,
+         "bl": 10,
+         "bc": 8,
+         "tr": 8,
+         "tl": 5,
+         "tc": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.524,
+        "n": 42,
+        "dist": {
+         "=": 22,
+         "mc": 8,
+         "tl": 6,
+         "ml": 6
+        }
+       }
+      },
+      "f": "src_anchor:art",
+      "eq": "bc"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "mc",
+        "p": 0.641,
+        "n": 39,
+        "dist": {
+         "mc": 25,
+         "=": 9,
+         "ml": 2,
+         "bc": 2,
+         "br": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.757,
+        "n": 70,
+        "dist": {
+         "=": 53,
+         "mc": 6,
+         "bl": 5,
+         "ml": 3,
+         "bc": 2,
+         "mr": 1
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -0.16417745500802994
+     },
+     "f": "n_text",
+     "t": 6.5
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.933,
+        "n": 1192,
+        "dist": {
+         "=": 1112,
+         "mc": 72,
+         "br": 4,
+         "mr": 3,
+         "tr": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.955,
+        "n": 2446,
+        "dist": {
+         "=": 2336,
+         "bc": 36,
+         "ml": 34,
+         "tc": 23,
+         "mr": 15,
+         "br": 2
+        }
+       }
+      },
+      "f": "src_anchor_row:small",
+      "eq": "middle"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.88,
+        "n": 669,
+        "dist": {
+         "=": 589,
+         "ml": 34,
+         "bc": 16,
+         "mc": 11,
+         "bl": 7,
+         "br": 6,
+         "mr": 5,
+         "tl": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.56,
+        "n": 50,
+        "dist": {
+         "=": 28,
+         "mr": 13,
+         "mc": 7,
+         "ml": 1,
+         "bc": 1
+        }
+       }
+      },
+      "f": "src_anchor:hero",
+      "eq": "tc"
+     },
+     "f": "log_aspect_change",
+     "t": 0.2318350225687027
+    },
+    "f": "src_anchor_col:small",
+    "eq": "center"
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "tc",
+        "p": 0.27,
+        "n": 189,
+        "dist": {
+         "tc": 51,
+         "bc": 41,
+         "mc": 38,
+         "ml": 21,
+         "=": 19,
+         "tl": 18,
+         "mr": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.481,
+        "n": 424,
+        "dist": {
+         "=": 204,
+         "mc": 127,
+         "bc": 29,
+         "tc": 24,
+         "ml": 14,
+         "bl": 12,
+         "mr": 6,
+         "br": 6,
+         "tr": 2
+        }
+       }
+      },
+      "f": "log_tgt_ar",
+      "t": -0.14384104311466217
+     },
+     "r": {
+      "leaf": {
+       "v": "bl",
+       "p": 0.761,
+       "n": 46,
+       "dist": {
+        "bl": 35,
+        "ml": 4,
+        "mc": 3,
+        "=": 3,
+        "mr": 1
+       }
+      }
+     },
+     "f": "src_anchor:hero",
+     "eq": "bc"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.508,
+        "n": 189,
+        "dist": {
+         "=": 96,
+         "mr": 30,
+         "mc": 25,
+         "bc": 14,
+         "bl": 12,
+         "br": 7,
+         "ml": 5
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.849,
+        "n": 2005,
+        "dist": {
+         "=": 1702,
+         "ml": 78,
+         "mc": 63,
+         "mr": 50,
+         "bc": 46,
+         "bl": 27,
+         "br": 22,
+         "tc": 17
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 2.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.814,
+        "n": 43,
+        "dist": {
+         "=": 35,
+         "ml": 4,
+         "mc": 3,
+         "tc": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "ml",
+        "p": 0.725,
+        "n": 69,
+        "dist": {
+         "ml": 50,
+         "mc": 10,
+         "=": 9
+        }
+       }
+      },
+      "f": "log_tgt_ar",
+      "t": 0.2615494951605797
+     },
+     "f": "src_anchor:art",
+     "eq": "tc"
+    },
+    "f": "src_anchor_col:small",
+    "eq": "center"
+   },
+   "f": "abs_aspect_change",
+   "t": 0.46463948488235474
+  },
+  "anchor_row:headline": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.937,
+        "n": 2730,
+        "dist": {
+         "=": 2558,
+         "middle": 171,
+         "top": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.82,
+        "n": 289,
+        "dist": {
+         "=": 237,
+         "middle": 48,
+         "top": 2,
+         "bottom": 2
+        }
+       }
+      },
+      "f": "log_tgt_ar",
+      "t": 0.8434933423995972
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.85,
+        "n": 1040,
+        "dist": {
+         "=": 884,
+         "middle": 156
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.688,
+        "n": 173,
+        "dist": {
+         "=": 119,
+         "middle": 54
+        }
+       }
+      },
+      "f": "src_coverage",
+      "eq": "low"
+     },
+     "f": "abs_aspect_change",
+     "t": 0.39825859665870667
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.903,
+        "n": 929,
+        "dist": {
+         "=": 839,
+         "top": 59,
+         "bottom": 31
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.948,
+        "n": 3635,
+        "dist": {
+         "=": 3445,
+         "top": 109,
+         "bottom": 81
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -0.20273255556821823
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "bottom",
+        "p": 0.441,
+        "n": 34,
+        "dist": {
+         "bottom": 15,
+         "=": 13,
+         "top": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.872,
+        "n": 992,
+        "dist": {
+         "=": 865,
+         "top": 79,
+         "bottom": 48
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 1.5
+     },
+     "f": "abs_aspect_change",
+     "t": 0.47057926654815674
+    },
+    "f": "src_anchor_row:headline",
+    "eq": "middle"
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.694,
+        "n": 36,
+        "dist": {
+         "middle": 25,
+         "=": 11
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.818,
+        "n": 181,
+        "dist": {
+         "=": 148,
+         "middle": 28,
+         "bottom": 4,
+         "top": 1
+        }
+       }
+      },
+      "f": "src_coverage",
+      "eq": "high"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.731,
+        "n": 134,
+        "dist": {
+         "=": 98,
+         "middle": 36
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.677,
+        "n": 378,
+        "dist": {
+         "middle": 256,
+         "=": 118,
+         "top": 4
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.26129309833049774
+     },
+     "f": "src_anchor_col:headline",
+     "eq": "center"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.499,
+        "n": 357,
+        "dist": {
+         "=": 178,
+         "bottom": 121,
+         "top": 58
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.769,
+        "n": 472,
+        "dist": {
+         "=": 363,
+         "top": 82,
+         "bottom": 27
+        }
+       }
+      },
+      "f": "src_anchor_col:headline",
+      "eq": "center"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "top",
+        "p": 0.816,
+        "n": 98,
+        "dist": {
+         "top": 80,
+         "=": 10,
+         "bottom": 8
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.861,
+        "n": 36,
+        "dist": {
+         "=": 31,
+         "top": 5
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 5.5
+     },
+     "f": "src_anchor_col:small",
+     "eq": "left"
+    },
+    "f": "src_anchor_row:headline",
+    "eq": "middle"
+   },
+   "f": "abs_aspect_change",
+   "t": 0.8144878149032593
+  },
+  "anchor_row:hero": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.917,
+        "n": 712,
+        "dist": {
+         "=": 653,
+         "middle": 37,
+         "bottom": 16,
+         "top": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.781,
+        "n": 360,
+        "dist": {
+         "=": 281,
+         "middle": 58,
+         "bottom": 18,
+         "top": 3
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.13811945542693138
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.78,
+        "n": 91,
+        "dist": {
+         "=": 71,
+         "middle": 18,
+         "bottom": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.54,
+        "n": 113,
+        "dist": {
+         "middle": 61,
+         "=": 44,
+         "bottom": 6,
+         "top": 2
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 4.5
+     },
+     "f": "log_aspect_change",
+     "t": 0.2944139987230301
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.543,
+        "n": 35,
+        "dist": {
+         "middle": 19,
+         "=": 13,
+         "top": 2,
+         "bottom": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.965,
+        "n": 200,
+        "dist": {
+         "middle": 193,
+         "=": 4,
+         "bottom": 3
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.2849329262971878
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.506,
+        "n": 87,
+        "dist": {
+         "=": 44,
+         "middle": 22,
+         "bottom": 21
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.712,
+        "n": 73,
+        "dist": {
+         "middle": 52,
+         "=": 16,
+         "top": 5
+        }
+       }
+      },
+      "f": "src_anchor_row:hero",
+      "eq": "bottom"
+     },
+     "f": "log_src_ar",
+     "t": 0.08819089084863663
+    },
+    "f": "abs_aspect_change",
+    "t": 0.6435715556144714
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.87,
+        "n": 622,
+        "dist": {
+         "=": 541,
+         "bottom": 55,
+         "top": 26
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "bottom",
+        "p": 0.556,
+        "n": 108,
+        "dist": {
+         "bottom": 60,
+         "=": 46,
+         "top": 2
+        }
+       }
+      },
+      "f": "src_anchor_col:small",
+      "eq": "left"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.562,
+        "n": 130,
+        "dist": {
+         "=": 73,
+         "top": 34,
+         "bottom": 23
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "top",
+        "p": 0.902,
+        "n": 41,
+        "dist": {
+         "top": 37,
+         "=": 4
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 8.5
+     },
+     "f": "src_anchor:hero",
+     "eq": "ml"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.916,
+        "n": 798,
+        "dist": {
+         "=": 731,
+         "bottom": 38,
+         "top": 29
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.979,
+        "n": 5690,
+        "dist": {
+         "=": 5573,
+         "top": 80,
+         "bottom": 37
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -0.39825859665870667
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.641,
+        "n": 131,
+        "dist": {
+         "=": 84,
+         "bottom": 29,
+         "top": 18
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.908,
+        "n": 392,
+        "dist": {
+         "=": 356,
+         "bottom": 26,
+         "top": 10
+        }
+       }
+      },
+      "f": "copy_on_photo",
+      "eq": "yes"
+     },
+     "f": "layout",
+     "eq": "stack"
+    },
+    "f": "log_aspect_change",
+    "t": -0.6651558578014374
+   },
+   "f": "src_anchor_row:hero",
+   "eq": "middle"
+  },
+  "anchor_row:art": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.925,
+        "n": 990,
+        "dist": {
+         "=": 916,
+         "middle": 71,
+         "top": 3
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.674,
+        "n": 89,
+        "dist": {
+         "=": 60,
+         "middle": 24,
+         "top": 3,
+         "bottom": 2
+        }
+       }
+      },
+      "f": "src_anchor_col:headline",
+      "eq": "right"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.87,
+        "n": 77,
+        "dist": {
+         "=": 67,
+         "middle": 10
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.8,
+        "n": 45,
+        "dist": {
+         "middle": 36,
+         "=": 9
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 4.5
+     },
+     "f": "log_aspect_change",
+     "t": 0.4347754865884781
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.614,
+        "n": 44,
+        "dist": {
+         "=": 27,
+         "middle": 15,
+         "top": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.933,
+        "n": 30,
+        "dist": {
+         "=": 28,
+         "middle": 1,
+         "top": 1
+        }
+       }
+      },
+      "f": "src_anchor:headline",
+      "eq": "mc"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.993,
+        "n": 137,
+        "dist": {
+         "middle": 136,
+         "=": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.754,
+        "n": 61,
+        "dist": {
+         "middle": 46,
+         "=": 15
+        }
+       }
+      },
+      "f": "src_anchor:hero",
+      "eq": "mc"
+     },
+     "f": "hero_share",
+     "t": 0.2923576533794403
+    },
+    "f": "abs_aspect_change",
+    "t": 0.6502993702888489
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.792,
+        "n": 130,
+        "dist": {
+         "=": 103,
+         "bottom": 26,
+         "top": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.969,
+        "n": 618,
+        "dist": {
+         "=": 599,
+         "top": 18,
+         "bottom": 1
+        }
+       }
+      },
+      "f": "src_anchor_col:art",
+      "eq": "center"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.504,
+        "n": 117,
+        "dist": {
+         "=": 59,
+         "top": 55,
+         "bottom": 3
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "bottom",
+        "p": 1.0,
+        "n": 35,
+        "dist": {
+         "bottom": 35
+        }
+       }
+      },
+      "f": "copy_on_photo",
+      "eq": "no"
+     },
+     "f": "src_anchor_col:small",
+     "eq": "left"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.964,
+        "n": 1106,
+        "dist": {
+         "=": 1066,
+         "top": 28,
+         "bottom": 12
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.577,
+        "n": 52,
+        "dist": {
+         "=": 30,
+         "top": 12,
+         "bottom": 10
+        }
+       }
+      },
+      "f": "src_anchor_row:hero",
+      "eq": "bottom"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.939,
+        "n": 719,
+        "dist": {
+         "=": 675,
+         "bottom": 31,
+         "top": 13
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.993,
+        "n": 6707,
+        "dist": {
+         "=": 6658,
+         "top": 30,
+         "bottom": 19
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 2.5
+     },
+     "f": "log_aspect_change",
+     "t": -0.39825859665870667
+    },
+    "f": "log_aspect_change",
+    "t": -0.7215258777141571
+   },
+   "f": "src_anchor_row:art",
+   "eq": "middle"
+  },
+  "anchor_row:small": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.925,
+        "n": 2035,
+        "dist": {
+         "=": 1883,
+         "middle": 152
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.787,
+        "n": 136,
+        "dist": {
+         "=": 107,
+         "middle": 29
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.7932619452476501
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.914,
+        "n": 58,
+        "dist": {
+         "=": 53,
+         "middle": 5
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.587,
+        "n": 46,
+        "dist": {
+         "middle": 27,
+         "=": 19
+        }
+       }
+      },
+      "f": "src_anchor:small",
+      "eq": "bl"
+     },
+     "f": "src_anchor:headline",
+     "eq": "tl"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.889,
+        "n": 307,
+        "dist": {
+         "=": 273,
+         "bottom": 27,
+         "top": 7
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.711,
+        "n": 38,
+        "dist": {
+         "=": 27,
+         "top": 9,
+         "bottom": 2
+        }
+       }
+      },
+      "f": "src_photo",
+      "eq": "framed"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.972,
+        "n": 4109,
+        "dist": {
+         "=": 3993,
+         "bottom": 93,
+         "top": 23
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.896,
+        "n": 251,
+        "dist": {
+         "=": 225,
+         "top": 19,
+         "bottom": 7
+        }
+       }
+      },
+      "f": "src_anchor_row:hero",
+      "eq": "bottom"
+     },
+     "f": "n_text",
+     "t": 2.5
+    },
+    "f": "src_anchor_row:small",
+    "eq": "middle"
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "middle",
+        "p": 0.585,
+        "n": 176,
+        "dist": {
+         "middle": 103,
+         "=": 33,
+         "bottom": 21,
+         "top": 19
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.702,
+        "n": 376,
+        "dist": {
+         "=": 264,
+         "middle": 110,
+         "top": 1,
+         "bottom": 1
+        }
+       }
+      },
+      "f": "src_anchor:art",
+      "eq": "mc"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.985,
+        "n": 65,
+        "dist": {
+         "=": 64,
+         "bottom": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.444,
+        "n": 216,
+        "dist": {
+         "=": 96,
+         "top": 66,
+         "bottom": 54
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.11996479704976082
+     },
+     "f": "src_anchor_row:small",
+     "eq": "middle"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.946,
+        "n": 37,
+        "dist": {
+         "=": 35,
+         "bottom": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.484,
+        "n": 31,
+        "dist": {
+         "=": 15,
+         "bottom": 15,
+         "top": 1
+        }
+       }
+      },
+      "f": "cut_n",
+      "t": 1.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.955,
+        "n": 885,
+        "dist": {
+         "=": 845,
+         "bottom": 37,
+         "top": 3
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.735,
+        "n": 34,
+        "dist": {
+         "=": 25,
+         "top": 9
+        }
+       }
+      },
+      "f": "src_anchor:hero",
+      "eq": "bc"
+     },
+     "f": "n_text",
+     "t": 3.5
+    },
+    "f": "src_anchor:small",
+    "eq": "mc"
+   },
+   "f": "abs_aspect_change",
+   "t": 0.6502993702888489
+  },
+  "anchor_col:headline": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.866,
+        "n": 500,
+        "dist": {
+         "=": 433,
+         "center": 62,
+         "right": 3,
+         "left": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.939,
+        "n": 2039,
+        "dist": {
+         "=": 1914,
+         "center": 80,
+         "left": 24,
+         "right": 21
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -0.16714733839035034
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.971,
+        "n": 4036,
+        "dist": {
+         "=": 3918,
+         "left": 59,
+         "right": 59
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.814,
+        "n": 113,
+        "dist": {
+         "=": 92,
+         "left": 21
+        }
+       }
+      },
+      "f": "src_anchor_col:art",
+      "eq": "left"
+     },
+     "f": "src_anchor_col:headline",
+     "eq": "center"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.564,
+        "n": 243,
+        "dist": {
+         "=": 137,
+         "center": 102,
+         "right": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.837,
+        "n": 922,
+        "dist": {
+         "=": 772,
+         "center": 132,
+         "left": 11,
+         "right": 7
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -0.5177796185016632
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.882,
+        "n": 1641,
+        "dist": {
+         "=": 1447,
+         "left": 99,
+         "right": 95
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.522,
+        "n": 92,
+        "dist": {
+         "=": 48,
+         "left": 36,
+         "right": 8
+        }
+       }
+      },
+      "f": "src_anchor_col:hero",
+      "eq": "right"
+     },
+     "f": "src_anchor_col:headline",
+     "eq": "center"
+    },
+    "f": "abs_aspect_change",
+    "t": 0.39274872839450836
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "center",
+        "p": 0.859,
+        "n": 403,
+        "dist": {
+         "center": 346,
+         "=": 43,
+         "right": 10,
+         "left": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.632,
+        "n": 114,
+        "dist": {
+         "=": 72,
+         "center": 42
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 6.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.874,
+        "n": 214,
+        "dist": {
+         "=": 187,
+         "center": 23,
+         "right": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "center",
+        "p": 0.621,
+        "n": 66,
+        "dist": {
+         "center": 41,
+         "=": 15,
+         "left": 10
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 7.5
+     },
+     "f": "log_tgt_ar",
+     "t": 0.2615494951605797
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.965,
+        "n": 342,
+        "dist": {
+         "=": 330,
+         "left": 8,
+         "right": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "left",
+        "p": 0.481,
+        "n": 52,
+        "dist": {
+         "left": 25,
+         "=": 21,
+         "right": 6
+        }
+       }
+      },
+      "f": "bg_kind",
+      "eq": "none"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.896,
+        "n": 115,
+        "dist": {
+         "=": 103,
+         "left": 7,
+         "right": 5
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "left",
+        "p": 0.402,
+        "n": 622,
+        "dist": {
+         "left": 250,
+         "=": 243,
+         "right": 129
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.06535736471414566
+     },
+     "f": "log_aspect_change",
+     "t": 0.0
+    },
+    "f": "src_anchor_col:headline",
+    "eq": "center"
+   },
+   "f": "abs_aspect_change",
+   "t": 0.7403475046157837
+  },
+  "anchor_col:hero": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.758,
+        "n": 99,
+        "dist": {
+         "=": 75,
+         "center": 16,
+         "left": 7,
+         "right": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "center",
+        "p": 0.527,
+        "n": 91,
+        "dist": {
+         "center": 48,
+         "=": 41,
+         "left": 1,
+         "right": 1
+        }
+       }
+      },
+      "f": "layout",
+      "eq": "overlay"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.9,
+        "n": 2356,
+        "dist": {
+         "=": 2121,
+         "center": 146,
+         "left": 54,
+         "right": 35
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.624,
+        "n": 141,
+        "dist": {
+         "=": 88,
+         "center": 50,
+         "right": 2,
+         "left": 1
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.5881613790988922
+     },
+     "f": "log_aspect_change",
+     "t": -0.5118398368358612
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.903,
+        "n": 888,
+        "dist": {
+         "=": 802,
+         "right": 61,
+         "left": 25
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.985,
+        "n": 3329,
+        "dist": {
+         "=": 3280,
+         "right": 25,
+         "left": 24
+        }
+       }
+      },
+      "f": "src_anchor_col:headline",
+      "eq": "center"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.805,
+        "n": 508,
+        "dist": {
+         "=": 409,
+         "left": 59,
+         "right": 40
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.944,
+        "n": 468,
+        "dist": {
+         "=": 442,
+         "left": 16,
+         "right": 10
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.5448131859302521
+     },
+     "f": "log_aspect_change",
+     "t": 0.33862483501434326
+    },
+    "f": "src_anchor_col:hero",
+    "eq": "center"
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "center",
+        "p": 0.946,
+        "n": 260,
+        "dist": {
+         "center": 246,
+         "=": 13,
+         "right": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.733,
+        "n": 30,
+        "dist": {
+         "=": 22,
+         "center": 8
+        }
+       }
+      },
+      "f": "src_align",
+      "eq": "mixed"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.727,
+        "n": 139,
+        "dist": {
+         "=": 101,
+         "center": 30,
+         "left": 5,
+         "right": 3
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "center",
+        "p": 0.552,
+        "n": 67,
+        "dist": {
+         "center": 37,
+         "=": 30
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.4079107195138931
+     },
+     "f": "log_tgt_ar",
+     "t": 0.08819089084863663
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.691,
+        "n": 632,
+        "dist": {
+         "=": 437,
+         "right": 114,
+         "left": 81
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.94,
+        "n": 480,
+        "dist": {
+         "=": 451,
+         "right": 15,
+         "left": 14
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.5859645307064056
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "right",
+        "p": 1.0,
+        "n": 50,
+        "dist": {
+         "right": 50
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "right",
+        "p": 0.511,
+        "n": 45,
+        "dist": {
+         "right": 23,
+         "=": 11,
+         "left": 11
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.429956391453743
+     },
+     "f": "src_anchor:art",
+     "eq": "bc"
+    },
+    "f": "src_anchor_col:hero",
+    "eq": "center"
+   },
+   "f": "abs_aspect_change",
+   "t": 0.704245537519455
+  },
+  "anchor_col:art": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "center",
+        "p": 0.963,
+        "n": 164,
+        "dist": {
+         "center": 158,
+         "=": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.559,
+        "n": 34,
+        "dist": {
+         "=": 19,
+         "center": 15
+        }
+       }
+      },
+      "f": "src_anchor_row:headline",
+      "eq": "top"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "center",
+        "p": 0.622,
+        "n": 45,
+        "dist": {
+         "center": 28,
+         "=": 16,
+         "left": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.681,
+        "n": 47,
+        "dist": {
+         "=": 32,
+         "center": 13,
+         "right": 2
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.261607825756073
+     },
+     "f": "log_tgt_ar",
+     "t": 0.08819089084863663
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.927,
+        "n": 150,
+        "dist": {
+         "=": 139,
+         "center": 9,
+         "left": 1,
+         "right": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.614,
+        "n": 207,
+        "dist": {
+         "=": 127,
+         "center": 76,
+         "left": 4
+        }
+       }
+      },
+      "f": "src_anchor_row:small",
+      "eq": "middle"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.943,
+        "n": 1122,
+        "dist": {
+         "=": 1058,
+         "center": 54,
+         "right": 9,
+         "left": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.834,
+        "n": 421,
+        "dist": {
+         "=": 351,
+         "center": 43,
+         "left": 14,
+         "right": 13
+        }
+       }
+      },
+      "f": "log_tgt_ar",
+      "t": 1.0194554924964905
+     },
+     "f": "log_aspect_change",
+     "t": -0.3037257790565491
+    },
+    "f": "log_aspect_change",
+    "t": -0.5783787369728088
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.991,
+        "n": 6020,
+        "dist": {
+         "=": 5968,
+         "left": 33,
+         "right": 19
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.899,
+        "n": 237,
+        "dist": {
+         "=": 213,
+         "left": 21,
+         "right": 3
+        }
+       }
+      },
+      "f": "src_anchor:headline",
+      "eq": "mr"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.949,
+        "n": 1377,
+        "dist": {
+         "=": 1307,
+         "left": 44,
+         "right": 26
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.738,
+        "n": 141,
+        "dist": {
+         "=": 104,
+         "right": 34,
+         "left": 3
+        }
+       }
+      },
+      "f": "src_anchor_row:art",
+      "eq": "bottom"
+     },
+     "f": "log_aspect_change",
+     "t": 0.23832913488149643
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.909,
+        "n": 794,
+        "dist": {
+         "=": 722,
+         "right": 49,
+         "left": 23
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.698,
+        "n": 86,
+        "dist": {
+         "=": 60,
+         "left": 26
+        }
+       }
+      },
+      "f": "src_anchor_row:small",
+      "eq": "top"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.763,
+        "n": 59,
+        "dist": {
+         "=": 45,
+         "right": 9,
+         "left": 5
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "right",
+        "p": 0.962,
+        "n": 53,
+        "dist": {
+         "right": 51,
+         "=": 2
+        }
+       }
+      },
+      "f": "cut_n",
+      "t": 2.5
+     },
+     "f": "src_anchor:art",
+     "eq": "bc"
+    },
+    "f": "log_aspect_change",
+    "t": 0.6902746260166168
+   },
+   "f": "src_anchor_col:art",
+   "eq": "center"
+  },
+  "anchor_col:small": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "center",
+        "p": 0.838,
+        "n": 228,
+        "dist": {
+         "center": 191,
+         "=": 37
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.548,
+        "n": 62,
+        "dist": {
+         "=": 34,
+         "center": 28
+        }
+       }
+      },
+      "f": "src_anchor_col:hero",
+      "eq": "right"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.867,
+        "n": 30,
+        "dist": {
+         "=": 26,
+         "center": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 1.0,
+        "n": 34,
+        "dist": {
+         "=": 34
+        }
+       }
+      },
+      "f": "area_ratio",
+      "t": 0.39934784173965454
+     },
+     "f": "headline_share",
+     "t": 0.1543523296713829
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.939,
+        "n": 1198,
+        "dist": {
+         "=": 1125,
+         "center": 55,
+         "right": 9,
+         "left": 9
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.676,
+        "n": 74,
+        "dist": {
+         "=": 50,
+         "center": 21,
+         "left": 2,
+         "right": 1
+        }
+       }
+      },
+      "f": "cut_n",
+      "t": 4.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.804,
+        "n": 392,
+        "dist": {
+         "=": 315,
+         "center": 67,
+         "right": 5,
+         "left": 5
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "center",
+        "p": 0.63,
+        "n": 119,
+        "dist": {
+         "center": 75,
+         "=": 44
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.4575697332620621
+     },
+     "f": "n_text",
+     "t": 4.5
+    },
+    "f": "log_aspect_change",
+    "t": -0.4909902662038803
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.98,
+        "n": 4798,
+        "dist": {
+         "=": 4700,
+         "left": 61,
+         "right": 37
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.884,
+        "n": 225,
+        "dist": {
+         "=": 199,
+         "left": 15,
+         "right": 11
+        }
+       }
+      },
+      "f": "src_anchor:headline",
+      "eq": "tl"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "left",
+        "p": 0.471,
+        "n": 34,
+        "dist": {
+         "left": 16,
+         "=": 14,
+         "right": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.952,
+        "n": 83,
+        "dist": {
+         "=": 79,
+         "right": 4
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.03485863283276558
+     },
+     "f": "abs_aspect_change",
+     "t": 1.2750164270401
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.879,
+        "n": 1311,
+        "dist": {
+         "=": 1152,
+         "left": 101,
+         "right": 58
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.538,
+        "n": 104,
+        "dist": {
+         "=": 56,
+         "right": 43,
+         "left": 5
+        }
+       }
+      },
+      "f": "src_anchor:art",
+      "eq": "bc"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.712,
+        "n": 73,
+        "dist": {
+         "=": 52,
+         "left": 20,
+         "right": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "left",
+        "p": 1.0,
+        "n": 35,
+        "dist": {
+         "left": 35
+        }
+       }
+      },
+      "f": "src_photo",
+      "eq": "framed"
+     },
+     "f": "src_anchor:art",
+     "eq": "tc"
+    },
+    "f": "log_aspect_change",
+    "t": 0.39274872839450836
+   },
+   "f": "src_anchor_col:small",
+   "eq": "center"
+  },
+  "align": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.86,
+        "n": 243,
+        "dist": {
+         "=": 209,
+         "mixed": 26,
+         "left": 8
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.668,
+        "n": 1160,
+        "dist": {
+         "=": 775,
+         "mixed": 301,
+         "left": 83,
+         "right": 1
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 2.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.681,
+        "n": 72,
+        "dist": {
+         "=": 49,
+         "mixed": 20,
+         "left": 2,
+         "center": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.914,
+        "n": 2266,
+        "dist": {
+         "=": 2071,
+         "mixed": 131,
+         "left": 64
+        }
+       }
+      },
+      "f": "src_align",
+      "eq": "center"
+     },
+     "f": "area_ratio",
+     "t": -0.7658095359802246
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.97,
+        "n": 2347,
+        "dist": {
+         "=": 2276,
+         "mixed": 61,
+         "center": 10
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.795,
+        "n": 195,
+        "dist": {
+         "=": 155,
+         "mixed": 32,
+         "center": 8
+        }
+       }
+      },
+      "f": "src_anchor:hero",
+      "eq": "ml"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.811,
+        "n": 1751,
+        "dist": {
+         "=": 1420,
+         "mixed": 213,
+         "center": 105,
+         "right": 13
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.951,
+        "n": 1173,
+        "dist": {
+         "=": 1115,
+         "mixed": 37,
+         "center": 21
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 6.5
+     },
+     "f": "bg_kind",
+     "eq": "image"
+    },
+    "f": "src_align",
+    "eq": "left"
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.707,
+        "n": 498,
+        "dist": {
+         "=": 352,
+         "left": 103,
+         "center": 32,
+         "right": 11
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.532,
+        "n": 171,
+        "dist": {
+         "=": 91,
+         "left": 73,
+         "center": 5,
+         "right": 2
+        }
+       }
+      },
+      "f": "src_coverage",
+      "eq": "mid"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.736,
+        "n": 568,
+        "dist": {
+         "=": 418,
+         "center": 85,
+         "left": 59,
+         "right": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.906,
+        "n": 212,
+        "dist": {
+         "=": 192,
+         "left": 10,
+         "center": 9,
+         "right": 1
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.6528194844722748
+     },
+     "f": "area_ratio",
+     "t": -0.6637955904006958
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.559,
+        "n": 313,
+        "dist": {
+         "=": 175,
+         "center": 116,
+         "left": 16,
+         "right": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "center",
+        "p": 0.469,
+        "n": 392,
+        "dist": {
+         "center": 184,
+         "=": 133,
+         "left": 73,
+         "right": 2
+        }
+       }
+      },
+      "f": "src_anchor_row:headline",
+      "eq": "middle"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "center",
+        "p": 0.545,
+        "n": 33,
+        "dist": {
+         "center": 18,
+         "=": 13,
+         "left": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.933,
+        "n": 120,
+        "dist": {
+         "=": 112,
+         "left": 7,
+         "center": 1
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 3.5
+     },
+     "f": "hero_share",
+     "t": 0.7481094300746918
+    },
+    "f": "area_ratio",
+    "t": 0.7658095359802246
+   },
+   "f": "src_align",
+   "eq": "mixed"
+  },
+  "scale:headline": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.96,
+        "n": 1129,
+        "dist": {
+         "=": 1084,
+         "down": 39,
+         "up": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.981,
+        "n": 3615,
+        "dist": {
+         "=": 3547,
+         "up": 37,
+         "down": 31
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -0.07058269530534744
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.961,
+        "n": 691,
+        "dist": {
+         "=": 664,
+         "up": 17,
+         "down": 10
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.868,
+        "n": 281,
+        "dist": {
+         "=": 244,
+         "up": 22,
+         "down": 15
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.16142576187849045
+     },
+     "f": "src_coverage",
+     "eq": "low"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.946,
+        "n": 423,
+        "dist": {
+         "=": 400,
+         "down": 12,
+         "up": 11
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.871,
+        "n": 1216,
+        "dist": {
+         "=": 1059,
+         "down": 80,
+         "up": 77
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 2.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.333,
+        "n": 30,
+        "dist": {
+         "=": 10,
+         "down": 10,
+         "up": 10
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.756,
+        "n": 283,
+        "dist": {
+         "=": 214,
+         "down": 38,
+         "up": 31
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 1.5
+     },
+     "f": "bg_kind",
+     "eq": "shape"
+    },
+    "f": "abs_aspect_change",
+    "t": 0.2944139987230301
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.608,
+        "n": 495,
+        "dist": {
+         "=": 301,
+         "up": 159,
+         "down": 35
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.724,
+        "n": 3233,
+        "dist": {
+         "=": 2340,
+         "down": 534,
+         "up": 359
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.030240217223763466
+     },
+     "r": {
+      "leaf": {
+       "v": "up",
+       "p": 0.763,
+       "n": 59,
+       "dist": {
+        "up": 45,
+        "=": 14
+       }
+      }
+     },
+     "f": "log_tgt_ar",
+     "t": 1.7383928298950195
+    },
+    "r": {
+     "leaf": {
+      "v": "down",
+      "p": 0.797,
+      "n": 59,
+      "dist": {
+       "down": 47,
+       "=": 12
+      }
+     }
+    },
+    "f": "log_src_ar",
+    "t": 1.7383928298950195
+   },
+   "f": "abs_aspect_change",
+   "t": 0.4575697332620621
+  },
+  "scale:body": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.982,
+        "n": 2576,
+        "dist": {
+         "=": 2529,
+         "down": 27,
+         "up": 20
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.952,
+        "n": 810,
+        "dist": {
+         "=": 771,
+         "down": 22,
+         "up": 17
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.16142576187849045
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.939,
+        "n": 230,
+        "dist": {
+         "=": 216,
+         "down": 7,
+         "up": 7
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.734,
+        "n": 64,
+        "dist": {
+         "=": 47,
+         "down": 9,
+         "up": 8
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.20273255556821823
+     },
+     "f": "src_photo",
+     "eq": "crop_bleed"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.907,
+        "n": 841,
+        "dist": {
+         "=": 763,
+         "down": 41,
+         "up": 37
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.783,
+        "n": 180,
+        "dist": {
+         "=": 141,
+         "down": 22,
+         "up": 17
+        }
+       }
+      },
+      "f": "src_anchor:small",
+      "eq": "bc"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.549,
+        "n": 51,
+        "dist": {
+         "=": 28,
+         "up": 13,
+         "down": 10
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.802,
+        "n": 101,
+        "dist": {
+         "=": 81,
+         "up": 11,
+         "down": 9
+        }
+       }
+      },
+      "f": "log_src_ar",
+      "t": 0.6114504337310791
+     },
+     "f": "bg_kind",
+     "eq": "shape"
+    },
+    "f": "abs_aspect_change",
+    "t": 0.2944139987230301
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.648,
+        "n": 1040,
+        "dist": {
+         "=": 674,
+         "up": 242,
+         "down": 124
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "up",
+        "p": 0.37,
+        "n": 81,
+        "dist": {
+         "up": 30,
+         "down": 27,
+         "=": 24
+        }
+       }
+      },
+      "f": "copy_on_photo",
+      "eq": "no"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.742,
+        "n": 1161,
+        "dist": {
+         "=": 861,
+         "down": 213,
+         "up": 87
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "down",
+        "p": 0.771,
+        "n": 35,
+        "dist": {
+         "down": 27,
+         "=": 5,
+         "up": 3
+        }
+       }
+      },
+      "f": "src_anchor_row:small",
+      "eq": "top"
+     },
+     "f": "headline_share",
+     "t": 0.056978533044457436
+    },
+    "r": {
+     "leaf": {
+      "v": "down",
+      "p": 0.921,
+      "n": 38,
+      "dist": {
+       "down": 35,
+       "=": 3
+      }
+     }
+    },
+    "f": "log_src_ar",
+    "t": 1.7383928298950195
+   },
+   "f": "abs_aspect_change",
+   "t": 0.46463948488235474
+  },
+  "scale:hero": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.972,
+        "n": 215,
+        "dist": {
+         "=": 209,
+         "down": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.735,
+        "n": 49,
+        "dist": {
+         "=": 36,
+         "down": 12,
+         "up": 1
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.20570244640111923
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.977,
+        "n": 4595,
+        "dist": {
+         "=": 4490,
+         "down": 64,
+         "up": 41
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.935,
+        "n": 310,
+        "dist": {
+         "=": 290,
+         "up": 16,
+         "down": 4
+        }
+       }
+      },
+      "f": "layout",
+      "eq": "split"
+     },
+     "f": "hero_share",
+     "t": 0.10129006579518318
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.85,
+        "n": 1364,
+        "dist": {
+         "=": 1160,
+         "down": 118,
+         "up": 86
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.94,
+        "n": 485,
+        "dist": {
+         "=": 456,
+         "up": 17,
+         "down": 12
+        }
+       }
+      },
+      "f": "src_anchor:hero",
+      "eq": "mr"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.986,
+        "n": 424,
+        "dist": {
+         "=": 418,
+         "down": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.886,
+        "n": 35,
+        "dist": {
+         "=": 31,
+         "down": 4
+        }
+       }
+      },
+      "f": "src_anchor_col:art",
+      "eq": "right"
+     },
+     "f": "hero_share",
+     "t": 0.6778124868869781
+    },
+    "f": "abs_aspect_change",
+    "t": 0.3465735912322998
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.491,
+        "n": 57,
+        "dist": {
+         "=": 28,
+         "up": 20,
+         "down": 9
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.825,
+        "n": 526,
+        "dist": {
+         "=": 434,
+         "up": 46,
+         "down": 46
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -1.4390196204185486
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "up",
+        "p": 0.426,
+        "n": 162,
+        "dist": {
+         "up": 69,
+         "=": 61,
+         "down": 32
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.64,
+        "n": 584,
+        "dist": {
+         "=": 374,
+         "down": 129,
+         "up": 81
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.031097112223505974
+     },
+     "f": "src_anchor_col:hero",
+     "eq": "center"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 1.0,
+        "n": 110,
+        "dist": {
+         "=": 110
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.906,
+        "n": 32,
+        "dist": {
+         "=": 29,
+         "up": 2,
+         "down": 1
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.02819610107690096
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.83,
+        "n": 471,
+        "dist": {
+         "=": 391,
+         "down": 72,
+         "up": 8
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.628,
+        "n": 164,
+        "dist": {
+         "=": 103,
+         "down": 54,
+         "up": 7
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 5.5
+     },
+     "f": "headline_share",
+     "t": 0.03330856375396252
+    },
+    "f": "hero_share",
+    "t": 0.5334413647651672
+   },
+   "f": "abs_aspect_change",
+   "t": 0.6435715556144714
+  },
+  "scale:art": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.969,
+        "n": 3871,
+        "dist": {
+         "=": 3750,
+         "down": 64,
+         "up": 57
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.837,
+        "n": 49,
+        "dist": {
+         "=": 41,
+         "down": 5,
+         "up": 3
+        }
+       }
+      },
+      "f": "src_align",
+      "eq": "right"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.958,
+        "n": 548,
+        "dist": {
+         "=": 525,
+         "up": 14,
+         "down": 9
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.822,
+        "n": 214,
+        "dist": {
+         "=": 176,
+         "up": 23,
+         "down": 15
+        }
+       }
+      },
+      "f": "src_anchor:small",
+      "eq": "mc"
+     },
+     "f": "src_coverage",
+     "eq": "low"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.826,
+        "n": 1060,
+        "dist": {
+         "=": 876,
+         "down": 98,
+         "up": 86
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.9,
+        "n": 946,
+        "dist": {
+         "=": 851,
+         "down": 62,
+         "up": 33
+        }
+       }
+      },
+      "f": "src_anchor_col:hero",
+      "eq": "center"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.889,
+        "n": 189,
+        "dist": {
+         "=": 168,
+         "down": 13,
+         "up": 8
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.581,
+        "n": 160,
+        "dist": {
+         "=": 93,
+         "down": 37,
+         "up": 30
+        }
+       }
+      },
+      "f": "log_src_ar",
+      "t": 0.6114504337310791
+     },
+     "f": "src_anchor:small",
+     "eq": "bc"
+    },
+    "f": "abs_aspect_change",
+    "t": 0.20273255556821823
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.642,
+        "n": 1705,
+        "dist": {
+         "=": 1094,
+         "down": 422,
+         "up": 189
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.679,
+        "n": 408,
+        "dist": {
+         "=": 277,
+         "up": 99,
+         "down": 32
+        }
+       }
+      },
+      "f": "tgt_aspect",
+      "eq": "portrait"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "up",
+        "p": 0.511,
+        "n": 133,
+        "dist": {
+         "up": 68,
+         "=": 59,
+         "down": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.75,
+        "n": 531,
+        "dist": {
+         "=": 398,
+         "up": 93,
+         "down": 40
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.03507062420248985
+     },
+     "f": "src_coverage",
+     "eq": "low"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.751,
+        "n": 734,
+        "dist": {
+         "=": 551,
+         "down": 104,
+         "up": 79
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.456,
+        "n": 57,
+        "dist": {
+         "=": 26,
+         "down": 24,
+         "up": 7
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 1.2750164270401
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.937,
+        "n": 301,
+        "dist": {
+         "=": 282,
+         "down": 13,
+         "up": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.725,
+        "n": 51,
+        "dist": {
+         "=": 37,
+         "down": 7,
+         "up": 7
+        }
+       }
+      },
+      "f": "log_tgt_ar",
+      "t": 0.8434933423995972
+     },
+     "f": "src_anchor_row:headline",
+     "eq": "top"
+    },
+    "f": "hero_share",
+    "t": 0.5592053830623627
+   },
+   "f": "abs_aspect_change",
+   "t": 0.41197022795677185
+  },
+  "emphasis": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "same",
+        "p": 0.971,
+        "n": 7629,
+        "dist": {
+         "same": 7406,
+         "down": 129,
+         "up": 94
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "same",
+        "p": 0.841,
+        "n": 69,
+        "dist": {
+         "same": 58,
+         "up": 8,
+         "down": 3
+        }
+       }
+      },
+      "f": "src_anchor:small",
+      "eq": "tl"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "down",
+        "p": 0.364,
+        "n": 44,
+        "dist": {
+         "down": 16,
+         "same": 15,
+         "up": 13
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "same",
+        "p": 0.913,
+        "n": 298,
+        "dist": {
+         "same": 272,
+         "down": 16,
+         "up": 10
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.022963513620197773
+     },
+     "f": "abs_aspect_change",
+     "t": 1.2750164270401
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "same",
+        "p": 0.966,
+        "n": 614,
+        "dist": {
+         "same": 593,
+         "down": 11,
+         "up": 10
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "same",
+        "p": 0.788,
+        "n": 33,
+        "dist": {
+         "same": 26,
+         "up": 5,
+         "down": 2
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 6.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "same",
+        "p": 0.593,
+        "n": 123,
+        "dist": {
+         "same": 73,
+         "up": 31,
+         "down": 19
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "same",
+        "p": 0.855,
+        "n": 476,
+        "dist": {
+         "same": 407,
+         "up": 37,
+         "down": 32
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.037620313465595245
+     },
+     "f": "abs_aspect_change",
+     "t": 0.29418720304965973
+    },
+    "f": "src_anchor_col:headline",
+    "eq": "right"
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "same",
+        "p": 0.818,
+        "n": 77,
+        "dist": {
+         "same": 63,
+         "up": 7,
+         "down": 7
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "same",
+        "p": 0.971,
+        "n": 903,
+        "dist": {
+         "same": 877,
+         "down": 14,
+         "up": 12
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 2.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "same",
+        "p": 0.696,
+        "n": 115,
+        "dist": {
+         "same": 80,
+         "up": 18,
+         "down": 17
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "same",
+        "p": 0.962,
+        "n": 106,
+        "dist": {
+         "same": 102,
+         "down": 3,
+         "up": 1
+        }
+       }
+      },
+      "f": "n_images",
+      "t": 5.5
+     },
+     "f": "src_anchor:hero",
+     "eq": "mr"
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "same",
+        "p": 0.86,
+        "n": 164,
+        "dist": {
+         "same": 141,
+         "down": 19,
+         "up": 4
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "down",
+        "p": 0.333,
+        "n": 192,
+        "dist": {
+         "same": 64,
+         "up": 64,
+         "down": 64
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.05825170315802097
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "up",
+        "p": 0.511,
+        "n": 47,
+        "dist": {
+         "up": 24,
+         "same": 23
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "same",
+        "p": 0.872,
+        "n": 624,
+        "dist": {
+         "same": 544,
+         "down": 41,
+         "up": 39
+        }
+       }
+      },
+      "f": "log_aspect_change",
+      "t": -1.3315326571464539
+     },
+     "f": "hero_share",
+     "t": 0.4664452224969864
+    },
+    "f": "abs_aspect_change",
+    "t": 0.3465735912322998
+   },
+   "f": "bg_kind",
+   "eq": "none"
+  },
+  "photo": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.992,
+        "n": 2918,
+        "dist": {
+         "=": 2895,
+         "bleed": 17,
+         "crop_bleed": 6
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.902,
+        "n": 666,
+        "dist": {
+         "=": 601,
+         "bleed": 51,
+         "crop_bleed": 14
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.6069005727767944
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.848,
+        "n": 277,
+        "dist": {
+         "=": 235,
+         "bleed": 41,
+         "crop_bleed": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.553,
+        "n": 199,
+        "dist": {
+         "=": 110,
+         "bleed": 80,
+         "crop_bleed": 9
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 4.5
+     },
+     "f": "hero_share",
+     "t": 0.7529698610305786
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.911,
+        "n": 4184,
+        "dist": {
+         "=": 3810,
+         "crop_bleed": 247,
+         "framed": 127
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.84,
+        "n": 1879,
+        "dist": {
+         "=": 1579,
+         "framed": 192,
+         "crop_bleed": 108
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.41197022795677185
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.724,
+        "n": 410,
+        "dist": {
+         "=": 297,
+         "framed": 57,
+         "crop_bleed": 56
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "framed",
+        "p": 0.595,
+        "n": 121,
+        "dist": {
+         "framed": 72,
+         "=": 41,
+         "crop_bleed": 8
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 6.5
+     },
+     "f": "log_aspect_change",
+     "t": 0.8112240731716156
+    },
+    "f": "bg_kind",
+    "eq": "image"
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "bleed",
+        "p": 0.949,
+        "n": 39,
+        "dist": {
+         "bleed": 37,
+         "=": 2
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "bleed",
+        "p": 0.8,
+        "n": 35,
+        "dist": {
+         "bleed": 28,
+         "=": 7
+        }
+       }
+      },
+      "f": "tgt_aspect",
+      "eq": "landscape"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "framed",
+        "p": 0.5,
+        "n": 30,
+        "dist": {
+         "framed": 15,
+         "bleed": 12,
+         "=": 3
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "bleed",
+        "p": 0.667,
+        "n": 75,
+        "dist": {
+         "bleed": 50,
+         "=": 20,
+         "framed": 5
+        }
+       }
+      },
+      "f": "hero_share",
+      "t": 0.17888355255126953
+     },
+     "f": "hero_share",
+     "t": 0.1268438957631588
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "bleed",
+        "p": 0.552,
+        "n": 165,
+        "dist": {
+         "bleed": 91,
+         "=": 73,
+         "framed": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.702,
+        "n": 315,
+        "dist": {
+         "=": 221,
+         "bleed": 78,
+         "framed": 16
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 2.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.569,
+        "n": 65,
+        "dist": {
+         "=": 37,
+         "bleed": 27,
+         "framed": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "bleed",
+        "p": 0.706,
+        "n": 136,
+        "dist": {
+         "bleed": 96,
+         "=": 31,
+         "framed": 9
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.06181510537862778
+     },
+     "f": "src_anchor:small",
+     "eq": "mc"
+    },
+    "f": "log_aspect_change",
+    "t": -0.4347754865884781
+   },
+   "f": "src_photo",
+   "eq": "crop_bleed"
+  },
+  "coverage": {
+   "l": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.715,
+        "n": 608,
+        "dist": {
+         "=": 435,
+         "mid": 163,
+         "low": 10
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.553,
+        "n": 537,
+        "dist": {
+         "=": 297,
+         "mid": 233,
+         "high": 7
+        }
+       }
+      },
+      "f": "src_coverage",
+      "eq": "low"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.925,
+        "n": 1487,
+        "dist": {
+         "=": 1376,
+         "mid": 110,
+         "high": 1
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.833,
+        "n": 1878,
+        "dist": {
+         "=": 1564,
+         "mid": 302,
+         "high": 12
+        }
+       }
+      },
+      "f": "abs_aspect_change",
+      "t": 0.11755622550845146
+     },
+     "f": "log_aspect_change",
+     "t": -0.3492744714021683
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.984,
+        "n": 2172,
+        "dist": {
+         "=": 2137,
+         "mid": 35
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.814,
+        "n": 140,
+        "dist": {
+         "=": 114,
+         "mid": 26
+        }
+       }
+      },
+      "f": "n_text",
+      "t": 9.5
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.849,
+        "n": 1079,
+        "dist": {
+         "=": 916,
+         "mid": 155,
+         "low": 8
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.982,
+        "n": 494,
+        "dist": {
+         "=": 485,
+         "mid": 8,
+         "low": 1
+        }
+       }
+      },
+      "f": "tgt_aspect",
+      "eq": "portrait"
+     },
+     "f": "bg_kind",
+     "eq": "image"
+    },
+    "f": "hero_share",
+    "t": 0.4328301101922989
+   },
+   "r": {
+    "l": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.828,
+        "n": 1307,
+        "dist": {
+         "=": 1082,
+         "low": 123,
+         "high": 102
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.747,
+        "n": 265,
+        "dist": {
+         "=": 198,
+         "high": 63,
+         "low": 4
+        }
+       }
+      },
+      "f": "src_photo",
+      "eq": "framed"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.758,
+        "n": 157,
+        "dist": {
+         "=": 119,
+         "high": 22,
+         "low": 16
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.478,
+        "n": 157,
+        "dist": {
+         "=": 75,
+         "high": 44,
+         "low": 38
+        }
+       }
+      },
+      "f": "headline_share",
+      "t": 0.07885823026299477
+     },
+     "f": "log_aspect_change",
+     "t": 0.22891142964363098
+    },
+    "r": {
+     "l": {
+      "l": {
+       "leaf": {
+        "v": "low",
+        "p": 0.475,
+        "n": 404,
+        "dist": {
+         "low": 192,
+         "=": 172,
+         "high": 40
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "=",
+        "p": 0.698,
+        "n": 53,
+        "dist": {
+         "=": 37,
+         "high": 16
+        }
+       }
+      },
+      "f": "src_anchor_col:small",
+      "eq": "right"
+     },
+     "r": {
+      "l": {
+       "leaf": {
+        "v": "=",
+        "p": 0.551,
+        "n": 613,
+        "dist": {
+         "=": 338,
+         "high": 189,
+         "low": 86
+        }
+       }
+      },
+      "r": {
+       "leaf": {
+        "v": "high",
+        "p": 0.773,
+        "n": 163,
+        "dist": {
+         "high": 126,
+         "=": 36,
+         "low": 1
+        }
+       }
+      },
+      "f": "tgt_aspect",
+      "eq": "portrait"
+     },
+     "f": "hero_share",
+     "t": 0.19547046720981598
+    },
+    "f": "abs_aspect_change",
+    "t": 0.4019969254732132
+   },
+   "f": "src_coverage",
+   "eq": "mid"
+  }
+ }
+}
