@@ -115,7 +115,7 @@ def _finalize(source, out, target):
             if sz_:
                 c = min(w / sz_[0], h / sz_[1])
                 short = min(sz_[0] * c, sz_[1] * c)
-            k = max(1.0, round(short)) / max(1e-6, short)
+            k = max(1.0, math.ceil(short - 1e-6)) / max(1e-6, short)
             if w * k > TW or h * k > TH:
                 k = max(1.0, math.floor(short)) / max(1e-6, short)
             if w * k <= TW and h * k <= TH:

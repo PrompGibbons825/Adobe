@@ -138,3 +138,12 @@ incumbent, its notes, README or any other lane.
   retrieval) all lost to the anchor on held-out families: positions are not predictable from
   geometry alone (oracle positions would give IoU 0.79).
 - Everything else is constraint repair, measured with the renderer's own model.
+- 08:30Z **B0 bench, tournament set, head 2e333b6**: 160 tiles, 0 crashes, 0 fallbacks, 0 hard,
+  promise 55 tiles (small print 68, copy over copy 41), audit 56, hidden 52 tiles / 122,
+  sim 0.361 (mid 0.41, wide 0.34, tall 0.26), p95 0.15 s. Then I ran one intermediate change on
+  the tournament set by mistake (promise 49, hidden 39/78, sim 0.362) and moved all iteration
+  to a dev set of the 307 non-tournament tasks (`/data/agents/work/night/lane-learn/devset.json`).
+- 08:35Z dev set, base vs change (small images round their short side up, not down; copy that
+  repair shrank under the floor is restored when the taller block fits and touches no copy):
+  promise tiles 73 -> 63, hidden tiles 104 -> 85 (elements 170 -> 118), sim 0.380 -> 0.381,
+  hard 0 -> 0. Stress 900: 0 faults.

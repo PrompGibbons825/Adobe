@@ -409,6 +409,16 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor, dar=0.0):
             if i in fsz:
                 e = els[i]
                 fs = fsz[i]
+                if fs < floor:
+                    # repair shrank copy under the floor: take it back if the taller block
+                    # still fits the canvas and touches no other copy
+                    _, bh, _ = textfit.layout(e, floor, w)
+                    mw, _, _ = textfit.layout(e, floor, w)
+                    nb = [x, y, w, bh + 1]
+                    if mw <= w and y + bh + 1 <= TH and not any(
+                            _inter(nb, boxes[j]) > 0 for j in fsz if j != i):
+                        fs, h = int(floor), bh + 1
+                        out[i]["height"] = float(h)
                 # after any shrink, make sure the text still fits its box
                 while fs > 1 and not textfit.fits(e, fs, w, h):
                     fs -= 1
