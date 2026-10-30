@@ -73,10 +73,11 @@ Scoreboard columns (designer resizes are evidence only for the elements they kep
 A directory named `v_*` or `sprint` is treated as a chameleon engine and rendered
 in the brand-kit fonts it measured with.
 
-## Results (2026-10-28, validation split, 69 scorable tasks)
+## Results (2026-10-30, distance to designer / words read, lower distance is better)
 
-| engine | dist | read | lowread | align kept |
-|---|---|---|---|---|
-| engine-v1 | 0.655 | 90.9% | 3.7% | 70% |
-| chameleon ws/strategies | 0.805 | 86.1% | 8.3% | 44% |
-| chameleon line/ours-s1 | 0.860 | 86.3% | 8.5% | 44% |
+| set | engine-v1 | chameleon ws/strategies |
+|---|---|---|
+| challenging (crello_hard) | 0.543 / 90.5% | 0.674 / 83.0% |
+| training split (crello_train) | 0.584 / 90.4% | 0.689 / 80.2% |
+| validation split (crello_val) | 0.625 / 90.7% | 0.805 / 86.1% |
+| first held-out (crello_fresh) | 0.461 / 93.3% | 0.560 / 84.4% |

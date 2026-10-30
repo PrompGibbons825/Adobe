@@ -1530,3 +1530,199 @@ def tmpl_turn(ctx, model):
     P.same = True
     P.meta = {"template": "turn", "t": s / ctx.t_star if ctx.t_star else 1.0}
     return P
+
+
+# ---------------------------------------------------------------------------
+# The same design, filling the new canvas. Scaling a design uniformly leaves
+# empty bands when the shape changes. Here every large solid piece (a photo, a
+# panel) keeps its share of the canvas on both axes, cropped and never
+# stretched; each text keeps its relative place, its box widened or narrowed
+# with the canvas so it re-wraps; and all type grows by one factor, as far as
+# it can without texts meeting, leaving the canvas or leaving their panel.
+
+def _fill_rect(e, sx, sy):
+    return (e["x"] * sx, e["y"] * sy, (e["x"] + e["width"]) * sx, (e["y"] + e["height"]) * sy)
+
+
+def _is_surface(e, Ws, Hs):
+    from .analyze import _fills_box
+    return e["type"] != "text" and _fills_box(e) and e["width"] * e["height"] >= 0.08 * Ws * Hs \
+        and min(e["width"], e["height"]) >= 0.05 * min(Ws, Hs)
+
+
+def _set_texts(texts, k, sx, sy, W, H, holders, keep_clear=()):
+    """Lay every text out at type scale k. Returns {id: (props, vis)} or None.
+    keep_clear: (box, text ids allowed on it) that no other text may touch."""
+    out = {}
+    for e in texts:
+        fs = max(1, int(e["font_size"] * k))
+        w = min(W, e["width"] * sx)
+        tracked = float(e.get("letter_spacing", 0) or 0) > 0.15 * float(e["font_size"])
+        flat = " ".join(str(tf.flow(e).get("content", e["content"])).split()) \
+            if sx > 1.3 * sy and not tracked else tf.flow(e)["content"]       # spaced-out display lines keep their breaks
+        e2 = dict(e, content=flat)
+        hr = holders.get(e["id"])
+        if hr is not None:
+            w = min(w, hr[2] - hr[0])
+        m = tf.measure(e2, fs, w)
+        if m["word_w"] > w or m["width"] > w + 1:     # tracking counts: a line never leaves its box
+            return None
+        cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
+        x, y = cx - w / 2, cy - m["height"] / 2
+        if hr is not None:
+            x = min(max(x, hr[0]), hr[2] - w)
+            if m["height"] > hr[3] - hr[1]:
+                return None
+            y = min(max(y, hr[1]), hr[3] - m["height"])
+        if x < 0 or y < 0 or x + w > W or y + m["height"] > H:
+            x, y = min(max(x, 0.0), W - w), min(max(y, 0.0), H - m["height"])
+            if m["height"] > H:
+                return None
+        v = tf.visual_box(e2, x, y, w, fs, m)
+        out[e["id"]] = (dict(x=x, y=y, width=w, height=m["height"], font_size=fs, content=flat), v)
+    ids = list(out)
+    for i, a in enumerate(ids):
+        va = out[a][1]
+        for b in ids[i + 1:]:
+            vb = out[b][1]
+            if min(va[2], vb[2]) - max(va[0], vb[0]) > 0 and min(va[3], vb[3]) - max(va[1], vb[1]) > 0:
+                return None
+    for b, allowed in keep_clear:
+        for i, (_, v) in out.items():
+            if i not in allowed and min(v[2], b[2]) - max(v[0], b[0]) > 0 and min(v[3], b[3]) - max(v[1], b[1]) > 0:
+                return None
+    return out
+
+
+def _photo_place(e, r):
+    """Where a photo goes in its rect, and whether it is cropped. A crop that
+    would cut an eye, or lose more than half the picture, is refused: the photo
+    then keeps its proportions, as large as fits, centred in the rect."""
+    info = saliency.analyze(e.get("asset_id") or "")
+    a0 = e["width"] / max(1e-6, e["height"])
+    rw, rh = r[2] - r[0], r[3] - r[1]
+    a1 = rw / max(1e-6, rh)
+    if abs(a1 - a0) <= 0.01 * a0:
+        return r, False
+    keep = min(a1 / a0, a0 / a1)
+    wx, wy = (a1 / a0, 1.0) if a1 < a0 else (1.0, a0 / a1)      # the part of the picture cover shows
+    x0, y0 = (1 - wx) / 2, (1 - wy) / 2
+    eyes = (info or {}).get("eyes") or []
+    cut = any(not (x0 + 0.03 <= q[0] <= x0 + wx - 0.03 and y0 + 0.03 <= q[1] <= y0 + wy - 0.03) for q in eyes)
+    if not cut and keep >= 0.5:
+        return r, True
+    k = min(rw / e["width"], rh / e["height"])
+    w, h = e["width"] * k, e["height"] * k
+    cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
+    return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), False
+
+
+def tmpl_fill(ctx, model):
+    from .analyze import _box, norm_rot
+    W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
+    sx, sy = W / Ws, H / Hs
+    s = min(sx, sy)
+    P = Placed()
+    els = [e for u in model["units"] if u.role not in SAME_ROLES_SKIP for e in _uels(u)]
+    upright = [e for e in els if e["type"] == "text" and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1]
+    surfaces = [e for e in els if _is_surface(e, Ws, Hs) and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1]
+    rects = {}
+    for e in surfaces:
+        r = _fill_rect(e, sx, sy)
+        cover = True
+        if _is_photo(e):
+            r, cover = _photo_place(e, r)
+        rects[e["id"]] = r
+        P.set(e["id"], x=r[0], y=r[1], width=r[2] - r[0], height=r[3] - r[1])
+        if cover:
+            P.set(e["id"], fit="cover")
+        P.vis[e["id"]] = r
+    # the panel each text sat in, as it is now
+    holders = {}
+    for t in upright:
+        b = _box(t)
+        cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        hs = [o for o in surfaces if o.get("z_index", 0) < t.get("z_index", 0)
+              and o["x"] <= cx <= o["x"] + o["width"] and o["y"] <= cy <= o["y"] + o["height"]
+              and not _is_photo(o)]
+        if hs:
+            r = rects[min(hs, key=lambda o: o["width"] * o["height"])["id"]]
+            pad = 0.04 * min(r[2] - r[0], r[3] - r[1])
+            holders[t["id"]] = (r[0] + pad, r[1] + pad, r[2] - pad, r[3] - pad)
+    # what copy must stay off: eyes and faces it did not cover in the source,
+    # and the small marks and drawings it was clear of
+    def clear_of(b):
+        return {t["id"] for t in upright if min(_box(t)[2], b[2]) - max(_box(t)[0], b[0]) > 0
+                and min(_box(t)[3], b[3]) - max(_box(t)[1], b[1]) > 0}
+    keep = []
+    for e in surfaces:
+        info = saliency.analyze(e.get("asset_id") or "") if e["type"] == "image" else None
+        if not info:
+            continue
+        r = rects[e["id"]]
+        for f in info.get("faces") or []:
+            src = (e["x"] + f[0] * e["width"], e["y"] + f[1] * e["height"],
+                   e["x"] + f[2] * e["width"], e["y"] + f[3] * e["height"])
+            now = (r[0] + f[0] * (r[2] - r[0]), r[1] + f[1] * (r[3] - r[1]),
+                   r[0] + f[2] * (r[2] - r[0]), r[1] + f[3] * (r[3] - r[1]))
+            keep.append((now, clear_of(src)))
+    def mark_box(e, k_):
+        cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
+        return (cx - e["width"] * k_ / 2, cy - e["height"] * k_ / 2, cx + e["width"] * k_ / 2, cy + e["height"] * k_ / 2)
+    marks = [e for e in els if e["type"] != "text" and e not in surfaces and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1
+             and max(e["width"], e["height"]) <= 6 * max(1e-6, min(e["width"], e["height"]))
+             and e["width"] * e["height"] < 0.3 * Ws * Hs]
+    turned = [e for e in els if e["type"] == "text" and abs(norm_rot(e.get("rotation", 0) or 0)) > 1]
+
+    def turned_box(e, k_):
+        cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
+        return _rot_box(cx - e["width"] * k_ / 2, cy - e["height"] * k_ / 2, e["width"] * k_, e["height"] * k_, e.get("rotation", 0))
+
+    def attempt(k_):
+        return _set_texts(upright, k_, sx, sy, W, H, holders,
+                          keep + [(mark_box(e, k_), clear_of(_box(e))) for e in marks]
+                          + [(turned_box(e, k_), set()) for e in turned])
+    lo = s
+    best = attempt(lo)
+    if best is None:
+        return None
+    hi = max(sx, sy)
+    for _ in range(12):
+        mid = (lo + hi) / 2
+        got = attempt(mid)
+        if got is None:
+            hi = mid
+        else:
+            lo, best = mid, got
+    for i, (props, v) in best.items():
+        P.set(i, **props)
+        P.vis[i] = v
+    done = {e["id"] for e in surfaces} | set(best)
+    k = lo
+    for e in els:
+        if e["id"] in done:
+            continue
+        cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
+        w, h = e["width"] * k, e["height"] * k
+        long_thin = max(e["width"], e["height"]) > 6 * max(1e-6, min(e["width"], e["height"]))
+        if e["type"] == "text":
+            fs = max(1, int(e["font_size"] * k))
+            P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h, font_size=fs, content=e["content"])
+        else:
+            if long_thin:                    # a rule follows the canvas along its length
+                if e["width"] >= e["height"]:
+                    w, h = e["width"] * sx, max(1.0, e["height"] * s)
+                else:
+                    w, h = max(1.0, e["width"] * s), e["height"] * sy
+            P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h)
+        P.vis[e["id"]] = _rot_box(cx - w / 2, cy - h / 2, w, h, e.get("rotation", 0))
+    P.same = True
+    P.meta = {"template": "same-fill", "t": k / ctx.t_star if ctx.t_star else 1.0}
+    return P
+
+
+def _is_photo(e):
+    if e["type"] != "image":
+        return False
+    info = saliency.analyze(e.get("asset_id") or "")
+    return bool(info and info.get("busyness", 0) > 0.03)

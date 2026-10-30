@@ -42,6 +42,9 @@ def _candidates(ctx, model):
             ("pinned", "spread") if _fade(ctx) < 1.0 else ("pinned",)
         for mode in modes:
             yield 0.0, lambda m=mode: tmpl_same(ctx, model, m)
+        if sev >= math.log(1.15):
+            from .layout import tmpl_fill
+            yield 0.0, lambda: tmpl_fill(ctx, model)
     # turning the design is for real strip conversions only (a skyscraper into
     # a leaderboard, ~30x): a 2:1 portrait into a 1:2 landscape (4x) is an
     # ordinary orientation change and keeps the design upright
