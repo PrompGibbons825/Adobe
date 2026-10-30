@@ -41,6 +41,14 @@ def one(job):
 
 def _one(job):
     path, ti, split, fam_id = job
+    fam = json.loads(Path(path).read_text())
+    src, des = fam["source"], fam["targets"][ti]
+    return dump(src, des, dict(fam=fam_id, ti=ti, split=split))
+
+
+def dump(src: dict, des: dict, row: dict) -> dict:
+    """Every candidate the engine generates for src -> des's canvas, with features and its
+    similarity to the designer's own resize ``des``."""
     from engine.resize import _fallback
     from engine.smart import emit, finalize, pixels, ranker
     from engine.smart.analyze import analyze
@@ -51,12 +59,10 @@ def _one(job):
     from tools.designer_sim import match, similarity
 
     t0 = time.time()
-    fam = json.loads(Path(path).read_text())
-    src, des = fam["source"], fam["targets"][ti]
     target = {"width": des["canvas"]["width"], "height": des["canvas"]["height"]}
     mapping = match(src["elements"], des["elements"])
-    row = dict(
-        fam=fam_id, ti=ti, split=split, W=target["width"], H=target["height"],
+    row.update(
+        W=target["width"], H=target["height"],
         W0=src["canvas"]["width"], H0=src["canvas"]["height"], n_el=len(src["elements"]),
         n_match=len(mapping),
     )

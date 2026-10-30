@@ -38,13 +38,13 @@ def candidates(row: dict) -> List[dict]:
     return cs
 
 
-def pick(row: dict, cs: List[dict], model: Optional[dict] = None, blend: float = 0.0, top: int = 8):
+def pick(row: dict, cs: List[dict], model: Optional[dict] = None, blend: float = 0.0, top: int = 8,
+         margin: float = 10.0):
     if not cs:
         return None, row["fallback"]
     if model is not None and blend:
         rs = [R.predict(c["feats"], model) for c in cs]
-        mx = max(rs)
-        keys = [c["hand"] + blend * (x - mx) for c, x in zip(cs, rs)]
+        keys = R.blended([c["hand"] for c in cs], rs, blend, margin)
     else:
         keys = [c["hand"] for c in cs]
     order = sorted(range(len(cs)), key=lambda i: -keys[i])

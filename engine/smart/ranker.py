@@ -20,7 +20,7 @@ from .geom import Box
 WEIGHTS = Path(__file__).with_name("ranker_weights.json")
 ARCHS = (
     "scaled", "adapt", "regions", "stack", "stack-side", "stack-v", "split", "split-fold",
-    "row", "row-stacked",
+    "row", "row-stacked", "anchor", "flex", "retrieve", "quiet",
 )
 TERMS = (
     "visible", "hidden", "small_text", "lines", "overlap", "coverage", "balance", "prior",
@@ -45,6 +45,9 @@ def model() -> Optional[dict]:
 
 def arch_of(name: str) -> Optional[str]:
     base = name.split("@")[0].split("~")[0]
+    for k in ("anchor", "flex", "retrieve", "quiet"):
+        if base.startswith(k):
+            return k
     if base.startswith("scaled"):
         return "scaled"
     if base.startswith("adapt"):
@@ -206,27 +209,44 @@ def predict(feats: Dict[str, float], m: dict) -> float:
     return s
 
 
-def apply(plans, d, ctx) -> None:
-    """Blend learned preference into each plan's score (in place).
+def blended(hand: List[float], learned: List[Optional[float]], lam: float, margin: float) -> List[float]:
+    """Conservative blend: only the candidates the critic (hand score) keeps within ``margin`` of
+    its best are re-ordered by the learned preference; they stay above every other candidate, so the
+    ranker can choose among near-ties but never promote a plan the critic ranks clearly worse."""
+    if not hand:
+        return []
+    best = max(hand)
+    floor = best - margin
+    allowed = [i for i, h in enumerate(hand) if h >= floor and learned[i] is not None]
+    if len(allowed) < 2 or lam <= 0:
+        return list(hand)
+    top = max(learned[i] for i in allowed)
+    out = list(hand)
+    for i in allowed:
+        out[i] = max(floor + 1e-6, hand[i] + lam * (learned[i] - top))
+    return out
 
-    When the hand score already separates the top two candidates clearly, the
-    ranker is left off so Crello-tuned preferences cannot override hard rubric
-    signals. Otherwise the full blend applies (tie-break / ambiguous field).
-    """
+
+def apply(plans, d, ctx) -> None:
+    """Re-order the critic's near-ties by what designers did (in place); see ``blended``."""
     if not plans or not enabled():
         return
     m = model()
     lam = float(os.environ.get("CHAMELEON_RANKER_BLEND") or m.get("blend", 0.0))
     if lam <= 0:
         return
-    ordered = sorted(plans, key=lambda p: -p.score)
     margin = float(os.environ.get("CHAMELEON_RANKER_MARGIN") or m.get("margin", 4.0))
-    if len(ordered) >= 2 and ordered[0].score - ordered[1].score > margin:
+    hand = [p.score for p in plans]
+    best = max(hand)
+    near = [i for i, h in enumerate(hand) if h >= best - margin]
+    if len(near) < 2:
         return
-    feats = all_features(plans, d, ctx)
-    rs = [predict(f, m) for f in feats]
-    top = max(rs)
-    for p, r in zip(plans, rs):
-        bonus = lam * (r - top)
-        p.breakdown["ranker"] = bonus
-        p.score += bonus
+    cx = context(d, ctx)
+    learned: List[Optional[float]] = [None] * len(plans)
+    for i in near:
+        learned[i] = predict(plan_features(plans[i], d, ctx, cx), m)
+    new = blended(hand, learned, lam, margin)
+    for p, h, n in zip(plans, hand, new):
+        if n != h:
+            p.breakdown["ranker"] = n - h
+            p.score = n

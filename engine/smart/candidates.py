@@ -252,105 +252,145 @@ def _place_solved(laid, ctx: Ctx, zone: Box) -> List[Placement]:
 
 
 # ----------------------------------------------------------------------------
-# retrieval index (normalized layouts from real Crello designs, baked at dev time)
+# retrieval index: designers' own resizes from Crello v5 (CDLA-Permissive-2.0), baked at dev time by
+# tools/build_layout_index.py. Each family is one design at several canvas sizes with its elements
+# aligned across the sizes, so a family whose source-size member looks like this design says where a
+# designer moved and how much they scaled each element for this target shape.
+
+EXCLUDE: set = set()  # dev only: family ids to leave out (the family being evaluated)
+RETRIEVE_K = 3  # nearest families tried per target
+SRC_AR = math.log(1.3)  # a family member counts as "the source" within this aspect ratio
+TGT_AR = math.log(1.2)  # ... and as "the target" within this one
 
 
 @lru_cache(maxsize=1)
 def _layout_index() -> List[dict]:
     if not _INDEX_PATH.is_file():
         return []
-    return json.loads(_INDEX_PATH.read_text())
+    data = json.loads(_INDEX_PATH.read_text())
+    if not isinstance(data, dict) or data.get("v") != 2:
+        return []
+    return data["families"]
 
 
-def _slot_kind(el: dict) -> str:
-    return "text" if el.get("type") == "text" else "image"
+def _slot_cost(nb: Tuple[float, float, float, float], s: Sequence[float]) -> float:
+    """Distance between a normalized item box (x, y, w, h) and an index slot [x, y, w, h]."""
+    cx, cy = nb[0] + nb[2] / 2, nb[1] + nb[3] / 2
+    sx, sy = s[0] + s[2] / 2, s[1] + s[3] / 2
+    return (abs(cx - sx) + abs(cy - sy)
+            + 0.25 * abs(math.log(max(1e-3, nb[2]) / max(1e-3, s[2])))
+            + 0.25 * abs(math.log(max(1e-3, nb[3]) / max(1e-3, s[3]))))
 
 
-def _design_signature(design: dict) -> dict:
-    W, H = design["canvas"]["width"], design["canvas"]["height"]
-    slots = []
-    for e in design["elements"]:
-        if float(e.get("opacity", 1) or 0) <= 0:
-            continue
-        b = el_box(e)
-        if b.area <= 0:
-            continue
-        slots.append({
-            "kind": _slot_kind(e),
-            "cx": b.cx / W, "cy": b.cy / H,
-            "w": b.w / W, "h": b.h / H,
-            "area": b.area / (W * H),
-        })
-    slots.sort(key=lambda s: -s["area"])
-    return {"ar": W / H, "n": len(slots), "slots": slots}
-
-
-def _match_items(slots: List[dict], items: List[Item]) -> Optional[List[Tuple[Item, dict]]]:
-    if not slots or not items:
-        return None
-    by_kind: Dict[str, List[Item]] = {}
-    for it in items:
-        k = "text" if it.is_copy else "image"
-        by_kind.setdefault(k, []).append(it)
-    for k in by_kind:
-        by_kind[k].sort(key=lambda i: -i.src_box.area)
-    sk: Dict[str, List[dict]] = {}
-    for s in slots:
-        sk.setdefault(s["kind"], []).append(s)
-    pairs: List[Tuple[Item, dict]] = []
+def _match_family(items: List[Tuple[Item, str, tuple]], src: dict) -> Optional[Tuple[float, Dict[int, int]]]:
+    """Greedy kind-respecting match of the design's items onto a member's slots: (cost, item -> slot)."""
+    slots = src["s"]
+    pairs = []
+    for ii, (_, kind, nb) in enumerate(items):
+        for si, sl in enumerate(slots):
+            if sl[4] == kind:
+                pairs.append((_slot_cost(nb, sl), ii, si))
+    pairs.sort()
+    got: Dict[int, int] = {}
     used = set()
-    for kind, its in by_kind.items():
-        ss = sk.get(kind, [])
-        if len(ss) < len(its):
-            return None
-        for it, slot in zip(its, ss):
-            pairs.append((it, slot))
-            used.add(id(it))
-    rest = [it for it in items if id(it) not in used]
-    free = [s for s in slots if s not in [p[1] for p in pairs]]
-    free.sort(key=lambda s: -s["area"])
-    rest.sort(key=lambda i: -i.src_box.area)
-    for it, slot in zip(rest, free):
-        pairs.append((it, slot))
-    if len(pairs) < min(len(items), len(slots)):
+    cost = 0.0
+    for c, ii, si in pairs:
+        if ii in got or si in used:
+            continue
+        got[ii] = si
+        used.add(si)
+        cost += c
+    missing = len(items) - len(got)
+    if missing > max(1, len(items) // 4):
         return None
-    return pairs
+    left = sum(min(1.0, slots[si][2] * slots[si][3]) for si in range(len(slots)) if si not in used)
+    return (cost + 1.0 * missing) / max(1, len(items)) + 0.5 * left, got
 
 
-def plan_retrieve(d: Design, ctx: Ctx, hidden: List[Item], name: str = "retrieve", insets=(0, 0, 0, 0)) -> Optional[Plan]:
-    """Nearest indexed layout at this aspect ratio; source elements mapped to its slots."""
+_MEMO: Dict[tuple, List[tuple]] = {}
+
+
+def _retrieved(d: Design, ctx: Ctx, body: List[Item]) -> List[tuple]:
+    """The nearest (family, source member, target member, item -> slot) for this design and target."""
+    key = (id(d), ctx.W, ctx.H, tuple(id(it) for it in body), frozenset(EXCLUDE))
+    if key not in _MEMO:
+        if len(_MEMO) > 64:
+            _MEMO.clear()
+        _MEMO[key] = _retrieve(d, ctx, body)
+    return _MEMO[key]
+
+
+def _retrieve(d: Design, ctx: Ctx, body: List[Item]) -> List[tuple]:
     index = _layout_index()
-    if not index:
-        return None
-    tar = ctx.W / ctx.H
-    best = min(index, key=lambda e: abs(math.log(e["ar"] / tar)))
-    if abs(math.log(best["ar"] / tar)) > math.log(2.2):
-        return None
+    if not index or not body:
+        return []
+    ls, lt = math.log(d.W / d.H), math.log(ctx.W / ctx.H)
+    items = [(it, "t" if it.is_copy else "i",
+              (it.src_box.x / d.W, it.src_box.y / d.H, it.src_box.w / d.W, it.src_box.h / d.H)) for it in body]
+    found = []
+    for fam in index:
+        if fam["id"] in EXCLUDE:
+            continue
+        mem = fam["m"]
+        srcs = [m for m in mem if abs(math.log(m["ar"]) - ls) <= SRC_AR]
+        tgts = [m for m in mem if abs(math.log(m["ar"]) - lt) <= TGT_AR]
+        if not srcs or not tgts:
+            continue
+        best = None
+        for sm in srcs:
+            for tm in tgts:
+                if tm is sm:
+                    continue
+                r = _match_family(items, sm)
+                if r is None:
+                    continue
+                c = r[0] + 0.5 * abs(math.log(sm["ar"]) - ls) + 0.5 * abs(math.log(tm["ar"]) - lt)
+                if best is None or c < best[0]:
+                    best = (c, sm, tm, r[1])
+        if best is not None:
+            found.append((best[0], fam["id"], best[1], best[2], best[3]))
+    found.sort(key=lambda f: f[0])
+    return found[:RETRIEVE_K]
+
+
+def plan_retrieve(d: Design, ctx: Ctx, hidden: List[Item], name: str = "retrieve", insets=(0, 0, 0, 0),
+                  rank: int = 0) -> Optional[Plan]:
+    """Transfer the layout of the ``rank``-th nearest designer resize: each item goes where the
+    designer put its counterpart at this shape, scaled as the designer scaled it."""
     vis = _visible(d, hidden)
     body = [it for it in vis if not it.corner]
     if not body:
         return None
-    pairs = _match_items(best["slots"], body)
-    if pairs is None:
+    found = _retrieved(d, ctx, body)
+    if rank >= len(found):
         return None
+    _, fid, sm, tm, got = found[rank]
     s = math.sqrt(ctx.W * ctx.H / max(1.0, d.W * d.H))
     zone, mx, my = _zone(d, ctx, insets)
     placed: List[Placement] = []
-    for it, slot in pairs:
-        tw, th = slot["w"] * ctx.W, slot["h"] * ctx.H
-        r = realize(it, s, ctx, max_w=max(tw, 1.0), max_h=max(th, 1.0))
+    for ii, it in enumerate(body):
+        si = got.get(ii)
+        if si is None:
+            return None
+        a, b = sm["s"][si], tm["s"][si]
+        tw, th = b[2] * ctx.W, b[3] * ctx.H
+        # the designer's own scale for this element, measured as the slot's size change
+        k = math.sqrt(max(1e-6, tw * th) / max(1e-6, a[2] * d.W * a[3] * d.H))
+        sk = it.src_box.w * it.src_box.h
+        si_scale = k if sk > 0 else s
+        r = realize(it, si_scale, ctx, max_w=max(tw * 1.1, 1.0), max_h=max(th * 1.3, 1.0))
+        if r is None:
+            r = realize(it, s, ctx, max_w=max(tw * 1.1, 1.0), max_h=max(th * 1.3, 1.0))
         if r is None:
             return None
-        cx, cy = slot["cx"] * ctx.W, slot["cy"] * ctx.H
-        x = cx - r.w / 2.0
-        y = cy - r.h / 2.0
+        x = (b[0] + b[2] / 2) * ctx.W - r.w / 2.0
+        y = (b[1] + b[3] / 2) * ctx.H - r.h / 2.0
         x = min(max(x, mx), ctx.W - r.w - mx)
         y = min(max(y, my), ctx.H - r.h - my)
         placed.append((r, x, y))
     if max(overflow(placed, ctx)) > 0.5:  # type: ignore[arg-type]
         return None
-    rid = best.get("id", "x")
-    return Plan(name=f"retrieve-{rid}", placed=placed, hidden=list(hidden), s=s, zone=zone, capped=True)
+    return Plan(name=name, placed=placed, hidden=list(hidden), s=s, zone=zone, capped=True)
 
 
 def param_stack_variants() -> List[Tuple[str, dict]]:
@@ -388,4 +428,5 @@ def extra_variants(d: Design, ctx: Ctx, force_all: bool) -> Iterator[Tuple[str, 
     if r >= 2.2 or force_all:
         yield "flex-strip", plan_flex_strip, dict(wrap=True), ctx
     if _layout_index():
-        yield "retrieve", plan_retrieve, {}, ctx
+        for k in range(RETRIEVE_K):
+            yield f"retrieve-{k}", plan_retrieve, dict(rank=k), ctx
