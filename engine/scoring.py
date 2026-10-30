@@ -1,7 +1,7 @@
 """Feature score of a realised layout. Higher is better."""
 import math
 
-WEIGHTS = dict(text=0.436, leg=3.0, img=3.088, fid=2.473, fill=0.376, panes=0.0, kdrop=0.1)  # fit by lab/learn.py
+WEIGHTS = dict(text=0.5, leg=3.0, img=10.8, fid=9.3, fill=1.0, panes=0.0, kdrop=0.185)  # img/fid/kdrop fit by lab/learn.py (sim to designer); leg and fill floored by hand (sim cannot see readability)
 
 
 def features(L, W, H, sW, sH, s_ref):
@@ -46,7 +46,7 @@ def features(L, W, H, sW, sH, s_ref):
     x0 = min(b[0] for b in boxes); y0 = min(b[1] for b in boxes)
     x1 = max(b[2] for b in boxes); y1 = max(b[3] for b in boxes)
     cov = (x1 - x0) * (y1 - y0) / (W * H)
-    fill = max(0.0, 0.5 - cov)
+    fill = max(0.0, -math.log(max(cov, 1e-3) / 0.7))
     kd = max(0.0, -math.log(max(L.k / s_ref, 1e-3)))
     L.feat = dict(text=tl, leg=ll, img=il, fid=d, fill=fill, panes=float(len(getattr(L, 'panes', [1])) - 1), kdrop=kd)
     return L.feat

@@ -15,3 +15,7 @@
 ## 06:45Z learned weights
 - Fit on 200 Crello dev tasks (families outside the tournament set; CDLA-Permissive-2.0 geometry only): choose-by-score candidate vs designer resize, mean IoU (sim). Default hand weights 0.370 -> fit 0.42 (2-fold held-out 0.405/0.424 vs default 0.375/0.364; oracle best candidate 0.439). One weight set for all formats. Weights in engine/scoring.py; tool lab/learn.py.
 - Candidate generator: area-balanced contiguous pane partitions (pane count up to 1+1.5*aspect) + visual|text split.
+
+## 07:00Z refit with log-fill feature (226 train tasks, 9308 candidates)
+- Pure sim fit gives leg 0.8/fill 0.11 (sim 0.419) but designer-IoU cannot see readability, so leg=3, fill=1 are floors set by hand: sim 0.413, oracle 0.434. Disclosed hand-set: leg, fill, text(0.5).
+- Visual review (lab/viz.py): near-aspect Crello tiles are close to the designers; 728x90 with 10+ units is inherently tiny (pin or 6 panes), nothing is dropped.
