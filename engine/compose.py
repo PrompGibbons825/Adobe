@@ -5,10 +5,11 @@ import itertools
 import math
 
 from . import measure as M
+from .fundamentals.check import small_print_floor
 from . import scoring as S
 
 CANVAS = [10 ** 9, 10 ** 9]
-FLOOR = 10.0
+FLOOR = [10.0]
 MERGE_T = 0.6
 R2 = lambda v: round(float(v), 2)
 
@@ -84,13 +85,17 @@ class Unit:
             fs0 = float(el["font_size"])
             wd = avail_w if avail_w is not None else el["width"] * k
             wd = max(1.0, wd)
-            fs, n, bh, _ = M.fit_text(el, wd, max(fs0 * k, min(fs0, FLOOR)) if floor else fs0 * k, CANVAS[1])
+            fs, n, bh, _ = M.fit_text(el, wd, max(fs0 * k, FLOOR[0]) if floor else fs0 * k, CANVAS[1])
             e = dict(el)
             e.update(x=0.0, y=0.0, width=R2(wd), height=R2(math.ceil(bh)), font_size=fs)
             if e.get("letter_spacing"):
                 e["letter_spacing"] = R2(e["letter_spacing"] * fs / fs0)
             return Fit(self, [e], (0, 0, wd, math.ceil(bh)), fs0)
         ke = k
+        if floor and self.texts:  # scale the whole group up until its smallest label reaches the floor
+            need = [FLOOR[0] / float(t["font_size"]) for t in self.texts]
+            if need:
+                ke = max(ke, max(need))
         if avail_w is not None and self.w * ke > avail_w:
             ke = avail_w / self.w
         out = []
@@ -188,6 +193,23 @@ def build_units(src):
                     best = (area(cb), c)
         if best:
             join(t["id"], best[1]["id"])
+    # a shape overlapping copy (accent bar, underline, highlight) travels with that copy
+    for sh in rest:
+        if sh["type"] != "shape" or sh.get("group_id"):
+            continue
+        sb = el_bbox(sh)
+        if area(sb) > .35 * W * H:
+            continue
+        best = None
+        for t in rest:
+            if t["type"] != "text":
+                continue
+            tb = el_bbox(t)
+            ia = inter_area(sb, tb)
+            if ia >= .25 * min(max(1, area(sb)), max(1, area(tb))) and (best is None or ia > best[0]):
+                best = (ia, t)
+        if best:
+            join(sh["id"], best[1]["id"])
     groups = {}
     for e in rest:
         groups.setdefault(find(e["id"]), []).append(e)
@@ -412,10 +434,11 @@ def candidates(units, W, H, sW, sH, s_ref):
                     cands.append(L)
                     S.features(L, W, H, sW, sH, s_ref)
                     if L.feat["tiny"] > 0:
-                        L2 = layout_panes(f"panes{p}f", panes, wo, W, H, sW, sH, s_ref, nu, True)
-                        if L2 is not None:
-                            L2.panes = L.panes
-                            cands.append(L2)
+                        for nu2 in ((nu, 0.3) if nu == 1.0 else (nu,)):
+                            L2 = layout_panes(f"panes{p}f", panes, wo, W, H, sW, sH, s_ref, nu2, True)
+                            if L2 is not None:
+                                L2.panes = L.panes
+                                cands.append(L2)
     return cands
 
 
@@ -426,17 +449,37 @@ def plan(src, tgt):
     bgs, decs, units = build_units(src)
     s_ref = math.sqrt(W * H / (sW * sH))
     CANVAS[0], CANVAS[1] = W, H
+    FLOOR[0] = float(small_print_floor(W, H))
     ctx = dict(src=src, W=W, H=H, bg=bg_elements(bgs, W, H, sW, sH), decor=decor_elements(decs, W, H, sW, sH, s_ref), cands=[])
     if units:
         for L in [layout_pin(units, W, H, sW, sH)] + candidates(units, W, H, sW, sH, s_ref):
             S.features(L, W, H, sW, sH, s_ref)
             ctx["cands"].append(L)
+        if not any(L.feat["tiny"] == 0 for L in ctx["cands"]):
+            # copy cannot reach the floor with rigid image+copy groups: let each member move on its own
+            ud = []
+            for u in units:
+                if u.kind == "group" and u.is_image and u.texts:
+                    ud += [Unit([m], "single", sW, sH) for m in u.members]
+                else:
+                    ud.append(u)
+            if len(ud) != len(units):
+                for L in candidates(ud, W, H, sW, sH, s_ref):
+                    S.features(L, W, H, sW, sH, s_ref)
+                    ctx["cands"].append(L)
     return ctx
 
 
 def choose(ctx, weights=None):
     best = None
-    for L in ctx["cands"]:
+    pool = ctx["cands"]
+    legible = [L for L in pool if L.feat["tiny"] == 0]
+    if legible:  # legibility is a promise, not a trade-off: only layouts that keep every text at the floor compete
+        pool = legible
+    else:  # none reaches the floor: take the fewest tiny texts first
+        m = min(L.feat["tiny"] for L in pool)
+        pool = [L for L in pool if L.feat["tiny"] <= m + 1e-9]
+    for L in pool:
         sc = S.dot(L.feat, weights)
         L.score = sc
         if best is None or sc > best.score:

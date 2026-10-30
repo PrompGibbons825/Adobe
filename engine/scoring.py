@@ -1,13 +1,16 @@
 """Feature score of a realised layout. Higher is better."""
 import math
 
+from .fundamentals.check import small_print_floor
+
 WEIGHTS = dict(text=0.5, leg=3.0, img=10.8, fid=9.3, fill=1.0, panes=0.0, kdrop=0.185, tiny=5.0)  # img/fid/kdrop fit by lab/learn.py (sim to designer); leg and fill floored by hand (sim cannot see readability)
 
 
 def features(L, W, H, sW, sH, s_ref):
     tl = ll = 0.0
     wsum = 0.0
-    legthr = min(14.0, max(8.0, 0.02 * max(W, H)))
+    flo = float(small_print_floor(W, H))
+    legthr = flo
     for u, f, X, Y in L.placed:
         src_by_id = {e["id"]: e for e in u.members}
         for e in f.els:
@@ -22,7 +25,7 @@ def features(L, W, H, sW, sH, s_ref):
             wsum += wt
     tl /= max(wsum, 1e-9)
     ll /= max(wsum, 1e-9)
-    tiny = sum(1.0 for u, f, X, Y in L.placed for e in f.els if e['type'] == 'text' and e['font_size'] < 10)
+    tiny = sum(1.0 for u, f, X, Y in L.placed for e in f.els if e['type'] == 'text' and e['font_size'] < flo)
     ntxt = sum(1.0 for u, f, X, Y in L.placed for e in f.els if e['type'] == 'text')
     tiny /= max(ntxt, 1.0)
     il, asum = 0.0, 0.0
