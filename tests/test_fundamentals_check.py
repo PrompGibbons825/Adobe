@@ -86,7 +86,7 @@ class KnownBad(unittest.TestCase):
 
     def test_hidden_under_an_opaque_shape(self):
         cover = dict(self.shape, id=self.shape["id"], x=0, y=0, width=self.tgt["width"], height=self.tgt["height"],
-                     z_index=10 ** 6, fill_color="rgba(20,20,20,1)", shape_type="rectangle", rotation=0)
+                     z_index=10 ** 6, fill_color="rgba(20,20,20,1)", shape_type="rectangle", rotation=0, opacity=1.0)
         self.out["elements"] = [cover if e is self.shape else e for e in self.out["elements"]]
         self.assertIn("hidden", codes(self.src, self.out, self.tgt, True, "hard"))
 
