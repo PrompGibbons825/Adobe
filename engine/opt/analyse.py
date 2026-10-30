@@ -72,7 +72,7 @@ def analyse(source: dict) -> Scene:
         if i in S.backdrop:
             continue
         e = els[i]
-        if e.get("type") == "image" and _inter(boxes[i], cv) >= 0.45 * A:
+        if e.get("type") == "image" and _inter(boxes[i], cv) >= 0.45 * A and not e.get("rotation"):
             S.backdrop.append(i)
         break
     rest = [i for i in order if i not in S.backdrop]

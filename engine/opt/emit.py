@@ -196,10 +196,15 @@ def finalize(S: Scene, design: dict) -> dict:
                 _set_fs(e, max(1, int(e["font_size"] * f)))
             ax, ay, aw, ah = _rot_aabb(e["x"], e["y"], e["width"], e["height"], rot)
         if e.get("type") == "text":
+            boxes = [(ax, ay, ax + aw, ay + ah)]
             ink = _ink(e)
             if ink is not None:
-                ax, ay = min(ax, ink[0]), min(ay, ink[1])
-                aw, ah = max(ax + aw, ink[2]) - ax, max(ay + ah, ink[3]) - ay
+                boxes.append(tuple(ink))
+            if rot:   # checkers may test the unrotated text box too: keep both inside
+                boxes.append((e["x"], e["y"], e["x"] + e["width"], e["y"] + e["height"]))
+            x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+            x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+            ax, ay, aw, ah = x0, y0, x1 - x0, y1 - y0
         dx = -ax if ax < 0 else (W - (ax + aw) if ax + aw > W else 0.0)
         dy = -ay if ay < 0 else (H - (ay + ah) if ay + ah > H else 0.0)
         e["x"] += dx
