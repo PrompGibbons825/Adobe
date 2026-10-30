@@ -134,8 +134,6 @@ def _vision(rgba, path: str = "") -> Optional[Vision]:
 
     opaque = alpha.mean() > 0.9  # a photo, not a cut-out (its alpha already outlines the subject) or a logo
     u2 = _vm.u2_saliency(rgba, alpha, sh, sw) if opaque and switches.on("saliency") else None
-    if u2 is not None:
-        imp = np.maximum(imp, 0.68 * u2)
     faces = _faces(rgba) if opaque else []
     heads = tuple(_pad(f, 0.25, 0.45, 0.25, 0.25) for f in faces)
     people = tuple(_pad(f, 0.5, 0.45, 0.5, 0.8) for f in faces)
@@ -151,8 +149,6 @@ def _vision(rgba, path: str = "") -> Optional[Vision]:
         x0, y0, x1, y1 = (int(round(v)) for v in (f[0] * sw, f[1] * sh, f[2] * sw, f[3] * sh))
         imp[max(0, y0):max(0, y1), max(0, x0):max(0, x1)] = np.maximum(
             imp[max(0, y0):max(0, y1), max(0, x0):max(0, x1)], 0.85)
-    integral = np.zeros((sh + 1, sw + 1), dtype=np.float64)
-    integral[1:, 1:] = imp.astype(np.float64).cumsum(0).cumsum(1)
 
     extent = (0.0, 0.0, 1.0, 1.0)
     if faces:
@@ -177,6 +173,13 @@ def _vision(rgba, path: str = "") -> Optional[Vision]:
             fy = float((ys * wt).sum() / wt.sum() + 0.5) / sh
             # concentrated, and standing out from the rest of the picture
             subject = bw * bh < FLAT and float(imp[ys, xs].mean()) > 2.0 * float(imp.mean()) + 0.05
+    # The salient object weighs in the map that crops and keeps copy off (mass, quiet zones), but
+    # whether the photo has a subject, and where, is read before it: a large object mask spread
+    # over the photo would otherwise lift the mean and read a clear subject as diffuse.
+    if u2 is not None:
+        imp = np.maximum(imp, 0.68 * u2)
+    integral = np.zeros((sh + 1, sw + 1), dtype=np.float64)
+    integral[1:, 1:] = imp.astype(np.float64).cumsum(0).cumsum(1)
     return Vision(size=(iw, ih), imp=imp, integral=integral, faces=tuple(faces), heads=heads, people=people,
                   baked=baked, focal=(fx, fy), subject=bool(subject), extent=extent)
 
