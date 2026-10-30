@@ -347,14 +347,18 @@ def _drawn_widths(content: str, style: TextStyle, fs: int) -> List[float]:
 
 
 @lru_cache(maxsize=65536)
-def _measure_exact(content: str, style: TextStyle, fs: int, wrap_width: float) -> TextBlock:
-    return _measure(content, style, fs, wrap_width, True)
+def _measure_exact(content: str, style: TextStyle, fs: int, wrap_width: float, wrap_fs: Optional[float] = None,
+                   spacing: Optional[float] = None) -> TextBlock:
+    return _measure(content, style, fs, wrap_width, True, wrap_fs, spacing)
 
 
-def _measure(content: str, style: TextStyle, font_size: float, wrap_width: float, exact: bool) -> TextBlock:
+def _measure(content: str, style: TextStyle, font_size: float, wrap_width: float, exact: bool,
+             wrap_fs: Optional[float] = None, spacing_px: Optional[float] = None) -> TextBlock:
+    """``wrap_fs``: the size the renderer wraps at (the float font_size; glyphs are drawn at its
+    int). ``spacing_px``: the element's literal letter spacing, when not the style's tracking."""
     fs = max(1, int(font_size))
     if exact:
-        widths = char_widths(style.family, style.weight, style.style, float(fs), content)
+        widths = char_widths(style.family, style.weight, style.style, float(wrap_fs or fs), content)
         wrapped = wrap_text(content, widths, wrap_width)
         cuts = [i for i, c in enumerate(wrapped) if c == "\n"]
         P = [0.0]
@@ -374,7 +378,7 @@ def _measure(content: str, style: TextStyle, font_size: float, wrap_width: float
     lines: List[str] = []
     line_ws: List[float] = []
     start = 0
-    spacing = letter_spacing(style, fs)  # drawn between glyphs, ignored by the wrap
+    spacing = letter_spacing(style, fs) if spacing_px is None else spacing_px  # drawn between glyphs, ignored by the wrap
     for cut in cuts + [len(content)]:
         seg = content[start:cut]
         lines.append(seg)
@@ -577,6 +581,66 @@ def has_descender(line: str) -> bool:
     return any(c in _DESCENDERS for c in line)
 
 
+@lru_cache(maxsize=65536)
+def _overhang(family: str, weight: str, style: str, fs: int, first: str, last: str) -> Tuple[float, float]:
+    """How far the ink of ``first`` reaches left of its pen position and the ink of ``last`` right
+    of its advance (px, >= 0): italics, f, j, W... draw past their advance box."""
+    tf = book().typeface(family, weight, style)
+    if tf is None or skia is None:
+        return 0.1 * fs, 0.1 * fs  # conservative without the font
+    font = skia.Font(tf, float(fs))
+    out = []
+    for ch, side in ((first, "l"), (last, "r")):
+        if not ch or ch == "\n":
+            out.append(0.0)
+            continue
+        g = font.textToGlyphs(ch)
+        if not len(g):
+            out.append(0.0)
+            continue
+        r = font.getBounds(g)[0]
+        if r.width() <= 0:
+            out.append(0.0)
+        elif side == "l":
+            out.append(max(0.0, -r.left()))
+        else:
+            out.append(max(0.0, r.right() - font.getWidths(g)[0]))
+    return out[0], out[1]
+
+
+def _char_face(style: "TextStyle", i: int) -> Tuple[str, str]:
+    bold = style.weight in _BOLD
+    italic = style.style in ("italic", "bolditalic")
+    for a, b, bo, it in style.runs:
+        if a <= i <= b:
+            bold = bo if bo is not None else bold
+            italic = it if it is not None else italic
+    weight = "bold" if bold else "regular"
+    return weight, font_style_key(weight, italic)
+
+
+def ink_span(blk: TextBlock, style: "TextStyle", align: str) -> Tuple[float, float]:
+    """Left and right ink extent across the element (from its x), glyph overhangs included: the
+    renderer positions glyphs by advance, but their outlines may reach past it on either end."""
+    lo, hi = float("inf"), float("-inf")
+    w = blk.wrap_width
+    idx = 0
+    for line, lw in zip(blk.lines, blk.line_widths):
+        start = idx
+        idx += len(line) + 1
+        if not line:
+            continue
+        s0 = 0.0 if align not in ("center", "right") else ((w - lw) / 2.0 if align == "center" else w - lw)
+        fw, fsy = _char_face(style, start)
+        lw_, lsy = _char_face(style, start + len(line) - 1)
+        left = _overhang(style.family, fw, fsy, blk.font_size, line[0], "")[0]
+        right = _overhang(style.family, lw_, lsy, blk.font_size, "", line[-1])[1]
+        lo, hi = min(lo, s0 - left), max(hi, s0 + lw + right)
+    if lo == float("inf"):
+        return glyph_span(blk, align)
+    return lo, hi
+
+
 def drawn_box(el: dict):
     """Where a text element's glyphs actually land, as the renderer draws them:
     exact wrap at the element width, real advances (fallback fonts included),
@@ -586,10 +650,22 @@ def drawn_box(el: dict):
 
     style = TextStyle.of(el)
     w = float(el.get("width", 0) or 0)
-    blk = measure(str(el.get("content", "")), style, float(el.get("font_size", 12) or 12), w, exact=True)
-    g0, _ = glyph_span(blk, el.get("text_align", "left"))
+    fsf = float(el.get("font_size", 12) or 12)
+    try:
+        ls = float(el.get("letter_spacing") or 0.0)
+        ls = ls if math.isfinite(ls) else 0.0
+    except (TypeError, ValueError):
+        ls = 0.0
+    # exactly as drawn: wrapped at the float size, drawn at its int, with the literal spacing
+    blk = _measure_exact(str(el.get("content", "")), style, max(1, int(fsf)), w, fsf, ls)
+    align = el.get("text_align", "left")
+    g0, g1 = glyph_span(blk, align)
+    lo, hi = ink_span(blk, style, align)
+    g0, g1 = min(g0, lo), max(g1, hi)
     x, y = float(el.get("x", 0) or 0), float(el.get("y", 0) or 0)
-    b = Box(x + g0, y, max(0.0, blk.ink_width), blk.height)
+    # the renderer steps lines by the float size (glyphs at its int)
+    height = blk.height + (blk.n_lines - 1) * (fsf - blk.font_size) * style.line_height
+    b = Box(x + g0, y, max(0.0, g1 - g0), height)
     rot = float(el.get("rotation", 0) or 0)
     if rot:
         b = rotate_about(b, rot, x + w / 2.0, y + float(el.get("height", 0) or 0) / 2.0)
