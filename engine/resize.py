@@ -93,5 +93,8 @@ def _finalize(source, out, target):
         e.update(x=float(x), y=float(y), width=float(w), height=float(h))
         if e.get("type") == "text":
             e["font_size"] = max(1, int(num(e.get("font_size"), 12)))
+        for k, v in list(e.items()):
+            if hasattr(v, "item") and not isinstance(v, (str, bytes)):
+                e[k] = v.item()
         res.append(e)
     return dict(canvas=dict(width=int(TW), height=int(TH)), elements=res)

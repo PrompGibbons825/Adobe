@@ -87,7 +87,7 @@ def main():
     Y[:, 0] -= X[:, 2]  # residuals over the proportional anchor
     Y[:, 1] -= X[:, 3]
     Xt, Yt = X[~vm], Y[~vm]
-    vi = rng.choice(np.where(vm)[0], size=min(4000, vm.sum()), replace=False)
+    vi = rng.choice(np.where(vm)[0], size=min(1500, vm.sum()), replace=False)
     Xv, Yv = X[vi], Y[vi]
     keep = Xv[:, 0] < 0.5
     txt = Xv[:, 0] > 0.5
@@ -108,7 +108,7 @@ def main():
     best = ev(w, k)
     print("start", round(best, 4), flush=True)
     t0 = time.time()
-    for rnd in range(3):
+    for rnd in range(2):
         improved = False
         for kk in (5, 10, 20, 40):
             if kk != k:
@@ -134,6 +134,7 @@ def main():
     out = ROOT / "engine" / "learn" / "model.npz"
     # ship every training row (train + val families) with the fitted weights
     np.savez_compressed(out, X=X.astype(np.float16), Y=Y.astype(np.float16), w=w, k=np.array(k))
+    np.savez_compressed(out.with_name("pairs.npz"), pair=z["pair"], fam=z["fam"])
     print("wrote", out, out.stat().st_size)
 
 

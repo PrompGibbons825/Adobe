@@ -23,6 +23,10 @@ def load(path: Optional[Path] = None):
     if p not in _cache:
         z = np.load(p)
         _cache[p] = {k: (z[k].astype(np.float32) if z[k].dtype == np.float16 else z[k]) for k in z.files}
+        pz = Path(p).with_name("pairs.npz")
+        if pz.exists():
+            zp = np.load(pz)
+            _cache[p].update(pair=zp["pair"], fam=zp["fam"])
     return _cache[p]
 
 

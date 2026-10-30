@@ -14,29 +14,54 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
-_fm = None
+FONTS = ROOT / "brand_kit" / "fonts"
+_fonts = None  # normalized family -> [(weight, style, path)] in sorted file order
+
+# A self-contained copy of the lookup that brand_fonts.py + cr_renderer.fonts.FontManager do
+# (importing cr_renderer pulls in huggingface_hub, ~1-15 s): family title-cased with weight words
+# stripped, else "Montserrat", else the first family loaded; exact weight+style, else the
+# family's first file.
+_WEIGHTS = ("thin", "extralight", "light", "regular", "medium", "semibold", "bold", "extrabold", "black")
+
+
+def _norm_family(name: str) -> str:
+    name = name.replace("_", " ").title()
+    for w in (" Bold", " Regular", " Light", " Italic", " Medium"):
+        name = name.replace(w, "")
+    return name
+
+
+def _load_fonts():
+    global _fonts
+    if _fonts is None:
+        import re
+        _fonts = {}
+        for path in sorted(FONTS.glob("*")):
+            if path.suffix.lower() not in (".ttf", ".otf"):
+                continue
+            prefix, _, suffix = path.stem.partition("-")
+            family = re.sub(r"(?<!^)(?=[A-Z])", " ", prefix).strip()
+            suffix = suffix or "Regular"
+            italic = bool(re.search("italic", suffix, re.I))
+            wt = re.sub("italic", "", suffix, flags=re.I).strip().lower() or "regular"
+            wt = wt if wt in _WEIGHTS else "regular"
+            st = ("bolditalic" if wt == "bold" else "italic") if italic else ("bold" if wt == "bold" else "regular")
+            _fonts.setdefault(_norm_family(family), []).append((wt, st, path))
+    return _fonts
 
 
 def _font_manager():
-    global _fm
-    if _fm is None:
-        try:
-            from renderer.converter.brand_fonts import load_brand_font_manager
-            _fm = load_brand_font_manager(str(ROOT / "brand_kit" / "fonts"))
-        except Exception:  # noqa: BLE001
-            _fm = False
-    return _fm
+    try:
+        return bool(_load_fonts())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _weight_style(e: Dict[str, Any]) -> Tuple[str, str]:
     w = str(e.get("font_weight") or "regular").lower()
     bold = w in {"bold", "semibold", "extrabold", "black"}
     it = e.get("font_style") == "italic" or e.get("italic") is True
-    try:
-        from cr_renderer.fonts import FONT_WEIGHTS
-        if w not in FONT_WEIGHTS:
-            w = "regular"
-    except Exception:  # noqa: BLE001
+    if w not in _WEIGHTS:
         w = "regular"
     style = "bolditalic" if bold and it else "bold" if bold else "italic" if it else "regular"
     return w, style
@@ -45,8 +70,16 @@ def _weight_style(e: Dict[str, Any]) -> Tuple[str, str]:
 @lru_cache(maxsize=4096)
 def _typeface(family: str, weight: str, style: str):
     import skia
-    fm = _font_manager()
-    return skia.Typeface.MakeFromData(fm.lookup(family, weight, style))
+    fonts = _load_fonts()
+    fam = fonts.get(_norm_family(family)) or fonts.get("Montserrat") or next(iter(fonts.values()))
+    t = family.replace("_", " ").title()
+    if " Bold" in t:  # cr_renderer get_font_weight/style: a weight word in the family name wins
+        weight = "bold"
+        style = "bolditalic" if ("italic" in style or " Italic" in t) else "bold"
+    elif " Italic" in t:
+        style = "bolditalic" if weight == "bold" else "italic"
+    path = next((p for (w, s, p) in fam if w == weight and s == style), fam[0][2])
+    return skia.Typeface.MakeFromData(skia.Data.MakeFromFileName(str(path)))
 
 
 @lru_cache(maxsize=20000)
@@ -70,7 +103,6 @@ def _fallback_widths(size: float, text: str):
 def layout(e: Dict[str, Any], fs: float, width: float) -> Tuple[float, float, int]:
     """(max drawn line width, block height, n lines) for element e at font size fs in a box of
     `width`, exactly as the renderer will wrap and draw it."""
-    from renderer.converter.wrap import wrap_text
     text = str(e.get("content", ""))
     fam = str(e.get("font_family", "Montserrat"))
     weight, style = _weight_style(e)
@@ -143,3 +175,27 @@ def longest_word(e: Dict[str, Any], fs: float) -> float:
     for wd in words:
         best = max(best, natural_width(dict(e, content=wd), fs))
     return best
+
+
+def wrap_text(text, widths, max_width):
+    """Verbatim logic of renderer/converter/wrap.py (greedy, spaces only, in place)."""
+    if not text or max_width <= 0:
+        return text
+    chars = list(text)
+    line_width = 0.0
+    last_space_idx = None
+    for i, c in enumerate(chars):
+        if c == "\n":
+            line_width = 0.0
+            last_space_idx = None
+            continue
+        w = widths[i] if i < len(widths) else 0.0
+        if line_width + w > max_width and last_space_idx is not None:
+            chars[last_space_idx] = "\n"
+            line_width = sum(widths[j] for j in range(last_space_idx + 1, i + 1) if chars[j] != "\n")
+            last_space_idx = None
+        else:
+            line_width += w
+        if c == " ":
+            last_space_idx = i
+    return "".join(chars)

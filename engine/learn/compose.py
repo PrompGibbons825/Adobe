@@ -77,6 +77,30 @@ def find_units(els: List[Dict[str, Any]], bleed: List[bool], W: float, H: float)
     return list(units.values())
 
 
+REFLOW_DAR = 0.9
+MODE = {"transfer": "median", "beta": 0.5, "repair": True}
+_policy = None
+
+
+def _median_policy(X):
+    """The designers' median move per signed aspect-change bin (tools/learn_policy.py)."""
+    global _policy
+    if _policy is None:
+        import json
+        from pathlib import Path
+        _policy = json.loads(Path(__file__).with_name("policy.json").read_text())
+    c = _policy["centers"]
+    d = float(X[0, 14])
+    f = lambda key: float(np.interp(d, c, _policy[key]))  # noqa: E731
+    P = np.zeros((len(X), 6), np.float32)
+    P[:, 0], P[:, 1], P[:, 5] = X[:, 2], X[:, 3], X[:, 1]
+    t = X[:, 0] > 0.5
+    P[:, 2] = np.where(t, f("text_scale"), f("other_scale"))
+    P[:, 3] = np.where(t, f("text_ar"), 0.0)
+    P[:, 4] = np.where(t, f("fs"), 0.0)
+    return P
+
+
 def layout(source: Dict[str, Any], target: Dict[str, Any]) -> Dict[str, Any]:
     W = max(1.0, num(source["canvas"].get("width"), 1.0))
     H = max(1.0, num(source["canvas"].get("height"), 1.0))
@@ -89,9 +113,18 @@ def layout(source: Dict[str, Any], target: Dict[str, Any]) -> Dict[str, Any]:
         return dict(canvas=dict(width=int(TW), height=int(TH)), elements=out)
     s_geo = math.sqrt((TW * TH) / (W * H))
     X = element_features(dict(canvas=dict(width=W, height=H), elements=els), dict(width=TW, height=TH))
-    P = knn.predict_design(X)
-    P[:, 0] += X[:, 2]
-    P[:, 1] += X[:, 3]
+    if MODE["transfer"] == "median":
+        P = _median_policy(X)
+    elif MODE["transfer"] == "retrieve":
+        from . import retrieve
+        P, _ = retrieve.predict(X, MODE["beta"])
+    else:
+        P = knn.predict_design(X)
+        P[:, 0] += X[:, 2]
+        P[:, 1] += X[:, 3]
+    if MODE["transfer"] == "prop":
+        P[:, :5] = 0.0
+        P[:, 0], P[:, 1], P[:, 5] = X[:, 2], X[:, 3], X[:, 1]
 
     # 3. bleed: layers that cover the source canvas stay covering it
     bleed = [is_bleed(e, W, H) for e in els]
@@ -150,7 +183,11 @@ def layout(source: Dict[str, Any], target: Dict[str, Any]) -> Dict[str, Any]:
             want = max(want, min(fs0, floor))
             fsz[i] = int(max(1, want))
 
-    _resolve(els, out, boxes, fsz, fg_units, src, bleed, TW, TH, floor)
+    if not MODE["repair"]:
+        for i, b in boxes.items():
+            out[i].update(x=b[0], y=b[1], width=b[2], height=b[3])
+        return dict(canvas=dict(width=int(TW), height=int(TH)), elements=out)
+    _resolve(els, out, boxes, fsz, fg_units, src, bleed, TW, TH, floor, abs(math.log((TW / TH) / (W / H))))
     return dict(canvas=dict(width=int(TW), height=int(TH)), elements=out)
 
 
@@ -206,7 +243,23 @@ def _scale_unit(u, boxes, s, fsz):
             fsz[i] = max(1, int(fsz[i] * s))
 
 
-def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor):
+def _alpha(e):
+    a = num(e.get("opacity"), 1.0)
+    c = str(e.get("fill_color") or "")
+    if c.startswith("rgba("):
+        try:
+            a *= float(c[5:-1].split(",")[3])
+        except (ValueError, IndexError):
+            pass
+    return a
+
+
+def _decor(u, els):
+    """faint non-text layers (glows, bubbles): free to overlap, never pushed or packed"""
+    return all(els[i].get("type") != "text" and _alpha(els[i]) <= 0.5 for i in u)
+
+
+def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor, dar=0.0):
     margin = 0.03 * min(TW, TH)
     # text: settle font and box (singletons may reflow; texts in units keep the unit's box width)
     for u in units:
@@ -237,13 +290,17 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor):
             dy = TH / 2 - (b[1] + b[3] / 2)
         _shift(u, boxes, dx, dy)
 
+    if dar > REFLOW_DAR:
+        dec0 = [_decor(u, els) for u in units]
+        _pack(units, boxes, fsz, src_bb, set(), els, TW, TH, margin, grow=1.6)
     for k in range(len(units)):
         clamp(k)
     # collisions that the source did not have
     allowed = set()
+    dec = [_decor(u, els) for u in units]
     for a in range(len(units)):
         for b in range(a + 1, len(units)):
-            if _ioa(src_bb[a], src_bb[b]) > 0.05:
+            if dec[a] or dec[b] or _ioa(src_bb[a], src_bb[b]) > 0.05:
                 allowed.add((a, b))
     area = [src_bb[k][2] * src_bb[k][3] for k in range(len(units))]
     for it in range(60):
@@ -251,7 +308,9 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor):
         bbs = [_unit_bbox(u, boxes) for u in units]
         for a in range(len(units)):
             for b in range(a + 1, len(units)):
-                if (a, b) in allowed:
+                if dec[a] or dec[b]:
+                    continue
+                if (a, b) in allowed and _ioa(bbs[a], bbs[b]) <= _ioa(src_bb[a], src_bb[b]) + 0.1:
                     continue
                 v = _inter(bbs[a], bbs[b])
                 if v > wv:
@@ -279,6 +338,14 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor):
                 _scale_unit(units[st], boxes, 0.95, fsz)
             clamp(mv)
             clamp(st)
+    # still colliding: pack the units in reading order (the designer-transfer order), the
+    # largest uniform scale that fits, rows or columns (one owner: this only re-places)
+    bbs = [_unit_bbox(u, boxes) for u in units]
+    left = sum(_inter(bbs[a], bbs[b]) for a in range(len(units)) for b in range(a + 1, len(units))
+               if not (dec[a] or dec[b]) and ((a, b) not in allowed or _ioa(bbs[a], bbs[b]) > _ioa(src_bb[a], src_bb[b]) + 0.1))
+    tot = sum(b[2] * b[3] for b in bbs) or 1.0
+    if left > 0.02 * tot:
+        _pack(units, boxes, fsz, src_bb, allowed, els, TW, TH, margin)
     # write back, hard-clamped to the canvas
     for u in units:
         for i in u:
@@ -296,3 +363,73 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor):
                 out[i]["font_size"] = int(fs)
             if els[i].get("corner_radius") and src[i][2] > 0:
                 out[i]["corner_radius"] = num(els[i]["corner_radius"]) * (w / src[i][2])
+
+
+def _pack(units, boxes, fsz, src_bb, allowed, els, TW, TH, margin, grow=1.0):
+    n = len(units)
+    items = [k for k in range(n) if not _decor(units[k], els)]
+    if len(items) < 2:
+        return
+    # reading order of the source
+    items.sort(key=lambda k: (round((src_bb[k][1] + src_bb[k][3] / 2) / max(1e-6, max(b[1] + b[3] for b in src_bb.values())) * 6),
+                              src_bb[k][0]))
+    sz = {k: _unit_bbox(units[k], boxes)[2:] for k in items}
+    gap = margin * 0.6
+    best = None
+    for rows in (True, False):
+        for L in range(1, min(4, len(items)) + 1):
+            # split items into L consecutive lines of balanced main-axis length
+            main = [sz[k][0] if rows else sz[k][1] for k in items]
+            total = sum(main)
+            lines, cur, acc = [], [], 0.0
+            for k, m in zip(items, main):
+                if cur and acc + m > total / L * 1.15 and len(lines) < L - 1:
+                    lines.append(cur)
+                    cur, acc = [], 0.0
+                cur.append(k)
+                acc += m
+            lines.append(cur)
+            if rows:
+                need_w = max(sum(sz[k][0] for k in ln) for ln in lines)
+                need_h = sum(max(sz[k][1] for k in ln) for ln in lines)
+                gw = max(len(ln) - 1 for ln in lines) * gap
+                gh = (len(lines) - 1) * gap
+            else:
+                need_h = max(sum(sz[k][1] for k in ln) for ln in lines)
+                need_w = sum(max(sz[k][0] for k in ln) for ln in lines)
+                gh = max(len(ln) - 1 for ln in lines) * gap
+                gw = (len(lines) - 1) * gap
+            s = min((TW - 2 * margin - gw) / max(1e-6, need_w), (TH - 2 * margin - gh) / max(1e-6, need_h), grow)
+            if best is None or s > best[0] + 1e-6:
+                best = (s, rows, lines)
+    s, rows, lines = best
+    if s <= 0:
+        return
+    for k in items:
+        if abs(s - 1) > 1e-3:
+            _scale_unit(units[k], boxes, s, fsz)
+        sz[k] = _unit_bbox(units[k], boxes)[2:]
+    if rows:
+        block_h = sum(max(sz[k][1] for k in ln) for ln in lines) + (len(lines) - 1) * gap
+        y = (TH - block_h) / 2
+        for ln in lines:
+            lh = max(sz[k][1] for k in ln)
+            lw = sum(sz[k][0] for k in ln) + (len(ln) - 1) * gap
+            x = (TW - lw) / 2
+            for k in ln:
+                b = _unit_bbox(units[k], boxes)
+                _shift(units[k], boxes, x - b[0], y + (lh - b[3]) / 2 - b[1])
+                x += sz[k][0] + gap
+            y += lh + gap
+    else:
+        block_w = sum(max(sz[k][0] for k in ln) for ln in lines) + (len(lines) - 1) * gap
+        x = (TW - block_w) / 2
+        for ln in lines:
+            lw = max(sz[k][0] for k in ln)
+            lh = sum(sz[k][1] for k in ln) + (len(ln) - 1) * gap
+            y = (TH - lh) / 2
+            for k in ln:
+                b = _unit_bbox(units[k], boxes)
+                _shift(units[k], boxes, x + (lw - b[2]) / 2 - b[0], y - b[1])
+                y += sz[k][1] + gap
+            x += lw + gap

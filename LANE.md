@@ -44,3 +44,19 @@ Paradigm: learn the resize from Crello designers. Branch `lane/learn` from `upst
   positions across designs is worse than not moving). Switched to residuals over the anchor.
 - 06:25Z walking skeleton end to end; 60 sample tasks (3 inputs x 20 formats): 1 fault
   (headline at 5 px on 320x50), p95 1.5 s.
+- 06:30Z whole-layout retrieval (match the nearest Crello composition one-to-one, copy its
+  designer's layout): dev IoU 0.217 vs proportional anchor 0.407 (150 dev tasks, not the
+  tournament set). Composition matching across different families transfers badly.
+- 06:33Z kNN weight fit (coordinate descent, 1500 held-out rows): 0.392 -> 0.409, still below the
+  anchor 0.442. Ridge on 74 aspect-interaction features: 0.388. Oracle: true positions give 0.79,
+  true sizes 0.47, so the signal is in positions, and it is not predictable from geometry features.
+  **Finding: the designers' median move is the proportional anchor** (median residual 0 for every
+  target), with font and box scale = sqrt(area ratio) x a learned per-aspect-change factor
+  (+0.40 log for > 7x wider, -0.40 for > 7x taller; `engine/learn/policy.json`, fitted on 105k rows).
+- 06:35Z engine = learned median policy + units + text fit + repair; reflow (pack units in source
+  reading order into rows/columns, largest scale) when the aspect changes > 2.5x (|log| > 0.9).
+  L2 sample 1600x400 now reads as visual | product | copy+CTA. Dev IoU 0.357 (reflow costs
+  closeness to the designer but removes the scatter/collisions).
+- 06:37Z lane_check: 125 tasks (60 sample x formats + 65 Crello), 4 with faults, all legibility on
+  extreme strips (type < 6 px on 320x50, 300x250, 728x90 for the 17-element L3) plus one Crello
+  text overflow. p95 0.1 s (warm).
