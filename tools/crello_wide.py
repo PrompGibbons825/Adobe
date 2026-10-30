@@ -3,6 +3,9 @@
     .venv/bin/python -m tools.crello_wide index   # every family with >=2 canvas sizes -> families.jsonl
     .venv/bin/python -m tools.crello_wide sample  # stratified dev sample (<=400 families) -> sample.json
     .venv/bin/python -m tools.crello_wide fetch   # images for the sample only -> cases/ + assets/
+    .venv/bin/python -m tools.crello_wide fetch-extra --out DIR --exclude FILE [--shard i --nshards N | --assemble]
+        # every family with >=3 sizes that is not in FILE (family ids) and not already in cases/ -> DIR/<fam>.json + DIR/assets
+        # (run the shards on the fleet, pull DIR/parts and DIR/assets, then --assemble; needs pyarrow, fsspec, aiohttp)
 
 Data: ``cyberagent/crello`` v5, CDLA-Permissive-2.0. Index = geometry and metadata of all
 ~23k templates, no pixels. A *family* is the same design (same sorted element types + text) at
@@ -222,6 +225,70 @@ def cmd_fetch(a):
     print("wrote", kept, "family cases,", round(size / 1e6), "MB")
 
 
+def _extra_picks(a):
+    """(family, source, targets) for every family with >= a.min_sizes sizes, minus the excluded
+    ids (one per line in a.exclude) and the families already in cases/ or in a.out."""
+    skip = set(Path(a.exclude).read_text().split()) if a.exclude else set()
+    skip |= {p.stem for p in (OUT / "cases").glob("*.json")} | {p.stem for p in Path(a.out).glob("*.json")}
+    picks = []
+    for f in _load_fams():
+        if f["n_sizes"] >= a.min_sizes and f["fam"] not in skip:
+            src, tg = _pick_pair(f, random.Random(f["fam"]))
+            picks.append((f, src, tg))
+    return picks
+
+
+def cmd_fetch_extra(a):
+    out = Path(a.out)
+    parts, assets = out / "parts", out / "assets"
+    parts.mkdir(parents=True, exist_ok=True)
+    assets.mkdir(parents=True, exist_ok=True)
+    picks = _extra_picks(a)
+    if a.assemble:
+        kept = 0
+        for f, s, tg in picks:
+            ids = [s["id"]] + [t["id"] for t in tg]
+            if not all((parts / f"{i}.json").exists() for i in ids):
+                continue
+            d = [json.loads((parts / f"{i}.json").read_text()) for i in ids]
+            (out / f"{f['fam']}.json").write_text(json.dumps(dict(
+                family=f["fam"], photo=f["photo"], source_id=ids[0], target_ids=ids[1:], source=d[0], targets=d[1:])))
+            kept += 1
+        print(f"assembled {kept} of {len(picks)} families, {sum(len(t) for _, _, t in picks)} tasks wanted -> {out}")
+        return
+    _use_cache()
+    feats = crello.features()
+    tnames, aligns, fonts = (crello._names(feats, k) for k in ("type", "text_align", "font"))
+    need = {}
+    for f, s, tg in picks:
+        for m in [s] + tg:
+            need.setdefault(tuple(m["loc"]), set()).add(m["id"])
+    keys = sorted(need)[a.shard::a.nshards]
+    print(f"shard {a.shard}/{a.nshards}: {len(keys)} row groups of {len(need)}, {len(picks)} families", flush=True)
+
+    def one(key):
+        for _ in range(4):
+            try:
+                t = crello._open(*key[:2]).read_row_group(key[2], columns=crello.LIGHT + ["image"]).to_pylist()
+                break
+            except Exception as e:  # noqa: BLE001
+                print("retry", key, repr(e)[:100], flush=True)
+        else:
+            return 0
+        n = 0
+        for r in t:
+            if r["id"] in need[key] and not (parts / f"{r['id']}.json").exists():
+                (parts / f"{r['id']}.json").write_text(json.dumps(crello._to_chameleon(r, tnames, aligns, fonts, assets)))
+                n += 1
+        return n
+
+    done = 0
+    with ThreadPoolExecutor(a.threads) as ex:
+        for n in ex.map(one, keys):
+            done += n
+            print("designs", done, flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -230,8 +297,16 @@ def main():
     p.add_argument("--n", type=int, default=400)
     p.add_argument("--seed", type=int, default=7)
     sub.add_parser("fetch")
+    p = sub.add_parser("fetch-extra")
+    p.add_argument("--out", required=True)
+    p.add_argument("--exclude")
+    p.add_argument("--min-sizes", type=int, default=3)
+    p.add_argument("--shard", type=int, default=0)
+    p.add_argument("--nshards", type=int, default=1)
+    p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--assemble", action="store_true")
     a = ap.parse_args()
-    {"index": cmd_index, "sample": cmd_sample, "fetch": cmd_fetch}[a.cmd](a)
+    {"index": cmd_index, "sample": cmd_sample, "fetch": cmd_fetch, "fetch-extra": cmd_fetch_extra}[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@
     python tools/fleet.py run --tree X --shards N -- <cmd with {shard} and {nshards}>
     python tools/fleet.py exec -- <cmd>                           # same command on every host, in sequence
     python tools/fleet.py pull <remote_dir> <local_dir>           # merge <remote_dir> of every host into <local_dir>
+    python tools/fleet.py push <local_dir> <remote_dir>           # copy <local_dir> to <remote_dir> on every host
     python tools/fleet.py down [--purge]                          # terminate everything tagged (+ key pair, SG)
 
 Plain ssh and rsync via subprocess; the aws CLI only finds the hosts. Stdlib only.
@@ -144,8 +145,9 @@ def cmd_run(a):
         f.close()
         if rc:
             failed.append(i)
-            print(f"shard {i} on {h['id']} FAILED rc={rc}: tail of {logs / f'shard-{i:03d}.log'}")
-            print("   " + "\n   ".join((logs / f"shard-{i:03d}.log").read_text().splitlines()[-5:]))
+            print(f"shard {i} on {h['id']} FAILED rc={rc}: {logs / f'shard-{i:03d}.log'}")
+            if len(failed) <= 2:
+                print("   " + "\n   ".join((logs / f"shard-{i:03d}.log").read_text().splitlines()[-5:]))
     print(f"{len(jobs) - len(failed)}/{len(jobs)} shards ok in {time.time() - t0:.0f}s; logs {logs}")
     sys.exit(1 if failed else 0)
 
@@ -174,6 +176,17 @@ def cmd_pull(a):
 
     par(one, hosts())
     print(f"pulled {rd} from all hosts into {a.local_dir}")
+
+
+def cmd_push(a):
+    rd = a.remote_dir.rstrip("/")
+
+    def one(h):
+        subprocess.run(ssh_cmd(h, f"mkdir -p {rd}"), check=True)
+        subprocess.run(["rsync", "-a", "-e", rsync_e(), f"{a.local_dir.rstrip('/')}/", f"ubuntu@{h['ip']}:{rd}/"], check=True)
+
+    par(one, hosts())
+    print(f"pushed {a.local_dir} to {rd} on all hosts")
 
 
 def cmd_down(a):
@@ -209,10 +222,13 @@ def main():
     p = sub.add_parser("pull")
     p.add_argument("remote_dir")
     p.add_argument("local_dir")
+    p = sub.add_parser("push")
+    p.add_argument("local_dir")
+    p.add_argument("remote_dir")
     p = sub.add_parser("down")
     p.add_argument("--purge", action="store_true")
     a = ap.parse_args()
-    {"hosts": cmd_hosts, "sync": cmd_sync, "run": cmd_run, "exec": cmd_exec, "pull": cmd_pull, "down": cmd_down}[a.sub](a)
+    {"hosts": cmd_hosts, "sync": cmd_sync, "run": cmd_run, "exec": cmd_exec, "pull": cmd_pull, "push": cmd_push, "down": cmd_down}[a.sub](a)
 
 
 if __name__ == "__main__":
