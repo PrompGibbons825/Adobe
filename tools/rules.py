@@ -24,6 +24,7 @@ output with and without its hidden texts and reports any that still paint.
 from __future__ import annotations
 
 import math
+import os
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -140,6 +141,29 @@ def new_text_overlaps(elements, source_elements, deliberate: float = 0.15, slack
         if f0 < deliberate and f > f0 + slack:
             out.append((a, b, area, f))
     return out
+
+
+# Which text model the promise checks use. "renderer" (fundamentals) is engine-independent and
+# pixel-pinned (tests/conformance); "engine" is the incumbent's own engine.smart.textfit, kept as
+# the default where it exists so floors measured before 2026-10-30 stay comparable. Set
+# CHAMELEON_RULES_MODEL=renderer to judge any tree by the renderer; trees without engine/smart
+# (clean-room engines) always use it. L0 audit, 2026-10-30: the renderer model finds real
+# collisions the engine model misses (stress --seed 1 #70, #173: 7 and 34 px of shared ink).
+RULES_MODEL = os.environ.get("CHAMELEON_RULES_MODEL", "engine")
+if RULES_MODEL == "engine":
+    try:
+        from engine.smart.analyze import normalize as _engine_normalize
+        from engine.smart.textfit import drawn_box as _engine_drawn_box, new_text_overlaps as _engine_overlaps
+    except ImportError:
+        RULES_MODEL = "renderer"
+if RULES_MODEL == "engine":
+    def drawn_box(e: dict) -> Box:  # noqa: F811  the incumbent's model (see RULES_MODEL)
+        b = _engine_drawn_box(e)
+        return Box(b.x, b.y, b.w, b.h)
+
+    def new_text_overlaps(elements, source_elements, deliberate: float = 0.15, slack: float = 0.02):  # noqa: F811
+        src_norm = [_engine_normalize(e, i) for i, e in enumerate(source_elements)]
+        return _engine_overlaps(elements, src_norm, deliberate, slack)
 
 
 def _visible_text(e: dict) -> bool:
