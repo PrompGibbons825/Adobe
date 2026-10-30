@@ -45,6 +45,10 @@ def _candidates(ctx, model):
         if sev >= math.log(1.15):
             from .layout import tmpl_fill
             yield 0.0, lambda: tmpl_fill(ctx, model)
+        if sev >= math.log(1.5):
+            from .layout import tmpl_bgturn
+            for cw in (True, False):
+                yield 0.0, lambda cw=cw: tmpl_bgturn(ctx, model, cw)
     # turning the design is for real strip conversions only (a skyscraper into
     # a leaderboard, ~30x): a 2:1 portrait into a 1:2 landscape (4x) is an
     # ordinary orientation change and keeps the design upright
@@ -158,7 +162,42 @@ def _build(source, target, P):
             if ls and el.get("font_size"):
                 e["letter_spacing"] = round(ls * e["font_size"] / float(el["font_size"]), 3)
         out.append(e)
+    _fit_lines(out, target["width"], target["height"])
     return {"canvas": {"width": target["width"], "height": target["height"]}, "elements": out}
+
+
+def _fit_lines(els, W, H):
+    """Last guard, in the fonts the renderer will really use: a line wider than
+    its box (a font wider than the source's, a kept line break, tracking) would
+    be drawn past the box and can leave the canvas. The box widens around its
+    alignment where that stays on the canvas and clear of other copy; otherwise
+    the type comes down until the line fits."""
+    from . import textfit as tf
+    from .analyze import norm_rot
+    texts = [e for e in els if e["type"] == "text" and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1]
+    for e in texts:
+        m = tf.measure(e, e["font_size"], e["width"])
+        need = max(m["width"], m["word_w"])
+        if need <= e["width"] + 1:
+            continue
+        a = e.get("text_align", "left")
+        x = e["x"] if a == "left" else e["x"] + e["width"] - need if a == "right" else e["x"] + (e["width"] - need) / 2
+        x = min(max(x, 0.0), W - need)
+        h = max(e["height"], m["height"])
+        clear = need <= W and not any(
+            o is not e and min(x + need, o["x"] + o["width"]) - max(x, o["x"]) > 0
+            and min(e["y"] + h, o["y"] + o["height"]) - max(e["y"], o["y"]) > 0 for o in texts)
+        if clear:
+            e["x"], e["width"] = round(x, 2), round(need + 1, 2)
+            continue
+        fs0, ls0 = e["font_size"], float(e.get("letter_spacing", 0) or 0)
+        for fs in range(fs0 - 1, 0, -1):
+            m = tf.measure(e, fs, e["width"])          # tracking scales with the type
+            if max(m["width"], m["word_w"]) <= e["width"] + 1:
+                break
+        e["font_size"] = fs
+        if ls0:
+            e["letter_spacing"] = round(ls0 * fs / fs0, 3)
 
 
 def _fallback(source, target):
@@ -262,6 +301,32 @@ def _order_agree(a, b):
             n += 1
             ok += pos[ids[x]] < pos[ids[y]]
     return ok / n if n else 1.0
+
+
+# What counts as something wrong with a layout. The other terms (share of the
+# canvas, prominence, balance) are taste: they reward big type and even spread,
+# which is no reason to give up the designer's own arrangement.
+DEFECTS = ("dropped", "readability", "faces", "eyes", "subject_hidden", "picture_cover", "reshape",
+           "arrangement", "collisions", "busy_bg", "contrast", "subject_relation")
+SAME_MARGIN = 3.0   # defect points a rebuilt layout must save to replace the same design (fades with the change)
+
+
+def _prefer_same(pool, fade):
+    """The best same-design layout outranks the rebuilt ones unless they have
+    clearly fewer defects."""
+    def defects(c):
+        return sum(c[3].get(k, 0.0) for k in DEFECTS)
+    same = [c for c in pool if c[5]["template"].startswith("same-")]
+    if not same or fade <= 0:
+        return pool
+    top = max(pool, key=lambda c: c[0])
+    pick = max(same, key=lambda c: (round(defects(c) / 2), c[0]))
+    if pick is top or defects(pick) < max(defects(c) for c in pool if c is not pick) - SAME_MARGIN * fade:
+        return pool
+    if pick[3].get("readability", 0.0) < top[3].get("readability", 0.0) - 1.0:
+        return pool                     # faithful, but not at the cost of the words
+    lifted = (tuple(top[0][:-1]) + (top[0][-1] + 1.0,),) + pick[1:]
+    return [lifted if c is pick else c for c in pool]
 
 
 def _read_check(source, target, pool):
@@ -437,6 +502,8 @@ def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, 
             return _fallback(source, target_canvas)
         if DEBUG:
             print(f"  -> {best_meta['template']} score={best_s:.2f}")
+        if READ_CHECK:
+            pool = _prefer_same(pool, _fade(Ctx(best_model, target_canvas)))
         if READ_CHECK and len(pool) > 1:
             best, best_s, best_br, best_model, best_meta = _read_check(source, target_canvas, pool)
         # finishing touch on the chosen layout only (it never changes which

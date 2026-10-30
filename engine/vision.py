@@ -178,7 +178,8 @@ _ORIENT_LABELS = ["a photo of a person", "a photo of people", "a portrait of a f
                   "a human hand", "a photo of a building", "architecture or a city street",
                   "a room interior", "a landscape with sky",
                   "a flower", "a product or object", "food", "an abstract texture or pattern",
-                  "a plant or leaves"]
+                  "a plant or leaves", "products laid out flat, seen from above",
+                  "a marble or stone surface"]
 _ORIENT_UPRIGHT = 8          # the first eight labels have a top and a bottom
 _ORIENT_T = None
 

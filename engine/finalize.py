@@ -231,6 +231,8 @@ def _turned_info(info, k):
 def place_bg(ctx, P, unit, model=None):
     el = unit.els[0]
     W, H = ctx.W, ctx.H
+    if el["id"] in getattr(P, "bleed", ()) and "rotation" in P.props.get(el["id"], {}):
+        return                  # the layout already turned and placed this picture
     info = saliency.analyze(el.get("asset_id") or "") if el["type"] == "image" else None
     if info is None:
         P.set(el["id"], x=0, y=0, width=W, height=H)

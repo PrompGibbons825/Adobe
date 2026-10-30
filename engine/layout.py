@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from .analyze import norm_rot
 from .blocks import GroupBlock, ImageBlock, Placed, TextBlock, img_vis_frac, make_block
 from . import saliency
@@ -1544,22 +1546,36 @@ def _fill_rect(e, sx, sy):
     return (e["x"] * sx, e["y"] * sy, (e["x"] + e["width"]) * sx, (e["y"] + e["height"]) * sy)
 
 
+def _inside(a, b):
+    m = 0.02 * max(b[2] - b[0], b[3] - b[1])        # a box may stand a hair past the shape
+    return a[0] >= b[0] - m and a[1] >= b[1] - m and a[2] <= b[2] + m and a[3] <= b[3] + m
+
+
 def _is_surface(e, Ws, Hs):
     from .analyze import _fills_box
     return e["type"] != "text" and _fills_box(e) and e["width"] * e["height"] >= 0.08 * Ws * Hs \
         and min(e["width"], e["height"]) >= 0.05 * min(Ws, Hs)
 
 
-def _set_texts(texts, k, sx, sy, W, H, holders, keep_clear=()):
+def _copy_centre(e):
+    m = tf.measure(e, max(1, int(e["font_size"])), e["width"])
+    return e["x"] + e["width"] / 2, e["y"] + m["height"] / 2
+
+
+def _set_texts(texts, k, sx, sy, W, H, holders, keep_clear=(), framed=None):
     """Lay every text out at type scale k. Returns {id: (props, vis)} or None.
-    keep_clear: (box, text ids allowed on it) that no other text may touch."""
+    keep_clear: (box, text ids allowed on it) that no other text may touch.
+    framed: {id: place} for copy inside an outline shape: it keeps its lines and
+    grows with the shape, as one piece with it."""
+    framed = framed or {}
     out = {}
     for e in texts:
         fs = max(1, int(e["font_size"] * k))
-        w = min(W, e["width"] * sx)
+        place = framed.get(e["id"])
+        w = min(W, e["width"] * (k if place else sx))
         tracked = float(e.get("letter_spacing", 0) or 0) > 0.15 * float(e["font_size"])
         flat = " ".join(str(tf.flow(e).get("content", e["content"])).split()) \
-            if sx > 1.3 * sy and not tracked else tf.flow(e)["content"]       # spaced-out display lines keep their breaks
+            if sx > 1.3 * sy and not tracked and not place else tf.flow(e)["content"]       # spaced-out display lines keep their breaks
         e2 = dict(e, content=flat)
         hr = holders.get(e["id"])
         if hr is not None:
@@ -1567,7 +1583,9 @@ def _set_texts(texts, k, sx, sy, W, H, holders, keep_clear=()):
         m = tf.measure(e2, fs, w)
         if m["word_w"] > w or m["width"] > w + 1:     # tracking counts: a line never leaves its box
             return None
-        cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
+        # the copy's own centre: a box can be taller than its lines
+        cx, cy = _copy_centre(e)
+        cx, cy = place(cx, cy, k) if place else (cx * sx, cy * sy)
         x, y = cx - w / 2, cy - m["height"] / 2
         if hr is not None:
             x = min(max(x, hr[0]), hr[2] - w)
@@ -1678,10 +1696,28 @@ def tmpl_fill(ctx, model):
         cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
         return _rot_box(cx - e["width"] * k_ / 2, cy - e["height"] * k_ / 2, e["width"] * k_, e["height"] * k_, e.get("rotation", 0))
 
+    # an outline shape around copy (a see-through hexagon, a thin frame) and
+    # what sits in it are one piece: they grow together about the shape's centre
+    frames = [e for e in els if e["type"] == "image" and e not in surfaces
+              and (saliency.analyze(e.get("asset_id") or "") or {"opaque_frac": 1})["opaque_frac"] < 0.6
+              and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1 and e["width"] * e["height"] >= 0.08 * Ws * Hs
+              and any(_inside(_box(t), _box(e)) for t in upright)]
+    framed = {}
+    for f in sorted(frames, key=lambda e: -e["width"] * e["height"]):
+        fx, fy = f["x"] + f["width"] / 2, f["y"] + f["height"] / 2
+        def place(x, y, k_, fx=fx, fy=fy):
+            return fx * sx + (x - fx) * k_, fy * sy + (y - fy) * k_
+        for e in els:
+            if e is not f and e not in surfaces and _inside(_box(e), _box(f)):
+                framed[e["id"]] = place
+    marks = [e for e in marks if e["id"] not in framed]
+
     def attempt(k_):
+        if any(f["width"] * k_ > W or f["height"] * k_ > H for f in frames):
+            return None
         return _set_texts(upright, k_, sx, sy, W, H, holders,
                           keep + [(mark_box(e, k_), clear_of(_box(e))) for e in marks]
-                          + [(turned_box(e, k_), set()) for e in turned])
+                          + [(turned_box(e, k_), set()) for e in turned], framed)
     lo = s
     best = attempt(lo)
     if best is None:
@@ -1703,8 +1739,10 @@ def tmpl_fill(ctx, model):
         if e["id"] in done:
             continue
         cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
+        if e["id"] in framed:
+            cx, cy = framed[e["id"]](e["x"] + e["width"] / 2, e["y"] + e["height"] / 2, k)
         w, h = e["width"] * k, e["height"] * k
-        long_thin = max(e["width"], e["height"]) > 6 * max(1e-6, min(e["width"], e["height"]))
+        long_thin = e["id"] not in framed and max(e["width"], e["height"]) > 6 * max(1e-6, min(e["width"], e["height"]))
         if e["type"] == "text":
             fs = max(1, int(e["font_size"] * k))
             P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h, font_size=fs, content=e["content"])
@@ -1718,6 +1756,94 @@ def tmpl_fill(ctx, model):
         P.vis[e["id"]] = _rot_box(cx - w / 2, cy - h / 2, w, h, e.get("rotation", 0))
     P.same = True
     P.meta = {"template": "same-fill", "t": k / ctx.t_star if ctx.t_star else 1.0}
+    return P
+
+
+def _has_words(e):
+    """A picture with words drawn in it reads in one direction only."""
+    from PIL import Image
+    from . import vision
+    p = saliency.asset_file(e.get("asset_id") or "")
+    try:
+        got = vision.read_text(Image.open(p)) if p else None
+    except Exception:
+        return True
+    return bool(got and len([w for w in got[0] if len(w) > 2]) >= 2)
+
+
+def tmpl_bgturn(ctx, model, cw):
+    """The same design with its background photo turned a quarter: for a picture
+    with no natural up whose subject runs along one end, so the turn puts the
+    subject down one side of the new canvas and opens the calm part beside it.
+    The copy moves there as one block, keeping its arrangement."""
+    from .analyze import _box, norm_rot
+    W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
+    els = [e for u in model["units"] if u.role not in SAME_ROLES_SKIP for e in _uels(u)]
+    photos = [e for e in model["els"].values() if _is_photo(e) and e["width"] * e["height"] >= 0.6 * Ws * Hs]
+    if not photos:
+        return None
+    bg = max(photos, key=lambda e: e["width"] * e["height"])
+    r0 = float(bg.get("rotation", 0) or 0)
+    q0 = int(round(r0 / 90))
+    if abs(r0 - q0 * 90) > 1 or _keeps_upright(bg) or _has_words(bg):
+        return None
+    info = saliency.analyze(bg.get("asset_id") or "")
+    r1 = r0 + (90 if cw else -90)
+    busy = np.rot90(np.asarray(info["busy"], float) + np.asarray(info["sal"], float) / 255.0, -int(round(r1 / 90)))
+    wide = W >= H
+    prof = busy.mean(axis=0 if wide else 1)      # energy along the new long side
+    n = len(prof)
+    near, far = prof[: n // 2].mean(), prof[n // 2:].mean()
+    if max(near, far) < 1.5 * min(near, far):
+        return None                              # no calm end
+    calm_first = near < far
+    if not calm_first:
+        prof = prof[::-1]
+    hot = np.nonzero(prof > 0.5 * prof.max())[0]
+    free = hot[0] / n if len(hot) else 0.0       # the share of the long side that is calm
+    if free < 0.45:
+        return None
+    # the picture covers the canvas, at its own proportions
+    dw, dh = (bg["height"], bg["width"]) if q0 % 2 == 0 else (bg["width"], bg["height"])  # turned size
+    c = max(W / dw, H / dh)
+    across = busy.mean(axis=1 if wide else 0)
+    span, room = (H, dh * c) if wide else (W, dw * c)
+    keep = max(1, int(len(across) * span / room))
+    start = int(np.argmax(np.convolve(across, np.ones(keep), "valid")))   # the richest window across
+    off = -(start / len(across)) * room
+    P = Placed()
+    bw, bh = bg["width"] * c, bg["height"] * c
+    cx, cy = (W / 2, off + room / 2) if wide else (off + room / 2, H / 2)
+    P.set(bg["id"], x=cx - bw / 2, y=cy - bh / 2, width=bw, height=bh, rotation=r1 % 360)
+    P.vis[bg["id"]] = (0.0, 0.0, float(W), float(H))
+    P.bleed = {bg["id"]}
+    L = W if wide else H
+    fr = (0.0, 0.0, W * free, float(H)) if wide else (0.0, 0.0, float(W), H * free)
+    if not calm_first:
+        fr = (W - fr[2], 0.0, float(W), float(H)) if wide else (0.0, H - fr[3], float(W), float(H))
+    texts = [e for e in els if e["type"] == "text"]
+    if not texts:
+        return None
+    bs = [_box(t) for t in texts]
+    x0, y0, x1, y1 = min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs)
+    k = 0.86 * min((fr[2] - fr[0]) / (x1 - x0), (fr[3] - fr[1]) / (y1 - y0))
+    mx, my = (fr[0] + fr[2]) / 2, (fr[1] + fr[3]) / 2
+    sx, sy = W / Ws, H / Hs
+    for e in els:
+        if e is bg:
+            continue
+        if _is_surface(e, Ws, Hs) or e["width"] * e["height"] >= 0.6 * Ws * Hs:     # the plate under the photo
+            P.set(e["id"], x=e["x"] * sx, y=e["y"] * sy, width=e["width"] * sx, height=e["height"] * sy, fit="cover")
+            continue
+        ecx, ecy = e["x"] + e["width"] / 2, e["y"] + e["height"] / 2
+        nx, ny = mx + (ecx - (x0 + x1) / 2) * k, my + (ecy - (y0 + y1) / 2) * k
+        w, h = e["width"] * k, e["height"] * k
+        P.set(e["id"], x=nx - w / 2, y=ny - h / 2, width=w, height=h)
+        if e["type"] == "text":
+            P.set(e["id"], font_size=max(1, int(e["font_size"] * k)))
+        P.vis[e["id"]] = _rot_box(nx - w / 2, ny - h / 2, w, h, e.get("rotation", 0))
+    P.same = True
+    P.meta = {"template": "same-bgturn", "t": k / ctx.t_star if ctx.t_star else 1.0}
     return P
 
 

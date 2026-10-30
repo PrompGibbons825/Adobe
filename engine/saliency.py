@@ -18,7 +18,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter
 
-ASSETS_DIR = Path(os.environ.get("CHAMELEON_ASSETS_DIR", "brand_kit/assets"))
+ASSETS_DIR = Path(os.environ.get("CHAMELEON_ASSETS_DIR")
+                  or (Path(os.environ["CHAMELEON_BRAND_KIT"]) / "assets" if os.environ.get("CHAMELEON_BRAND_KIT")
+                      else "brand_kit/assets"))
 _WORK = 128  # analysis resolution (long side)
 # the learned subject mask (engine/vision.py): off until the critic can use it
 # without flipping unrelated layout choices (see review/h2h_sprint7pm)
