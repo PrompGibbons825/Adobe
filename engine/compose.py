@@ -473,6 +473,8 @@ def plan(src, tgt):
 def choose(ctx, weights=None):
     best = None
     pool = ctx["cands"]
+    if not pool:
+        return None
     legible = [L for L in pool if L.feat["tiny"] == 0]
     if legible:  # legibility is a promise, not a trade-off: only layouts that keep every text at the floor compete
         pool = legible

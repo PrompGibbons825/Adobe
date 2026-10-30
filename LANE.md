@@ -36,3 +36,9 @@
 - Parity panel (tools.bench parity, 60 tiles of the tournament set, claude-sonnet-5-5 judge, commit before last bg tweak): win rate vs designer 0.367 (CI 0.26-0.48), share >= designer 0.43. Same panel for incumbents main 0.275, sprint 0.267.
 - Docker (--cpus 2 --memory 3g --network none, input/): 3/3 OK, exit 0. Stress: 1200 runs (300 designs x 4 formats) 0 faults on the first head; 200 runs 0 on the latest. Deterministic (md5 equal across two runs). CPU p95 about 1 s/target.
 - Weakest: extreme strips with 10+ elements (text below 10px, nothing may be dropped); strongest: near-square and wide-from-square, where pin keeps the source composition.
+
+## 08:35Z round 2 (coordinator asks)
+- Vendored L0 fundamentals into engine/fundamentals/. fundamentals.check on the 160 tournament tiles + 300 stress tiles: 0 hard faults; lab/check.py missed none. Remaining findings are promise-level only.
+- Legibility: floor = fundamentals small_print_floor(W,H) (not a constant). Mechanism: (a) floor variants raise copy to the floor and shrink visuals (0.55, 0.3), groups scale up to reach it; (b) candidates with every text at the floor are the only ones that compete; (c) if none exist, image+copy groups dissolve so copy reflows alone. Result: small-print tiles 24 -> 2, bench promise tiles 25 -> 3, audit 29 -> 7; cost: sim_mean 0.358 -> 0.341.
+- Accent shapes overlapping copy (>=25%) merge into that copy's unit.
+- Docker (--cpus 2 --memory 3g --network none): OK exit 0. Stress 400 runs 0 faults.
