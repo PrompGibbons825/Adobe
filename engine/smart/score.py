@@ -113,6 +113,9 @@ def score_plans(plans: List[Plan], d: Design, ctx: Ctx) -> None:
     src_cov = sum(it.src_box.area for it in d.items if it.role != "missing") / max(1.0, d.W * d.H)
     for p in plans:
         p.score, p.breakdown = _score(p, best, d, ctx, src_cov)
+    from . import ranker  # the learned term: what designers did, one bounded term of this score
+
+    ranker.add_term(plans, d, ctx)
 
 
 def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float):

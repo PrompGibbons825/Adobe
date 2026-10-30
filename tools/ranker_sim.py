@@ -39,11 +39,12 @@ def candidates(row: dict) -> List[dict]:
 
 
 def pick(row: dict, cs: List[dict], model: Optional[dict] = None, blend: float = 0.0, top: int = 8,
-         margin: float = 10.0):
+         margin: float = 10.0, rs: Optional[List[float]] = None):
     if not cs:
         return None, row["fallback"]
     if model is not None and blend:
-        rs = [R.predict(c["feats"], model) for c in cs]
+        if rs is None:
+            rs = [R.predict(c["feats"], model) for c in cs]
         keys = R.blended([c["hand"] for c in cs], rs, blend, margin)
     else:
         keys = [c["hand"] for c in cs]

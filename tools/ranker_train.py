@@ -14,7 +14,12 @@ import random
 import sys
 from pathlib import Path
 
-import numpy as np
+import os
+
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "2")  # a shared box: many BLAS threads only thrash
+
+import numpy as np  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -193,10 +198,22 @@ MARGINS = [4.0, 8.0, 12.0, 20.0]
 CV_BLENDS = [5.0, 10.0, 20.0, 40.0, 80.0]
 
 
-def mean_sim(prep, model, blend, margin):
+def mean_sim(prep, model, blend, margin, preds=None):
     if not prep:
         return 0.0
-    return sum(S.pick(r, cs, model, blend, margin=margin)[1]["sim"] for r, cs in prep) / len(prep)
+    if model is None or not blend:
+        return sum(S.pick(r, cs)[1]["sim"] for r, cs in prep) / len(prep)
+    if preds is None:
+        preds = predictions(prep, model)
+    return sum(S.pick(r, cs, model, blend, margin=margin, rs=rs)[1]["sim"] for (r, cs), rs in zip(prep, preds)) / len(prep)
+
+
+def predictions(prep, model):
+    """Learned scores of every candidate (vectorised once per model)."""
+    names = model["features"]
+    w = np.array(model["weights"]) / np.array(model["std"])
+    mu = np.array(model["mean"])
+    return [list((matrix(cs, names) - mu) @ w) for _, cs in prep]
 
 
 def cv_select(tune, names):
@@ -212,9 +229,10 @@ def cv_select(tune, names):
             m = fit_linear(tr, names, l2)
             if m is None:
                 continue
+            pr = predictions(va, m)
             for b in CV_BLENDS:
                 for mg in MARGINS:
-                    gain[(l2, b, mg)].append(mean_sim(va, m, b, mg) - base)
+                    gain[(l2, b, mg)].append(mean_sim(va, m, b, mg, pr) - base)
     scored = []
     for g, v in gain.items():
         if len(v) == len(folds):

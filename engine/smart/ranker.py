@@ -29,7 +29,9 @@ TERMS = (
 
 
 def enabled() -> bool:
-    return os.environ.get("CHAMELEON_RANKER", "1") != "0" and model() is not None
+    from .switches import off
+
+    return not off("ranker") and os.environ.get("CHAMELEON_RANKER", "1") != "0" and model() is not None
 
 
 @lru_cache(maxsize=1)
@@ -209,26 +211,18 @@ def predict(feats: Dict[str, float], m: dict) -> float:
     return s
 
 
-def blended(hand: List[float], learned: List[Optional[float]], lam: float, margin: float) -> List[float]:
-    """Conservative blend: only the candidates the critic (hand score) keeps within ``margin`` of
-    its best are re-ordered by the learned preference; they stay above every other candidate, so the
-    ranker can choose among near-ties but never promote a plan the critic ranks clearly worse."""
-    if not hand:
-        return []
-    best = max(hand)
-    floor = best - margin
-    allowed = [i for i, h in enumerate(hand) if h >= floor and learned[i] is not None]
-    if len(allowed) < 2 or lam <= 0:
+def blended(hand: List[float], learned: List[float], lam: float, margin: float) -> List[float]:
+    """The score with the learned term: ``lam`` times how far a plan's learned preference falls
+    below the field's best, bounded at ``margin`` points, so what designers did can decide among
+    the critic's near-ties but never outweighs a clear difference in the rest of the score."""
+    if not hand or lam <= 0:
         return list(hand)
-    top = max(learned[i] for i in allowed)
-    out = list(hand)
-    for i in allowed:
-        out[i] = max(floor + 1e-6, hand[i] + lam * (learned[i] - top))
-    return out
+    top = max(learned)
+    return [h + max(-margin, lam * (r - top)) for h, r in zip(hand, learned)]
 
 
-def apply(plans, d, ctx) -> None:
-    """Re-order the critic's near-ties by what designers did (in place); see ``blended``."""
+def add_term(plans, d, ctx) -> None:
+    """The learned designer-preference term, one term of the score (called by score_plans)."""
     if not plans or not enabled():
         return
     m = model()
@@ -236,17 +230,8 @@ def apply(plans, d, ctx) -> None:
     if lam <= 0:
         return
     margin = float(os.environ.get("CHAMELEON_RANKER_MARGIN") or m.get("margin", 4.0))
-    hand = [p.score for p in plans]
-    best = max(hand)
-    near = [i for i, h in enumerate(hand) if h >= best - margin]
-    if len(near) < 2:
-        return
     cx = context(d, ctx)
-    learned: List[Optional[float]] = [None] * len(plans)
-    for i in near:
-        learned[i] = predict(plan_features(plans[i], d, ctx, cx), m)
-    new = blended(hand, learned, lam, margin)
-    for p, h, n in zip(plans, hand, new):
-        if n != h:
-            p.breakdown["ranker"] = n - h
-            p.score = n
+    learned = [predict(plan_features(p, d, ctx, cx), m) for p in plans]
+    for p, n in zip(plans, blended([p.score for p in plans], learned, lam, margin)):
+        p.breakdown["learned"] = n - p.score
+        p.score = n

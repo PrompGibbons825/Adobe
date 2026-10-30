@@ -1241,11 +1241,15 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
     emphasis = () if not words else EMPHASIS if len(words) <= DISPLAY_WORDS else EMPHASIS[:1]
 
     from .candidates import extra_variants, param_split_variants
+    from .switches import off
+
+    search = not off("search")
 
     def archetypes(force_all: bool):
         if r <= 2.2 or force_all:
             yield "stack", plan_stack, {}
-            yield "stack-loose", plan_stack, dict(gap_scale=1.2)
+            if search:
+                yield "stack-loose", plan_stack, dict(gap_scale=1.2)
             if busy_bg or subject_bg:  # copy over a photo: also try it against either side
                 yield "stack-start", plan_stack, dict(force_align="start")
                 yield "stack-end", plan_stack, dict(force_align="end")
@@ -1258,7 +1262,7 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
                     for fold in ((False, True) if has_corners else (False,)):
                         yield (f"split-{side}-{frac}{'-fold' if fold else ''}", plan_split,
                                dict(hero_side=side, hero_frac=frac, fold_corners=fold))
-            for name, kw in param_split_variants(has_corners):
+            for name, kw in (param_split_variants(has_corners) if search else ()):
                 yield name, plan_split, kw
         if d.split is not None and 0.4 <= r <= 3.2:  # a photo / panel split keeps its two regions
             from .regions import plan_regions
@@ -1340,7 +1344,7 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
                 raise
             if p:
                 kind = _plan_kind(name + tag)
-                if per_kind.get(kind, 0) >= KIND_CAP:
+                if search and per_kind.get(kind, 0) >= KIND_CAP:
                     tried[key] = True
                     continue
                 p.specks = _specks(p, d, c)

@@ -53,9 +53,6 @@ def plan_design(source: dict, target: dict):
                 score_plans(plans, d, ctx)
                 vision.rank(plans, d, ctx, _decor_rects(d, ctx))  # copy off the faces and subject of a photo
                 _bury(plans, d, ctx)  # art a redrawn panel would paint over
-                from . import ranker as _ranker
-
-                _ranker.apply(plans, d, ctx)
                 plans.sort(key=lambda p: -p.score)
                 keep_everything_first(plans)
                 plans[:] = _diverse(plans, RERANK)

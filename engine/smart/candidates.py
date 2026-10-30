@@ -413,7 +413,14 @@ def extra_variants(d: Design, ctx: Ctx, force_all: bool) -> Iterator[Tuple[str, 
     """(name, planner, kwargs, ctx) tuples wired into compose.generate."""
     from .items import BUDGET
 
+    from .switches import off
+
     if BUDGET.economy:
+        return
+    if _layout_index() and not off("retrieve"):
+        for k in range(RETRIEVE_K):
+            yield f"retrieve-{k}", plan_retrieve, dict(rank=k), ctx
+    if off("search"):
         return
     r = ctx.W / ctx.H
     yield "anchor", plan_anchor, {}, ctx
@@ -427,6 +434,3 @@ def extra_variants(d: Design, ctx: Ctx, force_all: bool) -> Iterator[Tuple[str, 
         yield "flex-tile-0.5", plan_flex_tile, dict(photo_frac=0.5, stack_tall=r < 0.9), ctx
     if r >= 2.2 or force_all:
         yield "flex-strip", plan_flex_strip, dict(wrap=True), ctx
-    if _layout_index():
-        for k in range(RETRIEVE_K):
-            yield f"retrieve-{k}", plan_retrieve, dict(rank=k), ctx
