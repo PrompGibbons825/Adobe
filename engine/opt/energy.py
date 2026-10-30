@@ -44,18 +44,25 @@ def _inter(a, b):
     return max(0.0, iw) * max(0.0, ih)
 
 
-def _align_lines(boxes, W):
-    vals = []
-    for x, y, w, h in boxes:
-        vals += [x / W, (x + w / 2) / W, (x + w) / W]
-    vals.sort()
-    if not vals:
+def _align_lines(boxes, W, H=None):
+    """Distinct alignment lines (left/centre/right in x, top/centre/bottom in y) per box; a box
+    that shares any line with another box is aligned on that axis. Lower = more aligned."""
+    if not boxes:
         return 0.0
-    k = 1
-    for a, b in zip(vals, vals[1:]):
-        if b - a > 0.012:
-            k += 1
-    return k / max(1, len(boxes))
+
+    def count(vals):
+        vals.sort()
+        k = 1
+        for a, b in zip(vals, vals[1:]):
+            if b - a > 0.012:
+                k += 1
+        return k
+
+    kx = count([v for x, y, w, h in boxes for v in (x / W, (x + w / 2) / W, (x + w) / W)])
+    if H is None:
+        return kx / len(boxes)
+    ky = count([v for x, y, w, h in boxes for v in (y / H, (y + h / 2) / H, (y + h) / H)])
+    return min(kx, ky) / len(boxes)
 
 
 def features(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> List[float]:
@@ -186,7 +193,7 @@ def features(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> List[fl
             ls += abs(math.log(max(1, n1) / max(1, n0)))
             nt += 1
     f["lines"] = ls / nt if nt else 0.0
-    f["align"] = max(0.0, _align_lines(list(tgt.values()), W) - _align_lines(list(src.values()), S.W))
+    f["align"] = max(0.0, _align_lines(list(tgt.values()), W, H) - _align_lines(list(src.values()), S.W, S.H))
     f["busy"], f["contrast"] = _pixel_terms(S, placed, W, H, src, tgt)
     return [f[k] for k in NAMES]
 

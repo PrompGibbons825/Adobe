@@ -139,6 +139,9 @@ def finalize(S: Scene, design: dict) -> dict:
                 e["x"] -= (w2 - w) / 2
                 w = w2
                 n, maxw, th = text_block(e, fs, w)
+            if maxw > w + 0.5 and e.get("letter_spacing"):
+                e["letter_spacing"] = 0.0     # degenerate: spacing alone overflows the canvas
+                n, maxw, th = text_block(e, fs, w)
             e["width"] = w
             e["height"] = th      # text draws from the box top; hug the rendered lines
         if k in bleed_ok:
