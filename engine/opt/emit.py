@@ -19,6 +19,15 @@ def _fit_text(el: dict, fs: int, width: float) -> int:
     return max(1, fs)
 
 
+def _ink(e):
+    """Drawn glyph ink box on the canvas (L0 fundamentals: includes overhang), or None."""
+    try:
+        from engine.fundamentals.text import measure_text
+        return measure_text(e).canvas_ink_box()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _rot_aabb(x, y, w, h, deg):
     if not deg:
         return x, y, w, h
@@ -172,6 +181,11 @@ def finalize(S: Scene, design: dict) -> dict:
             if e.get("type") == "text":
                 _set_fs(e, max(1, int(e["font_size"] * f)))
             ax, ay, aw, ah = _rot_aabb(e["x"], e["y"], e["width"], e["height"], rot)
+        if e.get("type") == "text":
+            ink = _ink(e)
+            if ink is not None:
+                ax, ay = min(ax, ink[0]), min(ay, ink[1])
+                aw, ah = max(ax + aw, ink[2]) - ax, max(ay + ah, ink[3]) - ay
         dx = -ax if ax < 0 else (W - (ax + aw) if ax + aw > W else 0.0)
         dy = -ay if ay < 0 else (H - (ay + ah) if ay + ah > H else 0.0)
         e["x"] += dx

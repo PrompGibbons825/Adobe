@@ -58,7 +58,19 @@ def check(src: dict, out: dict, target: dict) -> list:
                 errs.append(f"{e['id']}:textw")
             if th > h + 1:
                 errs.append(f"{e['id']}:texth")
+    try:
+        from engine.fundamentals.check import check as fcheck
+        for f in fcheck(src, out, target):
+            if f.level == "hard":
+                errs.append(f"F:{f.code}:{f.id}")
+            elif f.level == "promise":
+                PROMISES[f.code] = PROMISES.get(f.code, 0) + 1
+    except Exception as x:  # noqa: BLE001
+        errs.append(f"fcheck-crash:{type(x).__name__}")
     return errs
+
+
+PROMISES = {}
 
 
 def run(files, sheet=None, formats=None):
@@ -79,6 +91,7 @@ def run(files, sheet=None, formats=None):
                 print(Path(f).stem, name, errs)
             tiles.append((Path(f).stem, name, out))
     times.sort()
+    print("promises", PROMISES)
     print(f"tiles {len(tiles)} faulty {nerr} p50 {times[len(times)//2]:.2f}s p95 {times[int(len(times)*.95)]:.2f}s max {times[-1]:.2f}s")
     if sheet:
         render_sheet(tiles, sheet)

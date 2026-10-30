@@ -49,6 +49,8 @@ def main():
         c = ns["aspect_class"](t["target"]["width"], t["target"]["height"])
         if s is not None:
             per.setdefault(c, []).append(s)
+    from tools.lane import PROMISES
+    print("promises", PROMISES)
     allv = [v for vs in per.values() for v in vs]
     times.sort()
     print(json.dumps({"n": len(tasks), "faults": faults, "sim": round(sum(allv) / len(allv), 4),

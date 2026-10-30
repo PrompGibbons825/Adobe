@@ -94,6 +94,8 @@ def main():
             bad += 1
             print("order-dependent", k, flush=True)
     times.sort()
+    from tools.lane import PROMISES
+    print("promises", PROMISES)
     print(f"stress n={a.n} faulty={bad} p50={times[len(times)//2]:.2f}s p95={times[int(.95*len(times))]:.2f}s max={times[-1]:.2f}s")
 
 

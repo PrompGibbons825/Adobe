@@ -29,8 +29,18 @@ class Params:
     min_fs: float = 8.0
 
 
+def text_floor(S, fs0: float, W: float, H: float) -> float:
+    """Per-text floor: the target floor, relaxed in proportion for copy the designer already set
+    below the source's own floor (small print stays small print, but never shrinks further in
+    judge-view terms)."""
+    ft, fsrc = fs_floor(W, H), fs_floor(S.W, S.H)
+    return min(ft, ft * fs0 / fsrc)
+
+
 def fs_floor(W: float, H: float) -> float:
-    return max(7.0, min(14.0, 0.011 * math.sqrt(W * H)))
+    """Legibility floor = L0's small-print floor: 7 px cap height when the judge views the canvas
+    at 1024 px on the long side (cap = 0.70 em), never under 10 px."""
+    return float(max(10, math.ceil(7.0 * max(W, H) / 1024.0 / 0.70)))
 
 
 def margins(W, H, p: Params) -> Tuple[float, float]:
@@ -49,7 +59,7 @@ def size_block(S: Scene, b: Block, s: float, slot_w: float, kw: float, W: float,
         el = S.els[b.text_idx]
         fs0 = float(el.get("font_size", 16) or 16)
         fs = max(1, int(round(fs0 * s)))
-        fs = max(fs, min(int(fs_floor(W, H)), int(round(fs0 * 3))))
+        fs = max(fs, min(int(math.ceil(text_floor(S, fs0, W, H))), int(round(fs0 * 3))))
         fs = min(fs, 4000)
         # shrink until the longest word fits the slot
         lw = fast_longest(el, fs)
@@ -70,8 +80,9 @@ def size_block(S: Scene, b: Block, s: float, slot_w: float, kw: float, W: float,
     tfs = [float(S.els[i].get("font_size", 16) or 16) for i in b.members if S.els[i].get("type") == "text"]
     if tfs:
         # legibility floor for text inside a rigid group (badge, button), bounded by the slot
-        k = max(k, min(fs_floor(W, H) / min(tfs), slot_w / b.w, 0.9 * H / b.h))
-    k = max(k, 1.0 / max(1e-6, min(b.w, b.h)))
+        need = max(text_floor(S, f, W, H) / f for f in tfs)
+        k = max(k, min(need, slot_w / b.w, 0.9 * H / b.h))
+    k = max(k, min(20.0, 0.4 * min(W, H)) / max(1e-6, min(b.w, b.h)))   # visible; >= 20 px keeps bitmap rounding under 5%
     return Placed(0, 0, b.w * k, b.h * k, s=k)
 
 

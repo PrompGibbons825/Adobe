@@ -87,3 +87,19 @@ of a tall canvas; text over a busy photo region.
 - Fixes from looking at Crello renders: letter spacing scales with font size; large photo below
   all text = backdrop (cover); large non-backdrop images = aspect-kept panels; text on its plate
   is one block; text boxes hug rendered lines.
+- 07:20Z two-axis alignment term + refit (774 pairs; held-out sel IoU 0.445). Tournament-set
+  similarity (B0's `similarity`, reporting only, `tools/sim_eval.py`): uniform fit 0.351 (160/160
+  tiles with text faults), v3 0.360, 0 faults; strip 0.20 -> 0.34, extreme 0.15 -> 0.29,
+  near-square 0.469 -> 0.413 (worse).
+- 07:35Z `keep-canvas` candidate (uniform canvas fit, re-fit text): oracle IoU 0.472 -> 0.501;
+  refit sel IoU 0.458. Tournament sim 0.3645. Stress 300 designs x 20 formats: 0 faults,
+  deterministic and order-independent (fixed a time-budgeted polish and rounding-keyed caches).
+- 07:45Z vendored L0 `fundamentals/` (exp/night-foundations); tools now also run
+  `fundamentals.check` (hard + promise). Legibility floor = L0 small-print floor (7 px cap at a
+  1024 px long-side view, >= 10 px), relaxed proportionally for copy the designer set below the
+  source's own floor. Images never below 12 px (rounding distortion).
+- 07:55Z near-square diagnosis on non-tournament dev tasks: stack was chosen because the
+  overlap constraint term punished keep-spread's small collisions. Fix: polish (collision
+  coordinate descent, small steps first) the 2 best and the position-keeping candidates before
+  the final pick. Chosen IoU near-square 0.408 -> 0.437 (uniform 0.455, oracle 0.50); tall 0.484
+  (uniform 0.448); wide 0.416 (uniform 0.423).

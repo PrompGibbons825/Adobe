@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from .analyse import Scene
-from .layout import Placed, fs_floor
+from .layout import Placed, text_floor
 
 NAMES = ["overlap", "outside", "fill_deficit", "span_deficit", "shrink", "grow", "legib", "order",
          "drift", "balance", "margin_uneven", "hier", "lines", "relsize", "align", "smallest", "busy", "contrast"]
@@ -118,7 +118,6 @@ def features(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> List[fl
     f["relsize"] = math.sqrt(sum((v - mean) ** 2 for v in logs) / n)
     f["smallest"] = max(0.0, -min(logs) - 0.7)
 
-    floor = fs_floor(W, H)
     texts = []
     leg = 0.0
     for b in bl:
@@ -126,7 +125,7 @@ def features(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> List[fl
             el = S.els[b.text_idx]
             fs0 = float(el.get("font_size", 16) or 16)
             fs = placed[b.bid].fs or fs0
-            leg += max(0.0, math.log(floor / max(1.0, fs)))
+            leg += max(0.0, math.log(text_floor(S, fs0, W, H) / max(1.0, fs)))
             texts.append((fs0, fs, b.bid))
         elif b.kind == "group":
             sb = math.sqrt(tgt[b.bid][2] * tgt[b.bid][3] / max(1.0, src[b.bid][2] * src[b.bid][3]))
@@ -134,7 +133,7 @@ def features(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> List[fl
                 el = S.els[i]
                 if el.get("type") == "text":
                     fs0 = float(el.get("font_size", 16) or 16)
-                    leg += max(0.0, math.log(floor / max(1.0, fs0 * sb)))
+                    leg += max(0.0, math.log(text_floor(S, fs0, W, H) / max(1.0, fs0 * sb)))
     f["legib"] = leg
     hv, hp = 0, 0
     for i in range(len(texts)):
@@ -242,10 +241,21 @@ def _pixel_terms(S, placed, W, H, src, tgt):
             imgs_s.append((e.get("z_index", 0), e, (float(e["x"]), float(e["y"]), float(e["width"]), float(e["height"]))))
             imgs_t.append((e.get("z_index", 0), dict(e, fit="cover"), (0.0, 0.0, W, H)))
     for b in S.blocks:
-        if b.kind == "image" and b.bid in placed:
+        if b.bid not in placed:
+            continue
+        if b.kind == "image":
             e = S.els[b.members[0]]
             imgs_s.append((e.get("z_index", 0), e, src[b.bid]))
             imgs_t.append((e.get("z_index", 0), e, tgt[b.bid]))
+        elif b.kind == "group":
+            k = tgt[b.bid][2] / max(1e-6, b.w)
+            for i in b.members:
+                e = S.els[i]
+                if e.get("type") != "image":
+                    continue
+                x, y, w, h = float(e["x"]), float(e["y"]), float(e["width"]), float(e["height"])
+                imgs_s.append((e.get("z_index", 0), e, (x, y, w, h)))
+                imgs_t.append((e.get("z_index", 0), e, (tgt[b.bid][0] + (x - b.x) * k, tgt[b.bid][1] + (y - b.y) * k, w * k, h * k)))
     if not imgs_s:
         return 0.0, 0.0
     busy = con = 0.0

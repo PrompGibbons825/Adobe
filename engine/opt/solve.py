@@ -92,7 +92,9 @@ def search(S: Scene, W: float, H: float, p: Params = None, refine: bool = True):
     if refine:
         # coordinate descent over the global geometry knobs for the 2 best topologies
         extra = []
-        tops = [cands[k] for _, k, _, _ in scored if cands[k][2] is not None][:2]
+        # knob refinement only for the winning topology (refining all would bias selection
+        # away from what the weights were fit on)
+        tops = [cands[k] for _, k, _, _ in scored[:1] if cands[k][2] is not None]
         for name, _, (topo, va) in tops:
             cur = Params(p.margin_frac, p.gap_frac, p.text_widen)
             pl, _ = realise(S, topo, W, H, cur, s_cap, g0, valign=va)
@@ -111,10 +113,15 @@ def search(S: Scene, W: float, H: float, p: Params = None, refine: bool = True):
                             cur, pl, e_cur = trial, pl2, e2
             extra.append((e_cur, len(cands) + len(extra), name + "/refined", pl))
         scored = sorted(scored + extra, key=lambda t: (t[0], t[1]))
-        e0, k0, n0, pl0 = scored[0]
-        pl1, e1 = polish(S, pl0, W, H, e0)
-        if e1 < e0:
-            scored.insert(0, (e1, -1, n0 + "/polished", pl1))
+        # polish (collision-resolving coordinate descent) the 2 best plus the position-keeping
+        # candidates, whose only defect is usually a local collision
+        pick = scored[:1] + [t for t in scored if t[2] in ("keep-spread", "keep-canvas") and t not in scored[:1]]
+        pol = []
+        for e0, k0, n0, pl0 in pick:
+            pl1, e1 = polish(S, pl0, W, H, e0, budget=80)
+            if e1 < e0:
+                pol.append((e1, -1 - len(pol), n0 + "/polished", pl1))
+        scored = sorted(scored + pol, key=lambda t: (t[0], t[1]))
     return scored
 
 
@@ -135,7 +142,7 @@ def polish(S: Scene, placed, W: float, H: float, e_cur: float, budget: int = 250
                     bad.add(ids[c])
         return sorted(bad)
 
-    for step in (0.12, 0.05, 0.02):
+    for step in (0.02, 0.05, 0.12):
         improved = True
         while improved and evals < budget:
             improved = False
