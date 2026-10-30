@@ -38,10 +38,18 @@ def faults(src, out, tgt):
     so = {e["id"]: e for e in src["elements"]}
     for e in out["elements"]:
         x, y, w, h = e["x"], e["y"], e["width"], e["height"]
-        if x < -0.5 or y < -0.5 or x + w > TW + 0.5 or y + h > TH + 0.5:
+        if (x < -0.5 or y < -0.5 or x + w > TW + 0.5 or y + h > TH + 0.5):
             f.append(f"off:{e['id']}")
+        rot = float(e.get("rotation") or 0) % 360
+        if rot and not (e.get("fit") == "cover" and w >= TW - 1 and h >= TH - 1):
+            from engine.resize import _rot_extent
+            x0, y0, x1, y1 = _rot_extent(e, w, h)
+            if x + x0 < -1 or y + y0 < -1 or x + x1 > TW + 1 or y + y1 > TH + 1:
+                f.append(f"rot_off:{e['id']}")
         s = so[e["id"]]
         if e["type"] == "image" and e.get("fit") != "cover":
+            if s["width"] < 1 or s["height"] < 1:
+                continue
             a0 = s["width"] / max(1e-6, s["height"])
             a1 = w / max(1e-6, h)
             if abs(a1 / a0 - 1) > 0.05:
@@ -51,8 +59,12 @@ def faults(src, out, tgt):
                 if e.get(k) != s.get(k):
                     f.append(f"{k}:{e['id']}")
             mw, bh, _ = textfit.layout(e, e["font_size"], w)
-            if mw > w + 1:
-                f.append(f"text_w:{e['id']}")
+            al = e.get("text_align", "left")
+            x0 = x if al not in ("center", "right") else (x + (w - mw) / 2 if al == "center" else x + w - mw)
+            if not e.get("rotation") and (x0 < -1 or x0 + mw > TW + 1):
+                f.append(f"text_off:{e['id']}")
+            elif mw > w + 1:
+                f.append(f"soft_text_w:{e['id']}")
             if y + bh > TH + 1:
                 f.append(f"text_h:{e['id']}")
             if int(e["font_size"]) < 6:

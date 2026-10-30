@@ -60,3 +60,29 @@ Paradigm: learn the resize from Crello designers. Branch `lane/learn` from `upst
 - 06:37Z lane_check: 125 tasks (60 sample x formats + 65 Crello), 4 with faults, all legibility on
   extreme strips (type < 6 px on 320x50, 300x250, 728x90 for the 17-element L3) plus one Crello
   text overflow. p95 0.1 s (warm).
+- 06:45Z resumed (the stop at 06:40 was a misread of the meter: wrap-up keys on the weekly figure).
+- 06:50-07:15Z repair hardening, all general mechanisms:
+  - **Legibility floor** = L0's small-print definition (7 px cap height at a 1024 px long-side
+    view: `ceil(10 * max(W,H) / 1024)` px). Copy is raised to it when the designer policy would go
+    below. The reflow packer now searches text re-wraps (keep, 1-4 lines) x rows/columns x line
+    count x {uniform scale, text held at the floor while pictures shrink}, scored by
+    mean scale x (smallest type / floor)^3 x (smallest picture side / 0.3 short side)^2.
+  - Letter spacing scales with the font size (em-relative) during fitting.
+  - Collisions are judged on drawn extents: text ink (not its padded box), rotated boxes.
+  - Reading order: top to bottom, items sharing a line left to right.
+  - Final guard (`engine/resize.py`): text measured as the renderer draws it stays inside the
+    canvas with a 1.5 px ink margin (shrink, widen, narrower wrap box for letter-spaced copy,
+    last resort tighten letter spacing); rotated elements contained by their drawn extent and
+    raw box; `fill` images whose box is off the asset's aspect switch to `contain`; images below
+    12 px drawn size grow (pixel rounding alone distorts > 5%); non-schema font weights mapped to
+    what the renderer draws (light -> regular, semibold -> bold).
+- Vendored L0's `fundamentals/` (exp/night-foundations f595ca4) into `engine/fundamentals/`;
+  `tools/lane_fcheck.py` runs `fundamentals.check` over input x 20 formats, random designs and
+  Crello dev tasks.
+
+## Contamination note
+
+Before my worktree existed (06:03Z) a failed `git worktree add` left my shell in the main
+checkout and I printed main's `engine/resize.py`: its docstring names the incumbent's modules
+(analyze/textfit/layout/compose/score, archetypes stack/split/row). I read nothing else of the
+incumbent, its notes, README or any other lane.

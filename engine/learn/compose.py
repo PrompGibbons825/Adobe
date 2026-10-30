@@ -78,6 +78,12 @@ def find_units(els: List[Dict[str, Any]], bleed: List[bool], W: float, H: float)
 
 
 REFLOW_DAR = 0.9
+
+
+def floor_px(TW, TH):
+    """Legibility floor: 7 px of cap height when the canvas is viewed at 1024 px on its long side
+    (cap height ~0.70 em), as L0's fundamentals.check defines small print."""
+    return float(max(6, math.ceil(7.0 * max(TW, TH) / 1024.0 / 0.70)))
 MODE = {"transfer": "median", "beta": 0.5, "repair": True}
 _policy = None
 
@@ -109,6 +115,13 @@ def layout(source: Dict[str, Any], target: Dict[str, Any]) -> Dict[str, Any]:
     els = [dict(e) for e in source["elements"]]
     n = len(els)
     out = [dict(e) for e in els]
+    _ROT.clear()
+    for i, e in enumerate(els):
+        if num(e.get("rotation"), 0.0) % 360.0:
+            _ROT[i] = num(e.get("rotation"), 0.0)
+    for e in els:
+        if e.get("type") == "text" and num(e.get("letter_spacing"), 0.0):
+            e["_lsem"] = num(e.get("letter_spacing"), 0.0) / max(1.0, num(e.get("font_size"), 16.0))
     if n == 0:
         return dict(canvas=dict(width=int(TW), height=int(TH)), elements=out)
     s_geo = math.sqrt((TW * TH) / (W * H))
@@ -172,7 +185,7 @@ def layout(source: Dict[str, Any], target: Dict[str, Any]) -> Dict[str, Any]:
     fg_units = [u for u in fg_units if u]
 
     # 4. type
-    floor = max(8.0, 0.028 * min(TW, TH))
+    floor = floor_px(TW, TH)
     fsz: Dict[int, int] = {}
     for u in fg_units:
         for i in u:
@@ -180,7 +193,7 @@ def layout(source: Dict[str, Any], target: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             fs0 = num(els[i].get("font_size"), 16.0)
             want = fs0 * (unit_scale[i] if len(u) > 1 else s_geo * math.exp(float(P[i, 4])))
-            want = max(want, min(fs0, floor))
+            want = max(want, floor)
             fsz[i] = int(max(1, want))
 
     if not MODE["repair"]:
@@ -219,11 +232,27 @@ def _fit_text(e, b, fs_want, TW, TH, floor):
     return fs, [cx - w / 2, cy - h / 2, w, h]
 
 
+_ROT: Dict[int, float] = {}  # element index -> rotation (degrees) of the design being laid out
+
+
+def _ext(i, b):
+    """box of element i as drawn: rotated about its centre"""
+    a = _ROT.get(i, 0.0)
+    if not a:
+        return b[0], b[1], b[0] + b[2], b[1] + b[3]
+    r = math.radians(a)
+    bw = abs(b[2] * math.cos(r)) + abs(b[3] * math.sin(r))
+    bh = abs(b[2] * math.sin(r)) + abs(b[3] * math.cos(r))
+    cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
+    return cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2
+
+
 def _unit_bbox(u, boxes):
-    x0 = min(boxes[i][0] for i in u)
-    y0 = min(boxes[i][1] for i in u)
-    x1 = max(boxes[i][0] + boxes[i][2] for i in u)
-    y1 = max(boxes[i][1] + boxes[i][3] for i in u)
+    ex = [_ext(i, boxes[i]) for i in u]
+    x0 = min(e[0] for e in ex)
+    y0 = min(e[1] for e in ex)
+    x1 = max(e[2] for e in ex)
+    y1 = max(e[3] for e in ex)
     return [x0, y0, x1 - x0, y1 - y0]
 
 
@@ -276,7 +305,12 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor, dar=0.0):
         s = min(1.0, (TW - 2 * margin) / max(1e-3, b[2]), (TH - 2 * margin) / max(1e-3, b[3]))
         if s < 1.0:
             _scale_unit(u, boxes, s, fsz)
-    src_bb = {k: _unit_bbox(u, {i: src[i] for i in u}) for k, u in enumerate(units)}
+    # source extents as drawn: a text's box is padding, its ink is what may not collide
+    drawn = {}
+    for u in units:
+        for i in u:
+            drawn[i] = _drawn_box(els[i], src[i]) if els[i].get("type") == "text" else src[i]
+    src_bb = {k: _unit_bbox(u, drawn) for k, u in enumerate(units)}
 
     def clamp(k):
         u = units[k]
@@ -360,7 +394,12 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor, dar=0.0):
                 # after any shrink, make sure the text still fits its box
                 while fs > 1 and not textfit.fits(e, fs, w, h):
                     fs -= 1
+                if not textfit.fits(e, fs, w, h):
+                    fs, x, y, w, h = _rescue_text(e, fsz[i], x, y, w, h, TW, TH)
+                    out[i].update(x=float(x), y=float(y), width=float(w), height=float(h))
                 out[i]["font_size"] = int(fs)
+                if e.get("_lsem") is not None:
+                    out[i]["letter_spacing"] = round(float(e["_lsem"]) * int(fs), 3)
             if els[i].get("corner_radius") and src[i][2] > 0:
                 out[i]["corner_radius"] = num(els[i]["corner_radius"]) * (w / src[i][2])
 
@@ -371,43 +410,57 @@ def _pack(units, boxes, fsz, src_bb, allowed, els, TW, TH, margin, grow=1.0):
     if len(items) < 2:
         return
     # reading order of the source
-    items.sort(key=lambda k: (round((src_bb[k][1] + src_bb[k][3] / 2) / max(1e-6, max(b[1] + b[3] for b in src_bb.values())) * 6),
-                              src_bb[k][0]))
-    sz = {k: _unit_bbox(units[k], boxes)[2:] for k in items}
+    items = _reading_order(items, src_bb)
     gap = margin * 0.6
+    floor = floor_px(TW, TH)
+    base = {k: _unit_bbox(units[k], boxes)[2:] for k in items}
+    single_text = [k for k in items if len(units[k]) == 1 and units[k][0] in fsz]
+    min_fs = min([fsz[i] for k in items for i in units[k] if i in fsz] or [floor])
     best = None
-    for rows in (True, False):
-        for L in range(1, min(4, len(items)) + 1):
-            # split items into L consecutive lines of balanced main-axis length
-            main = [sz[k][0] if rows else sz[k][1] for k in items]
-            total = sum(main)
-            lines, cur, acc = [], [], 0.0
-            for k, m in zip(items, main):
-                if cur and acc + m > total / L * 1.15 and len(lines) < L - 1:
-                    lines.append(cur)
-                    cur, acc = [], 0.0
-                cur.append(k)
-                acc += m
-            lines.append(cur)
-            if rows:
-                need_w = max(sum(sz[k][0] for k in ln) for ln in lines)
-                need_h = sum(max(sz[k][1] for k in ln) for ln in lines)
-                gw = max(len(ln) - 1 for ln in lines) * gap
-                gh = (len(lines) - 1) * gap
-            else:
-                need_h = max(sum(sz[k][1] for k in ln) for ln in lines)
-                need_w = sum(max(sz[k][0] for k in ln) for ln in lines)
-                gh = max(len(ln) - 1 for ln in lines) * gap
-                gw = (len(lines) - 1) * gap
-            s = min((TW - 2 * margin - gw) / max(1e-6, need_w), (TH - 2 * margin - gh) / max(1e-6, need_h), grow)
-            if best is None or s > best[0] + 1e-6:
-                best = (s, rows, lines)
-    s, rows, lines = best
-    if s <= 0:
+    # text re-wrap variants: keep, or 1..4 lines (the box takes the shape its text needs)
+    for TL in (0, 1, 2, 3, 4):
+        sz = dict(base)
+        shapes = {}
+        if TL:
+            if not single_text:
+                continue
+            for k in single_text:
+                i = units[k][0]
+                e, fs = els[i], fsz[i]
+                w = max(textfit.longest_word(e, fs) * 1.02 + 1, textfit.natural_width(e, fs) / TL * 1.08 + 1)
+                _, h, _ = textfit.layout(e, fs, w)
+                shapes[k] = (w, h + 1)
+                sz[k] = shapes[k]
+        for rows in (True, False):
+            for L in range(1, min(4, len(items)) + 1):
+                main = [sz[k][0] if rows else sz[k][1] for k in items]
+                total = sum(main)
+                lines, cur, acc = [], [], 0.0
+                for k, m in zip(items, main):
+                    if cur and acc + m > total / L * 1.15 and len(lines) < L - 1:
+                        lines.append(cur)
+                        cur, acc = [], 0.0
+                    cur.append(k)
+                    acc += m
+                lines.append(cur)
+                for tf in (False, True):
+                    res = _pack_scales(items, lines, sz, rows, units, fsz, floor, gap, margin, TW, TH, grow, tf)
+                    if res is None:
+                        continue
+                    val, scales = res
+                    if best is None or val > best[0] + 1e-6:
+                        best = (val, scales, rows, lines, shapes)
+    if best is None:
         return
+    _, scales, rows, lines, shapes = best
+    for k, (w, h) in shapes.items():
+        i = units[k][0]
+        x, y, w0, h0 = boxes[i]
+        boxes[i] = [x + w0 / 2 - w / 2, y + h0 / 2 - h / 2, w, h]
+    sz = {k: _unit_bbox(units[k], boxes)[2:] for k in items}
     for k in items:
-        if abs(s - 1) > 1e-3:
-            _scale_unit(units[k], boxes, s, fsz)
+        if abs(scales[k] - 1) > 1e-3:
+            _scale_unit(units[k], boxes, scales[k], fsz)
         sz[k] = _unit_bbox(units[k], boxes)[2:]
     if rows:
         block_h = sum(max(sz[k][1] for k in ln) for ln in lines) + (len(lines) - 1) * gap
@@ -433,3 +486,106 @@ def _pack(units, boxes, fsz, src_bb, allowed, els, TW, TH, margin, grow=1.0):
                 _shift(units[k], boxes, x + (lw - b[2]) / 2 - b[0], y - b[1])
                 y += sz[k][1] + gap
             x += lw + gap
+
+
+def _pack_scales(items, lines, sz, rows, units, fsz, floor, gap, margin, TW, TH, grow, text_first):
+    """Per-item scales for one arrangement: everything at the largest common scale s, or (text
+    first) copy held at the legibility floor while pictures and shapes take the largest s that
+    still fits. Returns (value, scales) or None."""
+    tmin = {k: min([fsz[i] for i in units[k] if i in fsz] or [0]) for k in items}
+
+    def scales_for(s):
+        out = {}
+        for k in items:
+            if text_first and tmin[k] > 0:
+                out[k] = min(grow, max(s, floor / tmin[k]))
+            else:
+                out[k] = s
+        return out
+
+    def fits(sc):
+        if rows:
+            need_w = max(sum(sz[k][0] * sc[k] for k in ln) + (len(ln) - 1) * gap for ln in lines)
+            need_h = sum(max(sz[k][1] * sc[k] for k in ln) for ln in lines) + (len(lines) - 1) * gap
+        else:
+            need_h = max(sum(sz[k][1] * sc[k] for k in ln) + (len(ln) - 1) * gap for ln in lines)
+            need_w = sum(max(sz[k][0] * sc[k] for k in ln) for ln in lines) + (len(lines) - 1) * gap
+        return need_w <= TW - 2 * margin + 1e-6 and need_h <= TH - 2 * margin + 1e-6
+
+    lo, hi = 0.0, grow
+    if fits(scales_for(hi)):
+        lo = hi
+    else:
+        if not fits(scales_for(1e-4)):
+            return None
+        lo = 1e-4
+        for _ in range(30):
+            mid = (lo + hi) / 2
+            if fits(scales_for(mid)):
+                lo = mid
+            else:
+                hi = mid
+    sc = scales_for(lo)
+    texts = [tmin[k] * sc[k] for k in items if tmin[k] > 0]
+    leg = min(1.0, min(texts) / floor) if texts else 1.0
+    # pictures (logo, product) must stay recognisable too
+    pics = [min(sz[k]) * sc[k] for k in items if tmin[k] == 0]
+    vis = min(1.0, min(pics) / (0.3 * min(TW, TH))) if pics else 1.0
+    mean = sum(sc.values()) / len(sc)
+    return mean * leg ** 3 * vis ** 2, sc
+
+
+def _rescue_text(e, fs0, x, y, w, h, TW, TH):
+    """Text that fits at no size in its box (long words, wide letter spacing): widen the box to
+    the canvas, then take the largest size <= the wanted one that fits, else the smallest
+    larger size that does (more wrapping means fewer spaced glyphs per line)."""
+    w = TW
+    x = 0.0
+    fs0 = max(1, int(fs0))
+    pick = None
+    for fs in range(fs0, 0, -1):
+        if textfit.fits(e, fs, w, TH):
+            pick = fs
+            break
+    if pick is None:
+        f = float(fs0 + 1)
+        while f <= max(fs0 + 1, TH):
+            if textfit.fits(e, int(f), w, TH):
+                pick = int(f)
+                break
+            f = max(f + 1, f * 1.12)
+    if pick is None:
+        pick = 1
+    _, bh, _ = textfit.layout(e, pick, w)
+    h = min(TH, bh + 1)
+    y = min(max(0.0, y + 0.0), TH - h)
+    return pick, x, y, w, h
+
+
+def _drawn_box(e, b):
+    try:
+        fs = num(e.get("font_size"), 16.0)
+        mw, bh, _ = textfit.layout(e, fs, b[2])
+    except Exception:  # noqa: BLE001
+        return b
+    al = e.get("text_align", "left")
+    x = b[0] + ((b[2] - mw) / 2 if al == "center" else (b[2] - mw) if al == "right" else 0.0)
+    return [x, b[1], max(1.0, mw), max(1.0, bh)]
+
+
+def _reading_order(items, bb):
+    """Top to bottom; items sharing a line (vertical spans overlapping by half the shorter) left
+    to right."""
+    items = sorted(items, key=lambda k: (bb[k][1] + bb[k][3] / 2, bb[k][0]))
+    lines = []
+    for k in items:
+        if lines:
+            ln = lines[-1]
+            y0 = min(bb[j][1] for j in ln)
+            y1 = max(bb[j][1] + bb[j][3] for j in ln)
+            ov = min(y1, bb[k][1] + bb[k][3]) - max(y0, bb[k][1])
+            if ov > 0.5 * min(bb[k][3], y1 - y0):
+                ln.append(k)
+                continue
+        lines.append([k])
+    return [k for ln in lines for k in sorted(ln, key=lambda j: bb[j][0])]

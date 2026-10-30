@@ -106,9 +106,11 @@ def layout(e: Dict[str, Any], fs: float, width: float) -> Tuple[float, float, in
     text = str(e.get("content", ""))
     fam = str(e.get("font_family", "Montserrat"))
     weight, style = _weight_style(e)
-    ls = float(e.get("letter_spacing") or 0.0)
     lh = float(e.get("line_height") or 1.2)
     fs_i = max(1, int(fs))
+    # letter spacing is a property of the type: it scales with the size (em-relative) while the
+    # engine is still choosing a size; the final px value is written out with the size
+    ls = float(e["_lsem"]) * fs_i if e.get("_lsem") is not None else float(e.get("letter_spacing") or 0.0)
     try:
         if _font_manager() is False:
             raise RuntimeError
