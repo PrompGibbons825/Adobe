@@ -96,7 +96,7 @@ def _boxes_from_map(pred, src_hw, resized_hw, thresh=0.35, box_thresh=0.55) -> L
     sx, sy = src_w / rw, src_h / rh
     for c in contours[:200]:
         x, y, bw, bh = cv2.boundingRect(c)
-        if bw < 4 or bh < 4:
+        if bw < 4 or bh < 4 or bw < 1.5 * bh:  # DB boxes are text lines: a squat blob is not one
             continue
         patch = pred[0, 0, y:y + bh, x:x + bw]
         if patch.size == 0 or float(patch.mean()) < box_thresh:
