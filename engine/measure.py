@@ -63,6 +63,20 @@ def _layout(text, fam, weight, style, size, width, ls):
     return len(lines), mx
 
 
+@lru_cache(maxsize=None)
+def _lineh(family, weight, style, size):
+    m = skia.Font(_typeface(family, weight, style), size).getMetrics()
+    return float(m.fDescent - m.fAscent)
+
+
+def block_h(el, size, n):
+    """Drawn height of n lines: pitch between lines, full ascent+descent for the last one."""
+    weight, style = style_of(el)
+    lh = _lineh(el.get("font_family", "Montserrat"), weight, style, float(int(size)))
+    pitch = line_pitch(el, size)
+    return (n - 1) * pitch + max(pitch, lh)
+
+
 def line_pitch(el, size):
     return size * float(el.get("line_height", 1.2) or 1.2)
 
@@ -74,7 +88,7 @@ def fit_text(el, width, fs_hi, max_h=None):
 
     def ok(fs):
         n, mx = layout(el, fs, width)
-        h = n * line_pitch(el, fs)
+        h = block_h(el, fs, n)
         return mx <= width + 0.5 and (max_h is None or h <= max_h + 0.5), n, h, mx
 
     lo, hi = 1, fs_hi

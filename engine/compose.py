@@ -8,6 +8,7 @@ from . import measure as M
 from . import scoring as S
 
 CANVAS = [10 ** 9, 10 ** 9]
+FLOOR = 10.0
 R2 = lambda v: round(float(v), 2)
 
 
@@ -40,7 +41,7 @@ def area(b):
 def text_block(el):
     fs = float(el.get("font_size", 16))
     n, mx = M.layout(el, fs, float(el["width"]))
-    return n, n * M.line_pitch(el, fs)
+    return n, M.block_h(el, fs, n)
 
 
 def el_bbox(el):
@@ -69,20 +70,20 @@ class Unit:
         self.is_image = any(e["type"] == "image" for e in members)
 
     # fit at scale k within avail_w -> Fit
-    def fit(self, k, avail_w=None, W=None):
-        key = (round(k, 5), None if avail_w is None else round(avail_w, 1))
+    def fit(self, k, avail_w=None, floor=False):
+        key = (round(k, 5), None if avail_w is None else round(avail_w, 1), floor)
         c = self.__dict__.setdefault("_fc", {})
         if key not in c:
-            c[key] = self._fit(k, avail_w)
+            c[key] = self._fit(k, avail_w, 0, floor)
         return c[key]
 
-    def _fit(self, k, avail_w=None, depth=0):
+    def _fit(self, k, avail_w=None, depth=0, floor=False):
         if self.single_text:
             el = self.members[0]
             fs0 = float(el["font_size"])
             wd = avail_w if avail_w is not None else el["width"] * k
             wd = max(1.0, wd)
-            fs, n, bh, _ = M.fit_text(el, wd, fs0 * k, CANVAS[1])
+            fs, n, bh, _ = M.fit_text(el, wd, max(fs0 * k, min(fs0, FLOOR)) if floor else fs0 * k, CANVAS[1])
             e = dict(el)
             e.update(x=0.0, y=0.0, width=R2(wd), height=R2(math.ceil(bh)), font_size=fs)
             if e.get("letter_spacing"):
@@ -113,7 +114,7 @@ class Unit:
         bb = union([rot_bbox(e["x"], e["y"], e["width"], e["height"], e.get("rotation", 0)) for e in out])
         f = min(1.0, CANVAS[0] / max(bb[2] - bb[0], 1e-6), CANVAS[1] / max(bb[3] - bb[1], 1e-6))
         if f < 0.999 and depth < 4:
-            return self._fit(ke * f * 0.995, None, depth + 1)
+            return self._fit(ke * f * 0.995, None, depth + 1, floor)
         return Fit(self, out, bb, ke)
 
 
@@ -270,11 +271,11 @@ def layout_pin(units, W, H, sW, sH):
     return L
 
 
-def stack_panes(panes, rects, k, gap, W, H, nu=1.0):
+def stack_panes(panes, rects, k, gap, W, H, nu=1.0, floor=False):
     """panes: list of list of units; rects: pane rects. Returns placed list or None if overflow."""
     placed = []
     for units, (px, py, pw, ph) in zip(panes, rects):
-        fits = [u.fit(k if (u.texts or nu == 1.0) else k * nu, avail_w=pw) for u in units]
+        fits = [u.fit(k if (u.texts or nu == 1.0) else k * nu, avail_w=pw, floor=floor) for u in units]
         tot = sum(f.h for f in fits) + gap * (len(fits) - 1)
         if tot > ph + 0.5:
             return None
@@ -295,7 +296,7 @@ def stack_panes(panes, rects, k, gap, W, H, nu=1.0):
     return placed
 
 
-def layout_panes(name, panes, weights, W, H, sW, sH, s_ref, nu=1.0):
+def layout_panes(name, panes, weights, W, H, sW, sH, s_ref, nu=1.0, floor=False):
     m = min(max(3.0, 0.05 * min(W, H)), 60.0)
     gutter = m
     p = len(panes)
@@ -315,7 +316,7 @@ def layout_panes(name, panes, weights, W, H, sW, sH, s_ref, nu=1.0):
 
     def attempt(k):
         gap = min(max(gmed * k, 0.012 * mn), 0.06 * mn)
-        return stack_panes(panes, rects, k, gap, W, H, nu)
+        return stack_panes(panes, rects, k, gap, W, H, nu, floor)
 
     grid = [1.6 * s_ref * 0.92 ** j for j in range(40)]  # descending
     res = attempt(grid[0])
@@ -394,6 +395,12 @@ def candidates(units, W, H, sW, sH, s_ref):
                 if L is not None:
                     L.panes = [[u.members[0]["id"] for u in pn] for pn in panes]
                     cands.append(L)
+                    S.features(L, W, H, sW, sH, s_ref)
+                    if L.feat["tiny"] > 0:
+                        L2 = layout_panes(f"panes{p}f", panes, wo, W, H, sW, sH, s_ref, nu, True)
+                        if L2 is not None:
+                            L2.panes = L.panes
+                            cands.append(L2)
     return cands
 
 
