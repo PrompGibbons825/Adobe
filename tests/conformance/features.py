@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Dict, List
 
 import numpy as np
@@ -118,7 +119,7 @@ def fonts_and_fallback() -> List[str]:
         for wt in ("regular", "bold", "light", "semibold"):
             for st in ("regular", "bold", "italic", "bolditalic"):
                 path = book.resolve(fam, wt, st)[0]
-                if open(path, "rb").read() != fm.lookup(fam, wt, st):
+                if Path(path).read_bytes() != fm.lookup(fam, wt, st):
                     errs.append(f"lookup({fam!r}, {wt}, {st}) -> {path} differs from FontManager")
     for fam in ("Montserrat", "Lora"):
         errs += text_case(T(font_family=fam))
