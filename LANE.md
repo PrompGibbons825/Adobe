@@ -110,3 +110,6 @@ of a tall canvas; text over a busy photo region.
   clean one; if none is clean, relax the legibility floor (100% -> 60% -> 0) and search again
   (capacity: the canvas cannot hold the copy at the floor). Inputs x 20 formats: 0 hard faults,
   copy_over_copy promises 13 -> 4.
+- 08:40Z `fundamentals.check` on stress found decor bleeding further than in the source (132
+  off_canvas) and aspect faults on cover panels: decor now keeps at least its source on-canvas
+  share per axis; large non-backdrop images always keep aspect; group images >= 20 px.

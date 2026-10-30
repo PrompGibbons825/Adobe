@@ -48,7 +48,7 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
             e["fit"] = "cover"
     for i in S.panels:
         e = out[i]
-        if e.get("type") == "image" and e.get("fit") != "cover":
+        if e.get("type") == "image":
             k = min(W / S.W, H / S.H)
             w, h = float(e["width"]) * k, float(e["height"]) * k
             cx = (float(e["x"]) + float(e["width"]) / 2) / S.W * W
@@ -71,6 +71,13 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
         if inside:
             e["x"] = min(max(0.0, e["x"]), W - nw)
             e["y"] = min(max(0.0, e["y"]), H - nh)
+        else:
+            # bleed no further than the source: keep at least its on-canvas share per axis
+            fx = max(0.0, min(x + w, S.W) - max(x, 0.0)) / w
+            fy = max(0.0, min(y + h, S.H) - max(y, 0.0)) / h
+            ox, oy = (1 - fx) * nw, (1 - fy) * nh
+            e["x"] = min(max(-ox, e["x"]), W - nw + ox) if nw - ox <= W else e["x"]
+            e["y"] = min(max(-oy, e["y"]), H - nh + oy) if nh - oy <= H else e["y"]
     for b in S.blocks:
         pl = placed.get(b.bid)
         if pl is None:
@@ -96,8 +103,11 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
             ny = pl.y + (float(src["y"]) - b.y) * s
             nw = float(src["width"]) * s
             nh = float(src["height"]) * s
-            if min(nw, nh) < 1.0:
-                k = 1.0 / max(1e-6, min(nw, nh))
+            floor_px = 20.0 if e.get("type") == "image" else 1.0   # bitmap rounding stays under 5%
+            floor_px = min(floor_px, 0.4 * min(W, H))
+            if min(nw, nh) < floor_px:
+                k = floor_px / max(1e-6, min(nw, nh))
+                nx, ny = nx + nw / 2 - nw * k / 2, ny + nh / 2 - nh * k / 2
                 nw, nh = nw * k, nh * k
             e["x"], e["y"], e["width"], e["height"] = nx, ny, nw, nh
             if e.get("type") == "text":
