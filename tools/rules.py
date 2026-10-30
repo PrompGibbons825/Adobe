@@ -13,6 +13,9 @@ Two tiers:
   impossible content does not): no small print, no copy over copy, no text
   drawn past the canvas edge, button labels inside their button.
 
+Text geometry comes from ``fundamentals`` (the renderer's own wrap and draw rules, pinned by
+tests/conformance), not from the engine under test, so this file checks any engine tree.
+
 ``ghost_text`` is the one pixel check: the reference renderer ignores text
 ``opacity``, so a hidden text has to be hidden some other way. It renders the
 output with and without its hidden texts and reports any that still paint.
@@ -25,16 +28,118 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from engine.smart.analyze import normalize
-from engine.smart.color import normalize as normalize_colour, parse_rgba
-from engine.smart.geom import Box, el_box
-from engine.smart.items import Ctx
-from engine.smart.textfit import drawn_box, new_text_overlaps
+from dataclasses import dataclass
+
+from fundamentals.text import measure_text
 from tools import bleed
 
 ASSETS = Path(__file__).resolve().parents[1] / "brand_kit" / "assets"
 FONTS = ASSETS.parent / "fonts"
 TOL = 0.6  # px of slack for float rounding at the canvas edge
+
+
+# ----------------------------------------------------------------------------
+# geometry from the renderer model (fundamentals), never from an engine's own measurement
+
+
+@dataclass(frozen=True)
+class Box:
+    x: float
+    y: float
+    w: float
+    h: float
+
+    @property
+    def r(self) -> float:
+        return self.x + self.w
+
+    @property
+    def b(self) -> float:
+        return self.y + self.h
+
+    @property
+    def area(self) -> float:
+        return max(0.0, self.w) * max(0.0, self.h)
+
+
+def _f(v, d=0.0) -> float:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return d
+    return f if math.isfinite(f) else d
+
+
+def el_box(e: dict) -> Box:
+    return Box(_f(e.get("x")), _f(e.get("y")), max(0.0, _f(e.get("width"))), max(0.0, _f(e.get("height"))))
+
+
+def drawn_box(e: dict) -> Box:
+    """Where the renderer puts a text's ink (fundamentals.measure_text: its wrap at the float
+    size, glyphs at the int size, letter spacing, runs, alignment, overhang, rotation)."""
+    try:
+        b = measure_text(e).canvas_ink_box()
+    except Exception:  # noqa: BLE001  unmeasurable (bad values): the element box
+        return el_box(e)
+    if b is None:
+        x, y = _f(e.get("x")), _f(e.get("y"))
+        return Box(x, y, 0.0, 0.0)
+    return Box(b[0], b[1], b[2] - b[0], b[3] - b[1])
+
+
+def judge_floor(W: float, H: float) -> int:
+    """No visible text below this: cap height >= 7 px when the judge sees the canvas at 1024 px on
+    the long side (research 04), and never under 10 px."""
+    return max(10, math.ceil(10.0 * max(W, H) / 1024.0))
+
+
+def _rgba(v):
+    """(r, g, b, a) of any CSS-ish colour (rgba(), rgb(), hex, named), or None."""
+    if not isinstance(v, str):
+        return None
+    t = v.strip().lower()
+    if t.startswith("rgb"):
+        try:
+            parts = [float(p) for p in t[t.index("(") + 1:t.rindex(")")].split(",")]
+            return (int(parts[0]), int(parts[1]), int(parts[2]), round(parts[3] if len(parts) > 3 else 1.0, 3))
+        except (ValueError, IndexError):
+            return None
+    try:
+        from PIL import ImageColor
+
+        c = ImageColor.getcolor(t, "RGBA")
+        return (c[0], c[1], c[2], round(c[3] / 255.0, 3))
+    except (ValueError, AttributeError):
+        return None
+
+
+def text_overlaps(elements, tol: float = 1.0):
+    """Pairs of visible texts whose drawn ink boxes overlap (beyond ``tol`` px):
+    (a, b, area, area / smaller box)."""
+    texts = [e for e in elements if _visible_text(e)]
+    boxes = [(e["id"], drawn_box(e)) for e in texts]
+    out = []
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            (ia, a), (ib, b) = boxes[i], boxes[j]
+            ow = min(a.r, b.r) - max(a.x, b.x)
+            oh = min(a.b, b.b) - max(a.y, b.y)
+            if ow > tol and oh > tol:
+                out.append((ia, ib, ow * oh, ow * oh / max(1.0, min(a.area, b.area))))
+    return out
+
+
+def new_text_overlaps(elements, source_elements, deliberate: float = 0.15, slack: float = 0.02):
+    """Copy drawn over copy that the source did not draw that way: the pair overlaps by a larger
+    share of the smaller box than in the source (plus ``slack``); pairs the source overlapped by
+    ``deliberate`` or more (stacked display type, a drop shadow) are the design."""
+    src = {(a, b): f for a, b, _, f in text_overlaps(source_elements)}
+    out = []
+    for a, b, area, f in text_overlaps(elements):
+        f0 = max(src.get((a, b), 0.0), src.get((b, a), 0.0))
+        if f0 < deliberate and f > f0 + slack:
+            out.append((a, b, area, f))
+    return out
 
 
 def _visible_text(e: dict) -> bool:
@@ -97,7 +202,7 @@ def _text_safety(e: dict, s: dict) -> List[str]:
     col = e.get("color")
     if not (isinstance(col, str) and col.strip().lower().startswith("rgb")):
         errs.append(f"{eid}: colour {col!r} is not rgba()")
-    elif normalize_colour(s.get("color")) and parse_rgba(col) != parse_rgba(normalize_colour(s.get("color"))):
+    elif _rgba(s.get("color")) and _rgba(col) != _rgba(s.get("color")):
         errs.append(f"{eid}: colour changed {s.get('color')!r} -> {col!r}")
     return errs
 
@@ -119,12 +224,11 @@ def _image_ratio(e: dict, s: dict, W: float, H: float) -> List[str]:
 def floor_area(texts: List[dict], floor: float) -> float:
     """Least ink-box area the visible ``texts`` can occupy with every one at ``floor`` px: each
     set on a single line (wrapping only adds area) at the floor size, width x line step."""
-    from engine.smart.textfit import TextStyle, measure
-
     total = 0.0
+    fs = max(1, int(round(floor)))
     for e in texts:
-        b = measure(str(e.get("content", "")), TextStyle.of(e), max(1, int(round(floor))), 1e9, exact=True)
-        total += b.ink_width * b.line_step * max(1, b.n_lines)
+        lay = measure_text(dict(e, font_size=fs, width=1e9, rotation=0), with_ink=False)
+        total += lay.max_line_width * fs * lay.line_height * max(1, lay.n_lines)
     return total
 
 
@@ -135,7 +239,7 @@ def capacity_impossible(out: dict, tgt: dict) -> bool:
     """True when ``floor_area(texts, floor) > 1.0 * W * H``: holding the small-print floor is
     impossible, so small print is reported as ``capacity`` instead of a failure (never as passing)."""
     W, H = tgt["width"], tgt["height"]
-    floor = Ctx(W=W, H=H, W0=1, H0=1).judge_floor
+    floor = judge_floor(W, H)
     texts = [e for e in out["elements"] if _visible_text(e)]
     return floor_area(texts, floor) > CAPACITY_K * W * H
 
@@ -144,7 +248,7 @@ def capacity_errors(out: dict, tgt: dict) -> List[str]:
     """The small-print findings that ``promise_errors`` exempts because of capacity (else [])."""
     if not capacity_impossible(out, tgt):
         return []
-    floor = Ctx(W=tgt["width"], H=tgt["height"], W0=1, H0=1).judge_floor
+    floor = judge_floor(tgt["width"], tgt["height"])
     return [f"capacity: {e['id']}: {e['font_size']}px < {floor}px, texts need more than the canvas at the floor"
             for e in out["elements"] if _visible_text(e) and e["font_size"] < floor]
 
@@ -152,7 +256,7 @@ def capacity_errors(out: dict, tgt: dict) -> List[str]:
 def promise_errors(src: dict, out: dict, tgt: dict) -> List[str]:
     errs: List[str] = []
     W, H = tgt["width"], tgt["height"]
-    floor = Ctx(W=W, H=H, W0=1, H0=1).judge_floor
+    floor = judge_floor(W, H)
     texts = [e for e in out["elements"] if _visible_text(e)]
     cap = capacity_impossible(out, tgt)
     for e in texts:
@@ -161,8 +265,7 @@ def promise_errors(src: dict, out: dict, tgt: dict) -> List[str]:
         db = drawn_box(e)
         if db.x < -TOL or db.y < -TOL or db.r > W + TOL or db.b > H + TOL:
             errs.append(f"{e['id']}: glyphs drawn past the canvas ({db.x:.0f},{db.y:.0f},{db.r:.0f},{db.b:.0f})")
-    src_norm = [normalize(e, i) for i, e in enumerate(src["elements"])]  # as the renderer would draw it
-    for a, b, area, _ in new_text_overlaps(out["elements"], src_norm):
+    for a, b, area, _ in new_text_overlaps(out["elements"], src["elements"]):
         errs.append(f"copy over copy: {a} x {b} ({area:.0f} px2)")
     errs += _labels_in_buttons(src, out)
     return errs
@@ -256,7 +359,10 @@ def contrast_errors(src: dict, out: dict, tgt: dict) -> List[str]:
     clearly worse than in the source (white copy that left its dark panel for
     a white canvas). Measured like the engine's pixel critic: WCAG contrast at
     the 10th percentile of the region, on a small render without the copy."""
-    from engine.smart import pixels
+    try:
+        from engine.smart import pixels
+    except ImportError:  # an engine without engine/smart: measure on the renderer's pixels
+        return _contrast_errors_rendered(src, out, tgt)
 
     hidden = {e["id"] for e in out["elements"] if float(e.get("opacity", 1) or 0) <= 0}
     before = pixels.measure(src["elements"], src["canvas"]["width"], src["canvas"]["height"], skip=set())
@@ -266,6 +372,25 @@ def contrast_errors(src: dict, out: dict, tgt: dict) -> List[str]:
         c0 = before.get(tid, (4.5, 0.0))[0]
         if c < 3.0 and c < 0.7 * min(c0, 4.5):
             errs.append(f"{tid}: contrast {c:.1f}:1 (source {c0:.1f}:1)")
+    return errs
+
+
+def _contrast_errors_rendered(src: dict, out: dict, tgt: dict) -> List[str]:
+    """contrast_errors without the incumbent's pixel critic (fundamentals: median of what is under
+    each text's ink, on a render without it)."""
+    from fundamentals.check import _Px
+
+    after = _Px(dict(out, canvas={"width": tgt["width"], "height": tgt["height"]}), None, None)
+    before = _Px(src, None, None)
+    so = {e["id"]: e for e in src["elements"]}
+    errs = []
+    for e in out["elements"]:
+        if not _visible_text(e) or e["id"] not in so:
+            continue
+        c = after.contrast(e)
+        c0 = before.contrast(so[e["id"]]) or 4.5
+        if c is not None and c < 3.0 and c < 0.7 * min(c0, 4.5):
+            errs.append(f"{e['id']}: contrast {c:.1f}:1 (source {c0:.1f}:1)")
     return errs
 
 
