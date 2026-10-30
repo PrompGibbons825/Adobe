@@ -19,9 +19,19 @@ from tests.harness import evaluate, probe_errors, relation_errors, run
 from tools.rules import hard_rule_errors, render_image
 
 
+def _mine(name: str, shard: str) -> bool:
+    if not shard:
+        return True
+    import zlib
+
+    k, n = (int(x) for x in shard.split("/"))
+    return zlib.crc32(name.encode()) % n == k
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("only", nargs="*")
+    ap.add_argument("--shard", default="", help="k/n: run only the k-th of n hash shards (parallel floors)")
     ap.add_argument("--sheet", help="write a contact sheet of every output here")
     ap.add_argument("--no-render", action="store_true", help="skip the ghost-text render check")
     a = ap.parse_args()
@@ -33,7 +43,7 @@ def main() -> int:
     bad = total = xf = 0
     t0 = time.time()
     for case in cases():
-        if a.only and not any(w in case.name for w in a.only):
+        if (a.only and not any(w in case.name for w in a.only)) or not _mine(case.name, a.shard):
             continue
         if a.sheet:
             tiles.append(tile(_thumb(render_image(case.source)), f"SOURCE {case.name}", 300))
@@ -54,7 +64,7 @@ def main() -> int:
             if a.sheet:
                 tiles.append(tile(_thumb(render_image(out)), f"{target} {'FAIL' if errs else 'ok'}", 300))
     for name, src, tgt in malformed():
-        if a.only and not any(w in name for w in a.only):
+        if (a.only and not any(w in name for w in a.only)) or not _mine(name, a.shard):
             continue
         total += 1
         try:
@@ -67,7 +77,7 @@ def main() -> int:
             bad += 1
             print(f"FAIL malformed/{name}: " + "; ".join(errs[:5]))
     for p in bleed_probes():
-        if a.only and not any(w in p.name for w in a.only):
+        if (a.only and not any(w in p.name for w in a.only)) or not _mine(p.name, a.shard):
             continue
         total += 1
         errs = probe_errors(p)
@@ -75,7 +85,7 @@ def main() -> int:
             bad += 1
             print(f"FAIL bleed/{p.name}: " + "; ".join(errs[:5]))
     for r in relations():
-        if a.only and not any(w in r.name for w in a.only):
+        if (a.only and not any(w in r.name for w in a.only)) or not _mine(r.name, a.shard):
             continue
         total += 1
         errs = relation_errors(r)

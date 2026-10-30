@@ -198,10 +198,14 @@ def _bury(plans, d: Design, ctx: Ctx) -> None:
 
 
 def archetype(name: str) -> str:
-    """The archetype of a plan (stack, split, row, adapt, scaled), whatever its
-    variant: ``split-left-0.34-fold~1.8@1.35`` is a split. The quiet plans (quiet.py) are three:
+    """The archetype of a plan (stack, split, row, adapt, scaled, anchor, flex, retrieve), whatever
+    its variant: ``split-left-0.34-fold~1.8@1.35`` is a split. The quiet plans (quiet.py) are three:
     the column in the band, the headline in it, and the copy of its tone in it."""
-    parts = name.split("@")[0].split("~")[0].split("-")
+    base = name.split("@")[0].split("~")[0]
+    for k in ("retrieve", "anchor", "flex"):
+        if base.startswith(k):
+            return k
+    parts = base.split("-")
     return "-".join(parts[:2]) if parts[0] == "quiet" else parts[0]
 
 

@@ -43,9 +43,19 @@ TRIVIAL_ASPECT = math.log(1.5)  # ... once the aspect ratio has changed this muc
 
 def _prior(name: str, r: float, r0: float = 1.0) -> float:
     lr = math.log(r)
+    if name.startswith("anchor"):
+        return 38.0 * max(0.0, 1.0 - abs(math.log(r / r0)) / math.log(1.45))
     if name.startswith("adapt"):
         # the designer's own arrangement, when the shape barely changes
         return 40.0 * max(0.0, 1.0 - abs(math.log(r / r0)) / math.log(1.2))
+    if name.startswith("retrieve"):
+        return 14.0 - 6.0 * min(1.0, abs(math.log(r / r0)) / math.log(2.0))
+    if name.startswith("flex-grid"):
+        return 9.0 - 4.0 * max(0.0, lr - math.log(1.1))
+    if name.startswith("flex-tile"):
+        return REGIONS * 0.85
+    if name.startswith("flex"):
+        return 7.0 - 5.0 * max(0.0, abs(lr - math.log(1.0)))
     if name.startswith("stack") or name.startswith("quiet"):  # a quiet plan is a stack (quiet.py)
         return 10.0 - 14.0 * max(0.0, lr - math.log(1.25))
     if name.startswith("split"):
@@ -103,6 +113,9 @@ def score_plans(plans: List[Plan], d: Design, ctx: Ctx) -> None:
     src_cov = sum(it.src_box.area for it in d.items if it.role != "missing") / max(1.0, d.W * d.H)
     for p in plans:
         p.score, p.breakdown = _score(p, best, d, ctx, src_cov)
+    from . import ranker  # the learned term: what designers did, one bounded term of this score
+
+    ranker.add_term(plans, d, ctx)
 
 
 def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float):
