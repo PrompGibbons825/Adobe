@@ -19,3 +19,15 @@
 ## 07:00Z refit with log-fill feature (226 train tasks, 9308 candidates)
 - Pure sim fit gives leg 0.8/fill 0.11 (sim 0.419) but designer-IoU cannot see readability, so leg=3, fill=1 are floors set by hand: sim 0.413, oracle 0.434. Disclosed hand-set: leg, fill, text(0.5).
 - Visual review (lab/viz.py): near-aspect Crello tiles are close to the designers; 728x90 with 10+ units is inherently tiny (pin or 6 panes), nothing is dropped.
+
+## 08:00Z bench (tournament set 160 tasks, run via tools.bench, uncapped niced; box load ~45 so secs are wall, CPU p95 ~1s)
+| head | hard tiles | promise tiles | audit tiles | hidden tiles | sim_mean (wide/mid/tall) |
+|---|---|---|---|---|---|
+| 579f93a first | 8 | 50 | 53 | 66 | 0.356 (.311/.421/.237) |
+| +ls scaling, rotated footprint | 0 | 44 | 47 | 67 | 0.363 |
+| +drawn block height | 0 | 34 | 37 | 68 | 0.360 |
+| +text floor variants | 0 | 27 | 31 | 66 | 0.361 |
+| +bg-ish layers (final) | 0 | 25 | 29 | 70 | 0.358 |
+- Faults found by the bench and fixed: letter_spacing was not scaled with font in fit (1px text), rotated text footprint, glyph descent past last line pitch.
+- Tried and reverted: partial-bleed bg layers clipped with cover transform (aspect rule fires: 13 hard tiles).
+- Not tuned on the tournament set: weights fit on 226 non-tournament tasks; the tournament set is used only for evaluation.

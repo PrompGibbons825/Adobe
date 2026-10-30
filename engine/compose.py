@@ -139,12 +139,16 @@ def build_units(src):
     W, H = src["canvas"]["width"], src["canvas"]["height"]
     els = src["elements"]
     cav = (0, 0, W, H)
-    bgs, rest = [], []
+    bgs, rest, bgish = [], [], []
     for e in els:
         bb = el_bbox(e)
-        if e["type"] != "text" and area(bb) >= .8 * W * H and not e.get("rotation") and (e.get("opacity", 1) or 1) > 0.5 \
-                and e.get("group_id") in (None, ""):
+        inter = inter_area(bb, cav)
+        free = e.get("group_id") in (None, "") and e["type"] != "text" and not e.get("rotation")
+        if free and inter >= .8 * W * H and (e.get("opacity", 1) or 1) > 0.5:
             bgs.append(e)
+        elif free and inter >= .12 * W * H and (bb[0] < -.02 * W or bb[1] < -.02 * H or bb[2] > 1.02 * W or bb[3] > 1.02 * H) \
+                and area(bb) > .5 * W * H:
+            bgish.append(e)
         else:
             rest.append(e)
     parent = {e["id"]: e["id"] for e in rest}
@@ -196,7 +200,7 @@ def build_units(src):
             ov = any(o is not u and inter_area(u.bb, o.bb) > .3 * u.area for o in units)
             if bleed or ov:
                 u.kind = "decor"
-    bg_units = [Unit([b], "bg", W, H) for b in bgs]
+    bg_units = [Unit([b], "bg", W, H) for b in bgs] + [Unit([b], "bg", W, H) for b in bgish]  # partial-bleed layers: full-bleed cover too (aspect rule forbids clipped boxes)
     return bg_units, [u for u in units if u.kind == "decor"], [u for u in units if u.kind != "decor"]
 
 
@@ -214,11 +218,21 @@ class Layout:
         self.pane_w = None
 
 
-def bg_elements(bgs, W, H):
+def bg_elements(bgs, W, H, sW, sH):
     out = []
+    c = max(W / sW, H / sH)
     for u in bgs:
         e = copy.deepcopy(u.members[0])
-        e.update(x=0, y=0, width=W, height=H)
+        if u.kind == "bgish":  # same cover transform for every bleeding layer, clipped to the canvas
+            x0 = W / 2 + (e["x"] - sW / 2) * c
+            y0 = H / 2 + (e["y"] - sH / 2) * c
+            x1, y1 = x0 + e["width"] * c, y0 + e["height"] * c
+            x0, y0, x1, y1 = max(0, x0), max(0, y0), min(W, x1), min(H, y1)
+            if x1 - x0 < 1 or y1 - y0 < 1:
+                x0, y0, x1, y1 = 0, 0, min(W, 1), min(H, 1)
+            e.update(x=R2(x0), y=R2(y0), width=R2(x1 - x0), height=R2(y1 - y0))
+        else:
+            e.update(x=0, y=0, width=W, height=H)
         if e["type"] == "image":
             e["fit"] = "cover"
         out.append(e)
@@ -411,7 +425,7 @@ def plan(src, tgt):
     bgs, decs, units = build_units(src)
     s_ref = math.sqrt(W * H / (sW * sH))
     CANVAS[0], CANVAS[1] = W, H
-    ctx = dict(src=src, W=W, H=H, bg=bg_elements(bgs, W, H), decor=decor_elements(decs, W, H, sW, sH, s_ref), cands=[])
+    ctx = dict(src=src, W=W, H=H, bg=bg_elements(bgs, W, H, sW, sH), decor=decor_elements(decs, W, H, sW, sH, s_ref), cands=[])
     if units:
         for L in [layout_pin(units, W, H, sW, sH)] + candidates(units, W, H, sW, sH, s_ref):
             S.features(L, W, H, sW, sH, s_ref)
