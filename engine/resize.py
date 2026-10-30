@@ -1,75 +1,97 @@
+"""Chameleon resize engine, lane `learn`: re-lay a design out the way Crello's designers resized
+similar elements to a similar shape, then repair it so every hard rule holds.
+
+    engine/learn/features.py  geometry/type features of each element (no roles)
+    engine/learn/knn.py       nearest designer moves, weights fitted on held-out Crello families
+    engine/learn/compose.py   units -> transfer -> bleed -> type -> repair
+    engine/learn/textfit.py   measures text exactly like the renderer
+
+Any failure falls back to a uniform fit-and-centre; `_finalize` enforces the hard rules on
+whatever comes out.
 """
-THIS IS THE FILE YOU IMPLEMENT.
 
-Everything else in this repo (input loading, output writing, rendering,
-the Dockerfile) is plumbing so you can focus on exactly one function:
-`resize()`. See RULES.md and the design schema for the full contract.
-"""
+from __future__ import annotations
 
-from typing import Any
+import math
+import sys
+import traceback
+from typing import Any, Dict
+
+from engine.learn.features import is_bleed, num
 
 
-def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
-    """
-    Args:
-        source: {"canvas": {"width": int, "height": int}, "elements": [...]}
-                 — the design at its original size. See
-                 chameleon_design_schema_v0.9.json for the full element spec
-                 (text / image / shape, position, size, rotation, opacity,
-                 z_index, group_id, and type-specific fields).
-        target_canvas: {"width": int, "height": int} — the shape you're
-                 resizing into.
+def resize(source: Dict[str, Any], target_canvas: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from engine.learn.compose import layout
+        out = layout(source, target_canvas)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc(file=sys.stderr)
+        out = _fallback(source, target_canvas)
+    return _finalize(source, out, target_canvas)
 
-    Returns:
-        A design dict with the SAME shape as `source`:
-        {"canvas": target_canvas, "elements": [...]}
 
-        Hard requirements (see RULES.md for the full list):
-        - Every element `id` in `source` must appear exactly once in your
-          output. Do not add, remove, or invent elements.
-        - Do not regenerate or redraw any asset's pixel content — you are
-          repositioning and resizing the elements you were given, nothing
-          more. This is a disqualifying rule, not a style preference.
-        - Non-background image elements should be kept in proportion
-          (matching the source aspect ratio within ~5%) unless they are a
-          full-bleed / `fit: "cover"` element, which is expected to crop.
-        - `font_size` may change to help text fit. `font_family` and
-          `content` should not, for this stage of scoring (see RULES.md,
-          "Adaptive typography and copy").
-        - Nothing should end up outside `target_canvas`'s bounds.
+def _fallback(source, target):
+    W = max(1.0, num(source["canvas"].get("width"), 1.0))
+    H = max(1.0, num(source["canvas"].get("height"), 1.0))
+    TW, TH = max(1.0, num(target.get("width"), 1.0)), max(1.0, num(target.get("height"), 1.0))
+    s = min(TW / W, TH / H)
+    ox, oy = (TW - W * s) / 2, (TH - H * s) / 2
+    out = []
+    for e in source.get("elements") or []:
+        e = dict(e)
+        if is_bleed(e, W, H):
+            e.update(x=0.0, y=0.0, width=TW, height=TH)
+            if e.get("type") == "image":
+                e["fit"] = "cover"
+        else:
+            e.update(x=ox + num(e.get("x")) * s, y=oy + num(e.get("y")) * s,
+                     width=max(1.0, num(e.get("width"), 1) * s), height=max(1.0, num(e.get("height"), 1) * s))
+            if e.get("type") == "text":
+                e["font_size"] = max(1, int(num(e.get("font_size"), 12) * s))
+        out.append(e)
+    return dict(canvas=dict(width=int(TW), height=int(TH)), elements=out)
 
-    This is where your actual approach goes: constraint solving, a learned
-    layout model, heuristics, whatever you choose. Latency is not a scoring
-    concern (see RULES.md) — spend your effort on quality, not speed.
-    """
 
-    # ------------------------------------------------------------------
-    # Naive baseline so this file runs out of the box. This is a uniform
-    # stretch — literally the thing the brief tells you NOT to do ("a
-    # naive program stretches the picture; a good one moves the
-    # furniture"). It's here so `python -m engine.main` produces valid,
-    # schema-correct output on day one. Replace the body of this function;
-    # do not just tune these three lines.
-    # ------------------------------------------------------------------
-    scale_x = target_canvas["width"] / source["canvas"]["width"]
-    scale_y = target_canvas["height"] / source["canvas"]["height"]
-
-    out_elements = []
-    for el in source["elements"]:
-        el = dict(el)  # shallow copy — don't mutate the input
-        el["x"] = el["x"] * scale_x
-        el["y"] = el["y"] * scale_y
-        el["width"] = el["width"] * scale_x
-        el["height"] = el["height"] * scale_y
-        if el["type"] == "text":
-            # font_size scaling isn't required to be uniform — this is
-            # just a starting point. Floored at 1px: the schema requires
-            # font_size >= 1, and an extreme downscale (e.g. a tall poster
-            # squeezed into a short banner) can otherwise compute < 1.
-            el["font_size"] = max(1.0, el["font_size"] * min(scale_x, scale_y))
-        out_elements.append(el)
-
-    return {
-        "canvas": {"width": target_canvas["width"], "height": target_canvas["height"]},
-        "elements": out_elements,
-    }
+def _finalize(source, out, target):
+    TW, TH = max(1.0, num(target.get("width"), 1.0)), max(1.0, num(target.get("height"), 1.0))
+    W = max(1.0, num(source["canvas"].get("width"), 1.0))
+    H = max(1.0, num(source["canvas"].get("height"), 1.0))
+    by_id = {}
+    for e in out.get("elements") or []:
+        if isinstance(e, dict) and e.get("id") not in by_id:
+            by_id[e.get("id")] = e
+    res = []
+    for se in source.get("elements") or []:
+        e = dict(by_id.get(se.get("id")) or se)
+        for k in ("type", "content", "font_family", "asset_id"):
+            if k in se:
+                e[k] = se[k]
+        x, y = num(e.get("x")), num(e.get("y"))
+        w, h = max(1.0, num(e.get("width"), 1.0)), max(1.0, num(e.get("height"), 1.0))
+        full = (e.get("type") == "image" and e.get("fit") == "cover" and w >= TW - 1 and h >= TH - 1)
+        if e.get("type") == "image" and not full:
+            # keep the source aspect (re-derive from the source box, fit inside the current box)
+            sw, sh = max(1e-3, num(se.get("width"), 1)), max(1e-3, num(se.get("height"), 1))
+            if abs(math.log((w / h) / (sw / sh))) > 0.01:
+                if is_bleed(se, W, H):
+                    e["fit"] = "cover"
+                    x, y, w, h = 0.0, 0.0, TW, TH
+                else:
+                    cx, cy = x + w / 2, y + h / 2
+                    side = math.sqrt(w * h)
+                    ar = sw / sh
+                    w, h = side * math.sqrt(ar), side / math.sqrt(ar)
+                    x, y = cx - w / 2, cy - h / 2
+        if w > TW or h > TH:
+            s = min(TW / w, TH / h)
+            if e.get("type") == "image" and not full:
+                w, h = w * s, h * s
+            else:
+                w, h = min(w, TW), min(h, TH)
+        x = min(max(0.0, x), TW - w)
+        y = min(max(0.0, y), TH - h)
+        e.update(x=float(x), y=float(y), width=float(w), height=float(h))
+        if e.get("type") == "text":
+            e["font_size"] = max(1, int(num(e.get("font_size"), 12)))
+        res.append(e)
+    return dict(canvas=dict(width=int(TW), height=int(TH)), elements=res)
