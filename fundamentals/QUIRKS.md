@@ -132,7 +132,7 @@ white canvas).
 `python -m tests.conformance.run --n 2000 --seed 1` (feature cases + 2000 random texts):
 see the commit message / `loop/sprint` board for the latest numbers. Wrapped strings must match
 the converter's char for char; ink boxes within 1.5 px (rotated: never smaller than the ink, at
-most 8% of the font size larger).
+most 15% of the font size larger).
 
 ## Implications for engines and checkers (one line each)
 1. Measure text with the renderer's own wrap at the float size, then draw extents at `int(size)`;

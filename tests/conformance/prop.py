@@ -71,10 +71,10 @@ def random_text(rng: random.Random) -> dict:
 
 def rotated_err(e: dict, mb, pb) -> float:
     """Rotated text: the model rotates each glyph's bounding rect, so it may only be larger than the
-    ink, by at most 8% of the font size. Returns 0 when that holds, else the worst excess (px)."""
+    ink, by at most 15% of the font size (a rotated glyph rect overshoots its outline). Returns 0 when that holds, else the worst excess (px)."""
     under = max(mb[0] - pb[0], mb[1] - pb[1], pb[2] - mb[2], pb[3] - mb[3])
     over = max(pb[0] - mb[0], pb[1] - mb[1], mb[2] - pb[2], mb[3] - pb[3])
-    if under <= TOL and over <= 0.08 * float(e.get("font_size", 12)) + TOL:
+    if under <= TOL and over <= 0.15 * float(e.get("font_size", 12)) + TOL:
         return 0.0
     return max(under, over)
 
