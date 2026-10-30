@@ -40,8 +40,11 @@ def shard_of(fam: str, n: int) -> int:
     return int(hashlib.md5(fam.encode()).hexdigest()[:8], 16) % n
 
 
-def load_tasks(dirs):
-    bad = set(TOURNAMENT.read_text().split()) if TOURNAMENT.exists() else set()
+def load_tasks(dirs, exclude=TOURNAMENT):
+    exclude = Path(exclude)
+    if not exclude.exists():
+        raise SystemExit(f"{exclude} missing: refusing to dump without the tournament exclusion list")
+    bad = set(exclude.read_text().split())
     tasks = {}
     for dr in dirs:
         for p in sorted(Path(dr).glob("*.json")):
@@ -125,9 +128,10 @@ def main():
     ap.add_argument("--cases", action="append", default=[])
     ap.add_argument("--out", default="/data/agents/work/designer/dumps")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--exclude", default=str(TOURNAMENT), help="families never to dump (the tournament set)")
     a = ap.parse_args()
     dirs = [c for c in (a.cases or ["/data/agents/work/crello-wide/cases"]) if Path(c).is_dir()]
-    tasks = load_tasks(dirs)
+    tasks = load_tasks(dirs, a.exclude)
     names = [n for n in sorted(tasks) if shard_of(tasks[n]["family"], a.nshards) == a.shard]
     if a.limit:
         names = names[:a.limit]
