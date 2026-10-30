@@ -75,6 +75,13 @@ white canvas).
   bold and italic.
 - `capitalize: true` (not in the schema; the converter reads it) upper-cases at draw time.
 - Text effects (shadow, outline...) are not reachable from the schema.
+- **Render crashes** (pydantic validation in `cr_renderer.schema.TextElement`; one bad text kills
+  the whole PNG): text `width <= 0` or `height <= 0`, `font_size <= 0`, `line_height <= 0`, and any
+  `text_align` outside left/center/right/justify. Images and shapes with a 0 size just draw nothing.
+- **HTML entities are unescaped at draw time** (`html.unescape` on `TextElement.text`) but the wrap,
+  line map and colour map were computed on the raw string: `"A &amp; B words"` draws `&` and the
+  line breaks shift by the length difference (mid-word breaks, a drawn `\n` glyph)
+  **[probed: "A &amp; B words here" -> lines "A & B\nwor" / "ds here"]**.
 
 ## Fonts (`brand_fonts.py`, `cr_renderer/fonts.py`)
 - Only the brand kit's files are loaded: `Solstice Sans` (Regular, Bold, Italic, BoldItalic) and
@@ -120,6 +127,12 @@ white canvas).
 
 ## Things that do NOT matter to the drawing
 - `group_id`, `max_lines`, element `height` for text, `font_style` other than "italic", unknown keys.
+
+## Measured conformance (fundamentals vs the renderer)
+`python -m tests.conformance.run --n 2000 --seed 1` (feature cases + 2000 random texts):
+see the commit message / `loop/sprint` board for the latest numbers. Wrapped strings must match
+the converter's char for char; ink boxes within 1.5 px (rotated: never smaller than the ink, at
+most 8% of the font size larger).
 
 ## Implications for engines and checkers (one line each)
 1. Measure text with the renderer's own wrap at the float size, then draw extents at `int(size)`;
