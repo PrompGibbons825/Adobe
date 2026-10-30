@@ -85,7 +85,7 @@ class Unit:
             e.update(x=0.0, y=0.0, width=R2(wd), height=R2(math.ceil(bh)), font_size=fs)
             if e.get("letter_spacing"):
                 e["letter_spacing"] = R2(e["letter_spacing"] * fs / fs0)
-            return Fit(self, [e], (0, 0, wd, bh), fs0)
+            return Fit(self, [e], (0, 0, wd, math.ceil(bh)), fs0)
         ke = k
         if avail_w is not None and self.w * ke > avail_w:
             ke = avail_w / self.w
@@ -222,7 +222,7 @@ def bg_elements(bgs, W, H):
 def decor_elements(decs, W, H, sW, sH, s_ref):
     out = []
     for u in decs:
-        k = s_ref
+        k = min(s_ref, min(W, H) / min(sW, sH))
         fit = u.fit(k)
         w, h = min(fit.w, W), min(fit.h, H)
         if fit.w > W or fit.h > H:
@@ -333,11 +333,29 @@ def layout_panes(name, panes, weights, W, H, sW, sH, s_ref):
 
 
 def partitions(order, maxp):
+    """Contiguous partitions of the reading order into 1..maxp panes: cuts at area-balanced quantiles,
+    plus single-step shifts of each cut."""
     n = len(order)
-    out = []
+    cum, c = [], 0.0
+    for u in order:
+        c += math.sqrt(u.area)
+        cum.append(c)
+    tot = cum[-1]
+    seen, out = set(), []
     for p in range(1, min(maxp, n) + 1):
-        for cuts in itertools.combinations(range(1, n), p - 1):
-            idx = (0,) + cuts + (n,)
+        base = []
+        for j in range(1, p):
+            tgt = tot * j / p
+            base.append(min(range(1, n), key=lambda i: abs(cum[i - 1] - tgt)))
+        for sh in itertools.product((-1, 0, 1), repeat=p - 1):
+            cuts = [b + d for b, d in zip(base, sh)]
+            if any(not (1 <= x < n) for x in cuts) or cuts != sorted(set(cuts)):
+                continue
+            key = tuple(cuts)
+            if key in seen:
+                continue
+            seen.add(key)
+            idx = [0] + cuts + [n]
             out.append([order[idx[i]:idx[i + 1]] for i in range(p)])
     return out
 
@@ -346,7 +364,8 @@ def candidates(units, W, H, sW, sH, s_ref):
     order = reading_order(units)
     n = len(order)
     cands = []
-    maxp = 4 if n <= 6 else 3 if n <= 9 else 2
+    arW = W / H
+    maxp = max(1, min(n, 6, 1 + round(arW * 1.5)))
     parts = partitions(order, maxp)
     # visual | text splits
     vis = [u for u in order if not u.texts]
@@ -354,12 +373,9 @@ def candidates(units, W, H, sW, sH, s_ref):
     if vis and txt:
         parts.append([vis, txt])
         parts.append([txt, vis])
-    arW = W / H
     for panes in parts:
         p = len(panes)
         # prune: pane count should be plausible for the aspect
-        if p > 1 and arW < 0.9 and p > 2:
-            continue
         wopts = [[1.0] * p]
         if p > 1:
             dm = [max(u.w for u in pn) ** .8 for pn in panes]
@@ -374,23 +390,37 @@ def candidates(units, W, H, sW, sH, s_ref):
     return cands
 
 
-def compose(src, tgt):
+def plan(src, tgt):
+    """All candidate layouts with features: returns ctx dict."""
     sW, sH = src["canvas"]["width"], src["canvas"]["height"]
     W, H = int(tgt["width"]), int(tgt["height"])
     bgs, decs, units = build_units(src)
     s_ref = math.sqrt(W * H / (sW * sH))
-    out_bg = bg_elements(bgs, W, H)
-    decor = decor_elements(decs, W, H, sW, sH, s_ref)
-    if not units:
-        return finalize(src, W, H, out_bg, decor, [])
+    ctx = dict(src=src, W=W, H=H, bg=bg_elements(bgs, W, H), decor=decor_elements(decs, W, H, sW, sH, s_ref), cands=[])
+    if units:
+        for L in [layout_pin(units, W, H, sW, sH)] + candidates(units, W, H, sW, sH, s_ref):
+            S.features(L, W, H, sW, sH, s_ref)
+            ctx["cands"].append(L)
+    return ctx
+
+
+def choose(ctx, weights=None):
     best = None
-    cl = [layout_pin(units, W, H, sW, sH)] + candidates(units, W, H, sW, sH, s_ref)
-    for L in cl:
-        sc = S.score(L, W, H, sW, sH, s_ref)
+    for L in ctx["cands"]:
+        sc = S.dot(L.feat, weights)
         L.score = sc
         if best is None or sc > best.score:
             best = L
-    return finalize(src, W, H, out_bg, decor, best.placed, best)
+    return best
+
+
+def realise(ctx, L):
+    return finalize(ctx["src"], ctx["W"], ctx["H"], ctx["bg"], ctx["decor"], L.placed if L else [], L)
+
+
+def compose(src, tgt, weights=None):
+    ctx = plan(src, tgt)
+    return realise(ctx, choose(ctx, weights))
 
 
 def finalize(src, W, H, bg, decor, placed, L=None):
@@ -401,6 +431,10 @@ def finalize(src, W, H, bg, decor, placed, L=None):
         els += f.emit(X, Y)
     order = {e["id"]: i for i, e in enumerate(src["elements"])}
     els.sort(key=lambda e: (e.get("z_index", 0), order[e["id"]]))
+    for e in els:  # final guard: keep inside canvas
+        if not e.get("rotation"):
+            e["x"] = R2(min(max(e["x"], 0), max(0, W - e["width"])))
+            e["y"] = R2(min(max(e["y"], 0), max(0, H - e["height"])))
     out = {"canvas": {"width": W, "height": H}, "elements": els}
     out["_layout"] = L.name if L else "none"
     return out
