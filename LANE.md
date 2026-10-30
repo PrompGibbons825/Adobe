@@ -123,3 +123,18 @@ of a tall canvas; text over a busy photo region.
   backdrops; rotated text keeps rotated AABB, ink box and unrotated box inside the canvas.
 - 08:48Z image size floor (20 px) capped so an image never grows wider/taller than 0.9 of the
   canvas (60:1 slivers were blown past the canvas edges).
+- 08:52Z FINAL bad7e10. B0 bench, tournament set (160): 0 crashes, 0 hard tiles, 50 promise
+  tiles, 55 hidden tiles, sim 0.3585 (mid 0.404, wide 0.333, tall 0.264). Stress 300 random
+  designs x 20 formats (own checker + `fundamentals.check`, determinism, order independence):
+  1 fault (a 65:1 sliver image at 320x50, bitmap rounding). Docker (`--cpus 2 --memory 3g
+  --network none`): 3/3 inputs OK; p95 1.17 s per target over 3 inputs x 20 formats (5b65ab8).
+
+## Where it stands
+- Strongest: tall and extreme/strip targets (topology search + learned energy beat uniform fit by
+  far on strips/extremes: sim 0.29-0.34 vs 0.15-0.20), and every hard rule.
+- Weakest: near-square and wide, where the designer mostly keeps positions; uniform fit is about
+  as close (0.455 vs 0.437 on dev near-square). Small print below the judge-view floor remains
+  frequent on tiny canvases (promise-level).
+- Idea worth porting: verify at the destination. Emit the best few candidates in energy order and
+  keep the first whose *drawn* boxes have no new text collision; relax the legibility floor only
+  when no candidate can be collision-free (capacity).
