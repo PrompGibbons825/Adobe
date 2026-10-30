@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from typing import Dict, List
 
-from . import textfit
+from . import system, textfit
 from .analyze import Design
 from .compose import KEEP_HERO, ROOMY, Plan, art_box, keep_share, story_band
 from .geom import Box
@@ -30,7 +30,7 @@ DENSITY = 120.0  # per unit of crowding past a comfortable copy density (see _cr
 SMALL_UNIT = 400  # px: canvases with a shorter short side are ad units, read at a glance
 RUNT = 0.12  # times its importance, for a headline or subhead ending on a lone word after a fuller line
 COLLAPSE = 1.5  # times its importance, for copy set level with copy it was 1.5x smaller than
-HIERARCHY = 12.0  # for a headline that stands out 1.6x more than in the source (or less, negative)
+SYSTEM = 0.5  # x the copy's importance, per log unit of drift from the source's type system (system.py)
 INFLATION = 2.0  # per unit of importance and of log-excess share (see _inflation)
 SHARE_SLACK = math.log(2.5)  # a secondary item may grow to 2.5x its share of the canvas freely
 COLLAGE = 15.0  # prior for re-flowing a collage of pictures into a grid for the new shape
@@ -101,11 +101,12 @@ def score_plans(plans: List[Plan], d: Design, ctx: Ctx) -> None:
         for r, _, _ in p.placed + p.floaters:
             best[r.item.key] = max(best.get(r.item.key, 0.0), r.scale)
     src_cov = sum(it.src_box.area for it in d.items if it.role != "missing") / max(1.0, d.W * d.H)
+    src_fs = system.type_scale(d)
     for p in plans:
-        p.score, p.breakdown = _score(p, best, d, ctx, src_cov)
+        p.score, p.breakdown = _score(p, best, d, ctx, src_cov, src_fs)
 
 
-def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float):
+def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float, src_fs=None):
     b: Dict[str, float] = {}
     placed = p.placed + p.floaters
     vis = 0.0
@@ -172,8 +173,17 @@ def _score(p: Plan, best: Dict[str, float], d: Design, ctx: Ctx, src_cov: float)
         mx = sum(bx.cx * bx.area for _, bx in boxes) / area
         my = sum(bx.cy * bx.area for _, bx in boxes) / area
         b["balance"] = -25.0 * abs(mx - ctx.W / 2.0) / ctx.W - 12.0 * abs(my - ctx.H / 2.0) / ctx.H
-    b["hierarchy"] = HIERARCHY * _hierarchy(placed, d) - INVERSION * _inversions(placed, d) \
-        - COLLAPSE * _collapsed(placed, d)
+    b["hierarchy"] = -INVERSION * _inversions(placed, d) - COLLAPSE * _collapsed(placed, d)
+    # the source's type system held (system.py, learned on Crello size families): designers keep
+    # the ratios between text sizes (the headline's contrast included, median change 1.000) and
+    # scale the whole type scale by ~sqrt(area ratio). This replaces the hand-set reward for a
+    # headline 1.6x more prominent than in the source (the former _hierarchy term), which the data
+    # contradicts.
+    if src_fs is None:
+        src_fs = system.type_scale(d)
+    copy_w = sum(r.item.importance for r, _, _ in placed if r.fonts)
+    dr, _ = system.drift(placed, d, ctx, src_fs)
+    b["system"] = -SYSTEM * copy_w * (dr + system.scale_shortfall(placed, d, ctx, src_fs))
     b["prior"] = _prior(p.name.split("@")[0], ctx.W / ctx.H, d.W / d.H)
     return sum(b.values()), b
 
@@ -214,27 +224,6 @@ def _collapsed(placed, d: Design) -> float:
     level = {id(item[b]): item[b].importance for a in src for b in src
              if item[a] is not item[b] and src[a] >= 1.5 * src[b] and out[b] * 1.1 >= out[a]}
     return float(sum(level.values()))
-
-
-def _hierarchy(placed, d: Design) -> float:
-    """Whether the headline stands out from the next largest copy as a
-    designer would set it on a new format, in [-1, 1]. Reflowing a design is
-    when the headline becomes display type, so contrast up to 1.6x the
-    source's earns up to 1; past that it gives the credit back (at 2.56x it
-    is worth nothing: the rest of the copy has become an afterthought). Less
-    contrast than the source (the legibility floor raising small copy) costs
-    the same way down to -1."""
-    def size(it, fonts=None):
-        return max(fonts.values()) if fonts else it.main_fs()
-
-    head = [r for r, _, _ in placed if r.item.role == "headline" and r.fonts]
-    rest = [r for r, _, _ in placed if r.item.role != "headline" and r.fonts]
-    if not head or not rest:
-        return 0.0
-    out = size(head[0].item, head[0].fonts) / max(size(r.item, r.fonts) for r in rest)
-    src = head[0].item.main_fs() / max(1e-6, max(r.item.main_fs() for r in rest))
-    x = math.log(out / max(1e-6, src)) / math.log(1.6)
-    return max(-1.0, x if x <= 1.0 else 2.0 - x)
 
 
 def _inflation(placed, d: Design, ctx: Ctx) -> float:
