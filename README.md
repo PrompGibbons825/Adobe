@@ -27,11 +27,25 @@ docker run --rm --network none \
 ```
 
 No network at run time. Besides what the starter installs (skia and numpy through
-cr-renderer, and Pillow), the engine uses OpenCV (`opencv-python-headless`) and one
-small face-detection model committed to the repo (YuNet, 230 KB, MIT, in
-`engine/smart/models/`); nothing is downloaded at run time. A task takes
-about 0.3 s at the median and under 2 s at the 95th percentile; the first task
-in a run also pays a few seconds of one-time font and library loading.
+cr-renderer, and Pillow), the engine uses OpenCV (`opencv-python-headless`) and
+**one** local model, committed to the repo: the YuNet face detector (230 KB, MIT,
+`engine/smart/models/`, licence beside it). Nothing is downloaded at run time and
+there is no GPU, torch or onnxruntime dependency. The two data files the engine
+reads are small JSON files in the repo (see "Data it learned from"). A task takes
+roughly a second on a quiet CPU (the candidate pool is larger than it was, and the
+top candidates are rendered for the pixel critic); the first task in a run also pays
+a few seconds of one-time font and library loading. We have not timed it on a quiet
+box since the learned ranker landed, so treat this as an estimate.
+
+Switches (environment variables, for experiments only; the defaults are what ships):
+
+| Variable | Effect |
+|---|---|
+| `CHAMELEON_OFF=ranker` | no learned score term; the hand score alone decides (`CHAMELEON_RANKER=0` does the same) |
+| `CHAMELEON_OFF=drawnbox` | measure text footprints the old way (advance box, integer size) instead of as the renderer paints them |
+| `CHAMELEON_ON=search,retrieve` | turn on two extra candidate generators that are off by default (see step 3) |
+
+A comma list works in both variables. Names are defined in `engine/smart/switches.py`.
 
 ## Approach
 
@@ -69,7 +83,11 @@ Text is wrapped with the renderer's own greedy rule at real skia glyph advances
 top-aligned. Footprints are where the glyphs are painted: letter spacing makes a
 drawn line wider than its wrap, and a rotated text turns about its box centre, as
 the renderer turns it. Letter spacing is kept in ems, so it scales with the type.
-For images, the alpha channel gives where the visible pixels sit.
+For images, the alpha channel gives where the visible pixels sit. The footprint a
+text is checked against (`drawn_box`) is the one the renderer paints: it counts glyph
+overhang past the advance box (italics, swashes), sizes at their real float value
+rather than rounded, and letter spacing as given. `CHAMELEON_OFF=drawnbox` restores the
+older, looser box.
 
 **3. Generate candidate layouts** (`compose.py`, `layout.py`)
 
@@ -82,6 +100,13 @@ For images, the alpha channel gives where the visible pixels sit.
 | regions | a photo filling one side edge to edge beside a flat panel carrying the copy (`regions.py`) | the two still tile the canvas, side by side on a wide one, stacked (photo on top) on a tall one; the panel fills its region, the copy is one padded column in it, the photo fills its region by cropping (its own proportions, the overflow past the canvas edges or under the opaque panel, the window kept on its subject and faces) |
 | collage | 3-9 pictures packed edge to edge or with even gutters, no copy on them (`collage.py`) | the pictures re-flow for the new shape, in reading order and each at its own proportions: alike pictures as a uniform cols x rows grid, mixed ones as justified rows or columns, with the source gutters; the copy goes in a band after them (below on a tall canvas, beside on a wide one) |
 | row | banners and strips | logo, hero, copy, CTA on one line; a row of three or more parts, or one that ends in its CTA, is set like a banner (the brand holds one end, the CTA the other); any other pair stays a centred group; the hero may fill the strip's height |
+
+Two more generators exist but are **off by default** because they still break some
+finicky cases (pill-label font, photo coverage, tiny-item relations):
+`search` (`candidates.py`: anchor, flex and grid arrangements and extra split and
+stack parameters) and `retrieve` (a designer's own resize of the nearest Crello template
+family, transferred to this design as a candidate). Turn them on with
+`CHAMELEON_ON=search,retrieve`. The bench showed them as promising but not yet safe.
 
 Each is solved by a small flexbox-like engine for the largest scale that fits
 (within a range: type grows by about √area, a column moved to a taller canvas a
@@ -182,10 +207,17 @@ the source. Those eight are shared out first: identical layouts count once and n
 archetype takes more than two places, so variants of one plan cannot crowd out a
 different one.
 
-When the top two hand scores are within a small margin, a **learned ranker**
-(`ranker.py`, weights in `ranker_weights.json`) nudges the order toward what
-designers did on Crello template families (trained with `tools/ranker_train.py`,
-dev-only). It only re-ranks valid candidates; set `CHAMELEON_RANKER=0` to disable.
+A **learned ranker** (`ranker.py`, weights in `ranker_weights.json`) is one more
+term of this score. It is a linear pairwise model over 147 features of a plan (the
+archetype, the score terms above, where its boxes sit and how they relate, and the
+source-to-target aspect and amount of copy) trained to prefer what designers did when they re-made a Crello template at
+another size. Its term is `5.0 x` how far a plan's learned preference falls below the
+best plan's, capped at 20 points, so it decides among near-ties and never outweighs a
+clear difference in the hand score. It only re-orders candidates that already passed
+every check, so it cannot break a hard rule. On the held-out families it picked the
+designer-closer plan in 23 of 29 decided groups. Disable it with
+`CHAMELEON_OFF=ranker` (or `CHAMELEON_RANKER=0`); training is dev-only
+(`tools/ranker_wide.py`, `tools/ranker_train.py`).
 
 **Photos** (`vision.py`). A background photo is looked at once, small: an
 importance map in the manner of smartcrop.js (edges, skin tone, saturation) plus
@@ -257,6 +289,19 @@ fit-and-centre layout, so a run never crashes.
   small design grammar (`tools/designs.py`), and about 20 real platform formats
   from 320×50 to A4.
 
+## Data it learned from, models and licences
+
+| Item | What | Licence |
+|---|---|---|
+| Crello (v5) template families | the only training data: designers' own resizes of the same template. Geometry and copy only, no pixels. 894 families trained the ranker; 895 families sit in `engine/smart/data/layout_index.json` for the (default-off) retrieval generator. Families held back for the sealed evaluation are excluded | CDLA-Permissive-2.0 |
+| `ranker_weights.json` | 147 linear weights fitted on the above; no model code beyond a dot product | derived from the above |
+| YuNet `face_detection_yunet_2023mar.onnx` | face boxes, run through OpenCV's `FaceDetectorYN` | MIT (OpenCV Zoo) |
+| OpenCV headless 4.14 | image analysis, YuNet inference | Apache-2.0 |
+| smartcrop.js idea, spectral-residual saliency | re-implemented, no code or weights copied | MIT / published method |
+
+No generative model is used, and no asset pixel is created or altered. Nothing is
+trained or tuned on the three input samples or on the sealed evaluation sets.
+
 ## Testing (dev only, not part of the image)
 
 ```bash
@@ -317,6 +362,10 @@ engine/
   resize.py          entry point (resize + safe fallback)
   main.py            orchestrator from the starter kit (unchanged)
   smart/             the layout engine described above
+    ranker.py, ranker_weights.json   learned designer-preference score term
+    data/layout_index.json           Crello family index (retrieval, off by default)
+    models/                          YuNet face detector and its licence
+    switches.py                      CHAMELEON_OFF / CHAMELEON_ON names
 renderer/            vendored converter + cr-renderer wiring (unchanged)
 brand_kit/           assets and fonts referenced by the designs
 tests/               finicky cases, harness, unit tests (dev only)
