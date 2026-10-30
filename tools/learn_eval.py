@@ -44,9 +44,12 @@ def main():
     ap.add_argument("--beta", type=float, default=0.5)
     ap.add_argument("--repair", type=int, default=1)
     ap.add_argument("--n", type=int, default=400)
-    ap.add_argument("--set", default="dev")  # dev = not in tournament; tour = tournament set
+    ap.add_argument("--set", default="dev")
+    ap.add_argument("--reflow", type=float, default=None)  # dev = not in tournament; tour = tournament set
     a = ap.parse_args()
     compose.MODE.update(transfer=a.mode, beta=a.beta, repair=bool(a.repair))
+    if a.reflow is not None:
+        compose.REFLOW_DAR = a.reflow
     tour = set(json.load(open(WIDE / "tournament_set.json"))["tasks"])
     tasks = []
     for p in sorted((WIDE / "cases").glob("*.json")):
@@ -69,7 +72,7 @@ def main():
             s = sum(v) / len(v)
             res.append(s)
             by.setdefault(cls(W, H), []).append(s)
-    print(json.dumps(dict(mode=a.mode, beta=a.beta, repair=a.repair, n=len(res), iou=round(sum(res) / len(res), 4),
+    print(json.dumps(dict(reflow=compose.REFLOW_DAR, mode=a.mode, beta=a.beta, repair=a.repair, n=len(res), iou=round(sum(res) / len(res), 4),
                           by={k: (len(v), round(sum(v) / len(v), 4)) for k, v in sorted(by.items())},
                           secs=round(time.time() - t0))))
 

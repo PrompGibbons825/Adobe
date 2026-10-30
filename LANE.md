@@ -108,3 +108,8 @@ incumbent, its notes, README or any other lane.
   the canvas beneath all copy are backgrounds (cover the target). Dev IoU with designers
   (150 non-tournament dev tasks): 0.357 -> 0.405 (proportional anchor 0.407).
   fundamentals.check: input 0 hard, Crello 0 hard; copy_over_copy on Crello 13 -> 6 of 60.
+- 07:50Z thin rules (dividers, aspect > 4) are exempt from the 20 px drawn-image floor (it turned
+  2x40 separators into black bars on 728x90). Cost: fundamentals `distorted` on random stress
+  outputs 35 -> 80 of 300 (sub-pixel bars; whole-pixel rounding), still 0 on input and Crello.
+  Reflow onset on the dev set (300 non-tournament tasks, which hold no strip/extreme targets):
+  IoU 0.389 / 0.394 / 0.394 at |d| 0.6 / 0.9 / 1.2; kept 0.9 (the flip-rate data above).

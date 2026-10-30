@@ -94,10 +94,11 @@ def _finalize(source, out, target):
             if sz_:
                 c = min(w / sz_[0], h / sz_[1])
                 dmin = min(dmin, sz_[0] * c, sz_[1] * c)
-        if e.get("type") == "image" and not full and dmin < 20.0:
+        if e.get("type") == "image" and not full and dmin < 20.0 and max(w, h) < 4.0 * min(w, h):
+            # small icons only: a hairline rule (long and thin) stays thin
             # the converter rounds to whole pixels (box, then the contained asset): below ~12 px
             # that alone distorts > 5%
-            k = min(20.0 / max(1e-6, dmin), TW / w, TH / h)
+            k = max(1.0, min(20.0 / max(1e-6, dmin), TW / w, TH / h, 60.0 / max(w, h)))
             cx, cy = x + w / 2, y + h / 2
             w, h = w * k, h * k
             x, y = cx - w / 2, cy - h / 2
