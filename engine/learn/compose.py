@@ -33,6 +33,21 @@ def _ioa(a, b):
     return _inter(a, b) / max(1e-6, min(a[2] * a[3], b[2] * b[3]))
 
 
+def _backdrop(e, i, els, W, H):
+    """A picture covering most of the canvas beneath all the copy is the background: it covers
+    the target canvas (cover-cropped) rather than leaving a strip."""
+    if e.get("type") == "text" or (e.get("type") == "shape" and e.get("shape_type", "rectangle") != "rectangle"):
+        return False
+    x, y, w, h = _box(e)
+    ix = max(0.0, min(x + w, W) - max(x, 0.0))
+    iy = max(0.0, min(y + h, H) - max(y, 0.0))
+    if ix * iy < 0.8 * W * H:
+        return False
+    z = num(e.get("z_index"), i)
+    tz = [num(t.get("z_index"), j) for j, t in enumerate(els) if t.get("type") == "text"]
+    return not tz or z <= min(tz)
+
+
 def find_units(els: List[Dict[str, Any]], bleed: List[bool], W: float, H: float) -> List[List[int]]:
     n = len(els)
     parent = list(range(n))
@@ -140,7 +155,7 @@ def layout(source: Dict[str, Any], target: Dict[str, Any]) -> Dict[str, Any]:
         P[:, 0], P[:, 1], P[:, 5] = X[:, 2], X[:, 3], X[:, 1]
 
     # 3. bleed: layers that cover the source canvas stay covering it
-    bleed = [is_bleed(e, W, H) for e in els]
+    bleed = [is_bleed(e, W, H) or _backdrop(e, i, els, W, H) for i, e in enumerate(els)]
     src = [_box(e) for e in els]
     for i, e in enumerate(els):
         if bleed[i]:
@@ -299,18 +314,20 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor, dar=0.0):
                     b[0] = boxes[i][0] + boxes[i][2] / 2 - b[2] / 2
                     b[1] = boxes[i][1] + boxes[i][3] / 2 - b[3] / 2
                 fsz[i], boxes[i] = fs, b
+    # source extents as drawn: a text's box is padding, its ink is what may not collide
+    drawn = {}
+    for u in units:
+        for i in u:
+            drawn[i] = _drawn_box(els[i], src[i]) if els[i].get("type") == "text" else src[i]
+    # layered compositions (a photo in a frame with a title over it) move as one cluster
+    units = _clusters(units, drawn, els)
+    src_bb = {k: _unit_bbox(u, drawn) for k, u in enumerate(units)}
     # units that came out bigger than the canvas shrink uniformly
     for u in units:
         b = _unit_bbox(u, boxes)
         s = min(1.0, (TW - 2 * margin) / max(1e-3, b[2]), (TH - 2 * margin) / max(1e-3, b[3]))
         if s < 1.0:
             _scale_unit(u, boxes, s, fsz)
-    # source extents as drawn: a text's box is padding, its ink is what may not collide
-    drawn = {}
-    for u in units:
-        for i in u:
-            drawn[i] = _drawn_box(els[i], src[i]) if els[i].get("type") == "text" else src[i]
-    src_bb = {k: _unit_bbox(u, drawn) for k, u in enumerate(units)}
 
     def clamp(k):
         u = units[k]
@@ -380,6 +397,7 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor, dar=0.0):
     tot = sum(b[2] * b[3] for b in bbs) or 1.0
     if left > 0.02 * tot:
         _pack(units, boxes, fsz, src_bb, allowed, els, TW, TH, margin)
+    _separate_copy(els, boxes, fsz, units, drawn, TH)
     # write back, hard-clamped to the canvas
     for u in units:
         for i in u:
@@ -407,6 +425,14 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor, dar=0.0):
 def _pack(units, boxes, fsz, src_bb, allowed, els, TW, TH, margin, grow=1.0):
     n = len(units)
     items = [k for k in range(n) if not _decor(units[k], els)]
+    if len(items) == 1:  # one composition: as large as fits, centred
+        k = items[0]
+        b = _unit_bbox(units[k], boxes)
+        sc = min(grow, (TW - 2 * margin) / max(1e-6, b[2]), (TH - 2 * margin) / max(1e-6, b[3]))
+        _scale_unit(units[k], boxes, sc, fsz)
+        b = _unit_bbox(units[k], boxes)
+        _shift(units[k], boxes, (TW - b[2]) / 2 - b[0], (TH - b[3]) / 2 - b[1])
+        return
     if len(items) < 2:
         return
     # reading order of the source
@@ -589,3 +615,58 @@ def _reading_order(items, bb):
                 continue
         lines.append([k])
     return [k for ln in lines for k in sorted(ln, key=lambda j: bb[j][0])]
+
+
+def _clusters(units, drawn, els, thr=0.2):
+    """Merge units whose drawn source extents overlap (share of the smaller >= thr); faint decor
+    stays apart."""
+    n = len(units)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    bbs = [_unit_bbox(u, drawn) for u in units]
+    dec = [_decor(u, els) for u in units]
+    pic = [any(els[i].get("type") != "text" for i in u) for u in units]
+    for a in range(n):
+        for b in range(a + 1, n):
+            # copy over copy is not a composition (padded boxes touch); copy on a picture is
+            if not dec[a] and not dec[b] and (pic[a] or pic[b]) and _ioa(bbs[a], bbs[b]) >= thr:
+                parent[find(a)] = find(b)
+    out = {}
+    for k in range(n):
+        out.setdefault(find(k), []).extend(units[k])
+    return list(out.values())
+
+
+def _separate_copy(els, boxes, fsz, units, drawn, TH):
+    """Inside a cluster, copy that did not touch in the source must not touch now: the lower
+    text moves down by the overlap (or the upper one up when there is no room)."""
+    for u in units:
+        txt = [i for i in u if i in fsz]
+        if len(txt) < 2:
+            continue
+        for _ in range(3 * len(txt)):
+            moved = False
+            ink = {i: _drawn_box(dict(els[i], font_size=fsz[i]), boxes[i]) for i in txt}
+            for a in range(len(txt)):
+                for b in range(a + 1, len(txt)):
+                    i, j = txt[a], txt[b]
+                    if _ioa(drawn[i], drawn[j]) > 0.05 or _inter(ink[i], ink[j]) <= 0:
+                        continue
+                    up, lo = (i, j) if ink[i][1] <= ink[j][1] else (j, i)
+                    dy = ink[up][1] + ink[up][3] - ink[lo][1] + 1
+                    if ink[lo][1] + ink[lo][3] + dy <= TH:
+                        boxes[lo][1] += dy
+                    else:
+                        boxes[up][1] -= min(dy, ink[up][1])
+                    moved = True
+                    break
+                if moved:
+                    break
+            if not moved:
+                break

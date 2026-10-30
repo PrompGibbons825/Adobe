@@ -100,3 +100,11 @@ incumbent, its notes, README or any other lane.
     aspect and whole-pixel rounding on a 250-400 px canvas). Promise: small print on 21/60 input
     tiles (L3's 17 elements on 320x50, 728x90, 820x312...).
   - Docker build + run of input/: OK (0.23 s, 0.04 s, 0.04 s). Deterministic across hash seeds.
+- 07:45Z Crello dev renders (source | ours | designer) showed reflow tearing layered posters
+  apart (photo + frame + title packed as separate items). Fix: **clusters** = units whose drawn
+  source extents overlap (>= 20% of the smaller) when one side is a picture; clusters move and
+  scale rigidly, reflow packs clusters, a single cluster is fitted and centred. Copy inside a
+  cluster that did not touch in the source is separated vertically. Pictures covering >= 80% of
+  the canvas beneath all copy are backgrounds (cover the target). Dev IoU with designers
+  (150 non-tournament dev tasks): 0.357 -> 0.405 (proportional anchor 0.407).
+  fundamentals.check: input 0 hard, Crello 0 hard; copy_over_copy on Crello 13 -> 6 of 60.
