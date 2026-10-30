@@ -9,6 +9,7 @@ from . import scoring as S
 
 CANVAS = [10 ** 9, 10 ** 9]
 FLOOR = 10.0
+MERGE_T = 0.6
 R2 = lambda v: round(float(v), 2)
 
 
@@ -182,7 +183,7 @@ def build_units(src):
             cb = el_bbox(c)
             if area(cb) > .6 * W * H:
                 continue
-            if inter_area(tb, cb) >= .6 * max(1, area(tb)):
+            if inter_area(tb, cb) >= MERGE_T * max(1, area(tb)):
                 if best is None or area(cb) < best[0]:
                     best = (area(cb), c)
         if best:
