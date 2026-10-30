@@ -1572,7 +1572,7 @@ SCALE_XFAIL = {("explicit_newlines", "med-rect"), ("explicit_newlines", "leaderb
                ("tiny_items_kept_on_small_canvases", "leaderboard")}
 SCALE3_XFAIL = {("fill_bg_odd_id_bleeding", "med-rect"), ("plate_text_not_split", "med-rect"),
                 ("plate_text_not_split", "leaderboard"), ("caption_stays_with_photo", "med-rect"),
-                ("caption_stays_with_photo", "leaderboard"), ("caption_stays_with_photo", "fb-link"),
+                ("caption_stays_with_photo", "leaderboard"),
                 ("freetype_margin_stack", "med-rect"), ("freetype_margin_stack", "leaderboard")}  # measured 2026-10-25 (r7)
 STEP7_XFAIL: set = set()
 # (crowded_l3 at 300x250 -> 300x251 passes since r15: a squeezed plan first holds its pill labels)
