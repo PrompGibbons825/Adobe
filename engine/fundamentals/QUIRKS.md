@@ -129,10 +129,21 @@ white canvas).
 - `group_id`, `max_lines`, element `height` for text, `font_style` other than "italic", unknown keys.
 
 ## Measured conformance (fundamentals vs the renderer)
-`python -m tests.conformance.run --n 2000 --seed 1` (feature cases + 2000 random texts):
-see the commit message / `loop/sprint` board for the latest numbers. Wrapped strings must match
-the converter's char for char; ink boxes within 1.5 px (rotated: never smaller than the ink, at
-most 15% of the font size larger).
+`python -m tests.conformance.run --n 2000 --seed 1`, in Docker (`chameleon-l0`, python:3.11-slim,
+skia 144.1) on 2026-10-30:
+- 17/17 feature cases conform (every item above marked [probed] is pinned by one).
+- 2000 random texts (fonts incl. fallback, sizes 6-120 int and float, widths 15-900, letter spacing
+  -2..12, line height 0.8-2, runs, capitalize, hard breaks, double spaces, accents, 90 rotated):
+  wrapped string != converter **0/2000**; ink box off by > 1.5 px **0/1910** unrotated (median
+  0.40 px, p95 0.50 px); rotated: the model never under-reports, and over-reports by > 0.15 em on
+  7/90 (a rotated glyph's bounding rect overshoots its outline).
+- Same numbers locally (Linux venv): the scorer's Linux FreeType path is what we model.
+
+## Glyph overhang (measured)
+Glyph ink is not inside the advance box: italics, `f`, `j`, `W`... reach up to ~0.13 em left of the
+pen position or right of the last advance. A box built from advances alone missed the drawn ink
+by > 1.5 px on 98/1000 random integer-size texts (up to 13 px at 100 px type). `measure_text`'s
+`ink_box` includes it; use it for canvas-edge and overlap checks.
 
 ## Implications for engines and checkers (one line each)
 1. Measure text with the renderer's own wrap at the float size, then draw extents at `int(size)`;
@@ -144,3 +155,5 @@ most 15% of the font size larger).
 5. Text fading must go through the colour alpha, not `opacity`.
 6. Off-canvas and overlap checks must use the drawn box (incl. overflow of long words, letter
    spacing, centred spill and rotation), not the element box.
+7. Float `font_size`s wrap and step lines at the float but draw glyphs at the int: measure a source
+   design (Crello sizes are floats) with the float, or whole lines go missing from the model.

@@ -113,3 +113,13 @@ incumbent, its notes, README or any other lane.
   outputs 35 -> 80 of 300 (sub-pixel bars; whole-pixel rounding), still 0 on input and Crello.
   Reflow onset on the dev set (300 non-tournament tasks, which hold no strip/extreme targets):
   IoU 0.389 / 0.394 / 0.394 at |d| 0.6 / 0.9 / 1.2; kept 0.9 (the flip-rate data above).
+- 08:20Z vendored L0's fundamentals from chameleon origin/main 8f85560 (floor now >= 10 px,
+  inherited distortion reported against the source). Collisions and in-cluster separation now use
+  L0's glyph-ink model (`measure_text(...).canvas_ink_box()`, rotation included) instead of
+  advance blocks. Small pictures and hairlines get a whole-pixel short side (no rounding
+  distortion). Legibility floor = max(10, L0's 7 px cap at 1024).
+  fundamentals.check (input x 20 formats, 307 non-tournament Crello dev tasks, 300 random): hard
+  0 / 0 / 11 (the 11 are random sources already distorted 50%+). Promise: Crello small print
+  86 -> 59, copy over copy 13 of 307; input small print 60 -> 31 elements (L3 on strips).
+  Cost: dev IoU with designers 0.394 -> 0.377 (bigger type than the designers' at small sizes).
+  Stress 300 x 3: 0 faults.

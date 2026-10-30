@@ -98,7 +98,7 @@ REFLOW_DAR = 0.9
 def floor_px(TW, TH):
     """Legibility floor: 7 px of cap height when the canvas is viewed at 1024 px on its long side
     (cap height ~0.70 em), as L0's fundamentals.check defines small print."""
-    return float(max(6, math.ceil(7.0 * max(TW, TH) / 1024.0 / 0.70)))
+    return float(max(10, math.ceil(7.0 * max(TW, TH) / 1024.0 / 0.70)))
 MODE = {"transfer": "median", "beta": 0.5, "repair": True}
 _policy = None
 
@@ -397,7 +397,7 @@ def _resolve(els, out, boxes, fsz, units, src, bleed, TW, TH, floor, dar=0.0):
     tot = sum(b[2] * b[3] for b in bbs) or 1.0
     if left > 0.02 * tot:
         _pack(units, boxes, fsz, src_bb, allowed, els, TW, TH, margin)
-    _separate_copy(els, boxes, fsz, units, drawn, TH)
+    _separate_copy(els, boxes, fsz, units, drawn, TH, TW)
     # write back, hard-clamped to the canvas
     for u in units:
         for i in u:
@@ -588,7 +588,26 @@ def _rescue_text(e, fs0, x, y, w, h, TW, TH):
     return pick, x, y, w, h
 
 
+_BOOK = None
+
+
 def _drawn_box(e, b):
+    """Glyph ink of a text placed in box b, as the renderer draws it (L0's fundamentals model,
+    rotation included); the advance block if that model is unavailable."""
+    try:
+        from engine.fundamentals.text import measure_text
+        global _BOOK
+        if _BOOK is None:
+            from engine.fundamentals.fonts import FontBook
+            _BOOK = FontBook(str(textfit.FONTS))
+        d = dict(e, x=b[0], y=b[1], width=b[2], height=b[3])
+        if d.get("_lsem") is not None:
+            d["letter_spacing"] = float(d["_lsem"]) * int(num(d.get("font_size"), 16.0))
+        ib = measure_text(d, book=_BOOK).canvas_ink_box()
+        if ib:
+            return [ib[0], ib[1], max(1.0, ib[2] - ib[0]), max(1.0, ib[3] - ib[1])]
+    except Exception:  # noqa: BLE001
+        pass
     try:
         fs = num(e.get("font_size"), 16.0)
         mw, bh, _ = textfit.layout(e, fs, b[2])
@@ -643,29 +662,37 @@ def _clusters(units, drawn, els, thr=0.2):
     return list(out.values())
 
 
-def _separate_copy(els, boxes, fsz, units, drawn, TH):
-    """Inside a cluster, copy that did not touch in the source must not touch now: the lower
-    text moves down by the overlap (or the upper one up when there is no room)."""
+def _separate_copy(els, boxes, fsz, units, drawn, TH, TW=None):
+    """Inside a cluster, copy that did not touch in the source must not touch now: the later
+    text (reading order) takes the smallest move that clears it, inside the canvas."""
+    TW = TW if TW is not None else 1e9
     for u in units:
         txt = [i for i in u if i in fsz]
         if len(txt) < 2:
             continue
         for _ in range(3 * len(txt)):
             moved = False
-            ink = {i: _drawn_box(dict(els[i], font_size=fsz[i]), boxes[i]) for i in txt}
+            ink = {}
+            for i in txt:
+                ink[i] = _drawn_box(dict(els[i], font_size=fsz[i]), boxes[i])
             for a in range(len(txt)):
                 for b in range(a + 1, len(txt)):
                     i, j = txt[a], txt[b]
                     if _ioa(drawn[i], drawn[j]) > 0.05 or _inter(ink[i], ink[j]) <= 0:
                         continue
-                    up, lo = (i, j) if ink[i][1] <= ink[j][1] else (j, i)
-                    dy = ink[up][1] + ink[up][3] - ink[lo][1] + 1
-                    if ink[lo][1] + ink[lo][3] + dy <= TH:
-                        boxes[lo][1] += dy
-                    else:
-                        boxes[up][1] -= min(dy, ink[up][1])
-                    moved = True
-                    break
+                    A, B = ink[i], ink[j]
+                    opts = []
+                    for dx, dy in ((0, A[1] + A[3] - B[1] + 1), (0, A[1] - (B[1] + B[3]) - 1),
+                                   (A[0] + A[2] - B[0] + 1, 0), (A[0] - (B[0] + B[2]) - 1, 0)):
+                        nx, ny = B[0] + dx, B[1] + dy
+                        ok = nx >= 0 and ny >= 0 and nx + B[2] <= TW and ny + B[3] <= TH
+                        opts.append((0 if ok else 1, abs(dx) + abs(dy), dx, dy))
+                    opts.sort()
+                    if opts[0][0] == 0:
+                        boxes[j][0] += opts[0][2]
+                        boxes[j][1] += opts[0][3]
+                        moved = True
+                        break
                 if moved:
                     break
             if not moved:

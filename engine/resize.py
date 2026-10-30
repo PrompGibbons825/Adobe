@@ -107,6 +107,21 @@ def _finalize(source, out, target):
             sz = _asset_size(e.get("asset_id"))
             if sz and abs((w / h) / (sz[0] / sz[1]) - 1) > 0.03:
                 e["fit"] = "contain"
+        if e.get("type") == "image" and not full and min(w, h) < 40.0:
+            # thin or small pictures: make the short side a whole pixel (the converter rounds the
+            # box, then the contained asset), so rounding cannot distort the aspect
+            short = min(w, h)
+            sz_ = _asset_size(e.get("asset_id")) if e.get("fit", "contain") == "contain" else None
+            if sz_:
+                c = min(w / sz_[0], h / sz_[1])
+                short = min(sz_[0] * c, sz_[1] * c)
+            k = max(1.0, round(short)) / max(1e-6, short)
+            if w * k > TW or h * k > TH:
+                k = max(1.0, math.floor(short)) / max(1e-6, short)
+            if w * k <= TW and h * k <= TH:
+                cx, cy = x + w / 2, y + h / 2
+                w, h = w * k, h * k
+                x, y = cx - w / 2, cy - h / 2
         if w > TW or h > TH:
             s = min(TW / w, TH / h)
             if e.get("type") == "image" and not full:
