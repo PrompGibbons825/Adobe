@@ -133,6 +133,11 @@ def stage(engine_root: Path, dest: Path) -> Path:
     if not (dest / "engine" / "smart").exists() and (GATE_ROOT / "engine" / "smart").is_dir():
         shutil.copytree(GATE_ROOT / "engine" / "smart", dest / "engine" / "smart",
                         ignore=shutil.ignore_patterns("__pycache__"))
+    # tools/rules.py also measures text with the engine-free top-level ``fundamentals`` package;
+    # a tree that predates it (any line or lane cut before it landed) gets the gate's copy too.
+    if not (dest / "fundamentals").exists() and (GATE_ROOT / "fundamentals").is_dir():
+        shutil.copytree(GATE_ROOT / "fundamentals", dest / "fundamentals",
+                        ignore=shutil.ignore_patterns("__pycache__"))
     (dest / "output").mkdir(exist_ok=True)
     return dest
 
