@@ -103,3 +103,10 @@ of a tall canvas; text over a busy photo region.
   coordinate descent, small steps first) the 2 best and the position-keeping candidates before
   the final pick. Chosen IoU near-square 0.408 -> 0.437 (uniform 0.455, oracle 0.50); tall 0.484
   (uniform 0.448); wide 0.416 (uniform 0.423).
+- 08:25Z regressions seen in the sheet (copy over copy on 300x250, blown-up pills) after the
+  floor change. Fixes: group legibility boost capped at 1.8x its proportional scale; a hard
+  "no new text collision" check *at the destination* (drawn boxes after emit, collisions deeper
+  than the source's own layering): emit the best candidates in energy order and keep the first
+  clean one; if none is clean, relax the legibility floor (100% -> 60% -> 0) and search again
+  (capacity: the canvas cannot hold the copy at the floor). Inputs x 20 formats: 0 hard faults,
+  copy_over_copy promises 13 -> 4.

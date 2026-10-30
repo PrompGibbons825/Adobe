@@ -50,9 +50,28 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         W = float(target_canvas["width"])
         H = float(target_canvas["height"])
         S = analyse(source)
-        scored = search(S, W, H)
-        placed = scored[0][3] if scored else {}
-        out = emit(S, placed, W, H)
+        best = None
+        # the legibility floor is relaxed only when the canvas provably cannot hold the copy
+        # without collisions (capacity): full floor, then 60%, then none
+        for floor_k in (1.0, 0.6, 0.0):
+            S.floor_k = floor_k
+            scored = search(S, W, H)
+            tried = set()
+            for e, _, name, placed in scored:
+                if len(tried) >= 6 or name in tried:
+                    if len(tried) >= 6:
+                        break
+                    continue
+                tried.add(name)
+                cand = emit(S, placed, W, H)
+                bad = _collisions(source, cand)    # verify at the destination: drawn boxes, not the plan
+                if best is None or bad < best[0]:
+                    best = (bad, cand)
+                if bad == 0:
+                    break
+            if best is not None and best[0] == 0:
+                break
+        out = best[1] if best else emit(S, {}, W, H)
         out["canvas"] = {"width": target_canvas["width"], "height": target_canvas["height"]}
         return out
     except Exception:  # noqa: BLE001
@@ -60,6 +79,34 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         import traceback
         traceback.print_exc(file=sys.stderr)
         return _fallback(source, target_canvas)
+
+
+def _collisions(source: dict, out: dict) -> int:
+    """Pairs that collide in the output but not in the source, where at least one is text."""
+    src = {e["id"]: e for e in source["elements"]}
+    els = [e for e in out["elements"] if e["id"] in src]
+    W, H = float(out["canvas"]["width"]), float(out["canvas"]["height"])
+
+    def inter(a, b):
+        iw = min(a["x"] + a["width"], b["x"] + b["width"]) - max(a["x"], b["x"])
+        ih = min(a["y"] + a["height"], b["y"] + b["height"]) - max(a["y"], b["y"])
+        return max(0.0, iw) * max(0.0, ih)
+
+    n = 0
+    for i in range(len(els)):
+        a = els[i]
+        for j in range(i + 1, len(els)):
+            b = els[j]
+            if a.get("type") != "text" and b.get("type") != "text":
+                continue
+            if a["width"] * a["height"] >= 0.8 * W * H or b["width"] * b["height"] >= 0.8 * W * H:
+                continue          # backdrop
+            sa, sb = src[a["id"]], src[b["id"]]
+            r_src = inter(sa, sb) / max(1e-6, min(sa["width"] * sa["height"], sb["width"] * sb["height"]))
+            r_out = inter(a, b) / max(1e-6, min(a["width"] * a["height"], b["width"] * b["height"]))
+            if r_out > r_src + 0.02 and not (r_src > 0.5 and r_out > 0.5):   # deeper than the source's own layering
+                n += 1
+    return n
 
 
 def _fallback(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:

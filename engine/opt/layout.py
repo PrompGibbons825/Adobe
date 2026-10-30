@@ -34,7 +34,7 @@ def text_floor(S, fs0: float, W: float, H: float) -> float:
     below the source's own floor (small print stays small print, but never shrinks further in
     judge-view terms)."""
     ft, fsrc = fs_floor(W, H), fs_floor(S.W, S.H)
-    return min(ft, ft * fs0 / fsrc)
+    return max(1.0, min(ft, ft * fs0 / fsrc) * getattr(S, "floor_k", 1.0))
 
 
 def fs_floor(W: float, H: float) -> float:
@@ -81,7 +81,7 @@ def size_block(S: Scene, b: Block, s: float, slot_w: float, kw: float, W: float,
     if tfs:
         # legibility floor for text inside a rigid group (badge, button), bounded by the slot
         need = max(text_floor(S, f, W, H) / f for f in tfs)
-        k = max(k, min(need, slot_w / b.w, 0.9 * H / b.h))
+        k = max(k, min(need, 1.8 * s, slot_w / b.w, 0.9 * H / b.h))   # boost, but stay in proportion
     k = max(k, min(20.0, 0.4 * min(W, H)) / max(1e-6, min(b.w, b.h)))   # visible; >= 20 px keeps bitmap rounding under 5%
     return Placed(0, 0, b.w * k, b.h * k, s=k)
 

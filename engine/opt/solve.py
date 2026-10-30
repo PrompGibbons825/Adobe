@@ -122,7 +122,29 @@ def search(S: Scene, W: float, H: float, p: Params = None, refine: bool = True):
             if e1 < e0:
                 pol.append((e1, -1 - len(pol), n0 + "/polished", pl1))
         scored = sorted(scored + pol, key=lambda t: (t[0], t[1]))
+    # hard constraint: no new collision involving text (copy over copy, copy over a picture it did
+    # not sit on). Feasible candidates first, energy second.
+    scored.sort(key=lambda t: (collisions(S, t[3]) > 0, t[0], t[1]))
     return scored
+
+
+def collisions(S: Scene, placed) -> int:
+    byid = {b.bid: b for b in S.blocks}
+    ids = sorted(placed)
+    n = 0
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            a, b = byid[ids[i]], byid[ids[j]]
+            if a.kind != "text" and b.kind != "text" and "group" not in (a.kind, b.kind):
+                continue
+            if min(a.x + a.w, b.x + b.w) - max(a.x, b.x) > 0 and min(a.y + a.h, b.y + b.h) - max(a.y, b.y) > 0:
+                continue          # overlapped in the source: intended layering
+            p, q = placed[ids[i]], placed[ids[j]]
+            iw = min(p.x + p.w, q.x + q.w) - max(p.x, q.x)
+            ih = min(p.y + p.h, q.y + q.h) - max(p.y, q.y)
+            if iw > 1 and ih > 1 and iw * ih > 0.02 * min(p.w * p.h, q.w * q.h):
+                n += 1
+    return n
 
 
 def polish(S: Scene, placed, W: float, H: float, e_cur: float, budget: int = 250):
