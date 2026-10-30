@@ -1,0 +1,10 @@
+{
+  "dataset": "CyberAgent Crello multi-size families",
+  "license": "CDLA-Permissive-2.0",
+  "families": 910,
+  "transitions": 2351,
+  "excluded_families": 142,
+  "excluded_family_hash": "d666ce6964d930f39a76ffc6122ca7272151b145c34a0ffeb7dce5ce20c5f288",
+  "input_digest": "4044b981c2fabcad747d9fdf8adfcf0e7fb1ce70d113a167d3c5c2d2cd462cba",
+  "contains_pixels": false
+}

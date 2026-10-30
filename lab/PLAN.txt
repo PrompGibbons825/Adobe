@@ -1,0 +1,30 @@
+Origin sprint, pre-comparison plan — 2026-10-30
+
+Isolation: independent repository /data/agents/work/codex-origin-20261030.
+No common Git refs, worktrees, loop files, ledgers, preregs, services or timers.
+Only official starter renderer/schema/plumbing/assets copied. No smart engine code.
+No paid model APIs. No sealed data. The shared venv is read-only.
+
+Resource envelope: single job with a private lock (shared queue was backlogged); one CPU; 1500 MB RAM; zero swap; 32 tasks;
+nice 19; CPU/IO weight 1; 240-second default wall timeout per invocation; the resumable 300-case stress
+phase may explicitly use a 1200-second timeout under the same resource limits.
+
+Paradigms:
+ A. Elastic transport: monotone least-squares whitespace redistribution plus
+    rigid-island geometry, under two text-grouping hypotheses.
+ B. Hierarchical reconstruction: preserve source separators, reconsider axes.
+ C. Constraint search: bounded lookahead over separator/orientation/area choices.
+ D. Portfolio: unify candidates, finalize, then geometric and pixel scoring.
+
+Fixed development data: existing 160-task public Crello tournament subset.
+Split by SHA256(family) % 3: zero held out, others development.
+No split by tile; all resizes of a family stay together.
+Compare all paradigms on the same dev task IDs. Select by external hard rules,
+copy collisions and readability, then inspect paired renders. Freeze code before
+held-out evaluation. Original main/sprint saved outputs are independent baselines.
+Do not claim a visual win from an internal score or IoU alone.
+
+Reliability is a separate acceptance condition: IDs, source immutables, image
+ratios, geometry, copy retention, determinism, and bounded resource use.
+Aesthetic evaluation includes typography, art preservation, spacing and contrast.
+A synthetic failure gets a regression, not a source-ID exception.
