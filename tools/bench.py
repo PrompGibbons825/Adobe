@@ -19,16 +19,28 @@ The judge is the gate panel's machinery (prompt v2, gray mats with per-image off
 with the A/B labels randomised per ask, both orders): Claude family only, ``claude -p --model
 claude-sonnet-5-5``. A tile's score is the share of its valid orders that picked ``a``; the win rate
 is the mean tile score with a 95% bootstrap CI over tiles (ties count one half).
+
+``BENCH_JUDGE=bedrock`` sends the same prompts and images to Bedrock (``BedrockJudge``: the ``aws bedrock-runtime
+invoke-model`` CLI, 12 asks at once) instead of ``claude -p``; the reply is parsed by the same ``parse_batch``. Env:
+BEDROCK_MODEL (global.anthropic.claude-sonnet-5-5), BEDROCK_REGION (us-east-1), BENCH_BEDROCK_PROFILE (vlatlabs),
+BENCH_BEDROCK_WORKERS (12), BENCH_BEDROCK_ENDPOINT (test only). Every call's tokens go to
+/data/agents/work/designer/status/bedrock_tokens.jsonl. ``judge`` and ``parity`` take ``--out`` to write elsewhere.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
 import random
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -43,6 +55,7 @@ BENCH = WIDE / "bench"
 MODEL = "claude-sonnet-5-5"
 BATCH = 5
 FONTS = ROOT / "brand_kit" / "fonts"
+BEDROCK_TOKENS = Path(os.environ.get("BEDROCK_TOKENS", "/data/agents/work/designer/status/bedrock_tokens.jsonl"))
 
 
 # ---- tasks ---------------------------------------------------------------------------------------
@@ -238,6 +251,104 @@ def _rng(*parts):
     return random.Random(hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest())
 
 
+# ---- Bedrock judge -------------------------------------------------------------------------------
+
+def use_bedrock() -> bool:
+    return os.environ.get("BENCH_JUDGE", "").lower() == "bedrock"
+
+
+def judge_model() -> str:
+    return os.environ.get("BEDROCK_MODEL", "global.anthropic.claude-sonnet-5-5") if use_bedrock() else MODEL
+
+
+class BedrockJudge:
+    """The gate panel's ``ClaudeJudge`` contract (``judge(prompt, model) -> (text, usage)``) over the
+    ``aws bedrock-runtime invoke-model`` CLI (Anthropic Messages body; the v1 CLI double-encodes the image
+    bytes of ``converse`` JSON input, ``--body fileb://`` is exact on v1 and v2). The image files named in the prompt are attached inline, each
+    after a text label with its path, so the prompt's file names still identify them. Retries throttling
+    and 5xx with backoff; any other error raises (an account that may not call Bedrock must stop the run,
+    not return empty panels)."""
+
+    OPEN = "Read every image below with the Read tool (several files per call is fine)."
+    ATTACH = ("The images are attached after this message, each preceded by a label giving its file path; "
+              "the paths in the list below refer to those labelled images.")
+    SYSTEM = "You are a careful, blind design judge. You only look at the images attached and answer in JSON."
+    lock = threading.Lock()
+
+    def __init__(self):
+        self.model = judge_model()
+        self.region = os.environ.get("BEDROCK_REGION", "us-east-1")
+        self.profile = os.environ.get("BENCH_BEDROCK_PROFILE", os.environ.get("AWS_PROFILE", "vlatlabs"))
+        self.endpoint = os.environ.get("BENCH_BEDROCK_ENDPOINT")
+        self.aws = shutil.which("aws") or "aws"
+
+    @staticmethod
+    def _image(path: str) -> bytes:
+        data = Path(path).read_bytes()
+        if len(data) > 3_500_000:  # Converse limit is 3.75 MB per image
+            import io
+
+            from PIL import Image
+
+            with Image.open(path) as im:
+                im = im.convert("RGB")
+                im.thumbnail((1568, 1568))
+                buf = io.BytesIO()
+                im.save(buf, "PNG", optimize=True)
+                data = buf.getvalue()
+        return data
+
+    def _call(self, prompt: str, paths: List[str], td: Path):
+        content = [{"type": "text", "text": prompt.replace(self.OPEN, self.ATTACH)}]
+        for p in paths:
+            content.append({"type": "text", "text": f"[{p}]"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                         "data": base64.b64encode(self._image(p)).decode()}})
+        body = td / "body.json"
+        body.write_text(json.dumps({"anthropic_version": "bedrock-2023-05-31", "max_tokens": 8000, "system": self.SYSTEM,
+                                    "messages": [{"role": "user", "content": content}]}))
+        cmd = [self.aws, "--profile", self.profile, "--region", self.region, "bedrock-runtime", "invoke-model",
+               "--model-id", self.model, "--content-type", "application/json", "--accept", "application/json",
+               "--body", f"fileb://{body}", "--cli-read-timeout", "600"]
+        if self.endpoint:
+            cmd += ["--endpoint-url", self.endpoint]
+        out = td / "reply.json"
+        return subprocess.run(cmd + [str(out)], capture_output=True, text=True, timeout=700, stdin=subprocess.DEVNULL), out
+
+    def __call__(self, prompt: str, model: str = "") -> tuple:
+        paths = []
+        for m in re.finditer(r"(/[^\s\"']+?\.png)", prompt):
+            if m.group(1) not in paths:
+                paths.append(m.group(1))
+        err = ""
+        with tempfile.TemporaryDirectory() as td:
+            for k in range(6):
+                r, out = self._call(prompt, paths, Path(td))
+                if r.returncode == 0:
+                    break
+                err = (r.stderr or r.stdout or "")[-400:]
+                if re.search(r"Throttl|TooManyRequests|ServiceUnavailable|InternalServer|ModelTimeout|ModelNotReady|timed out", err):
+                    time.sleep(min(60, 2 ** k * 2 + random.random() * 2))
+                    continue
+                raise RuntimeError(f"bedrock invoke-model failed: {err.strip()}")
+            else:
+                raise RuntimeError(f"bedrock invoke-model failed after retries: {err.strip()}")
+            j = json.loads(out.read_text())
+        text = "".join(b.get("text", "") for b in j.get("content", []) if b.get("type") == "text")
+        u = j.get("usage") or {}
+        usage = {"input": u.get("input_tokens", 0), "output": u.get("output_tokens", 0), "stop": j.get("stop_reason")}
+        try:
+            BEDROCK_TOKENS.parent.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(dict(ts=round(time.time()), model=self.model, region=self.region, input=usage["input"],
+                                   output=usage["output"], images=len(paths), pid=os.getpid(),
+                                   who=os.environ.get("BENCH_WHO", "bench"))) + "\n"
+            with self.lock, open(BEDROCK_TOKENS, "a") as fh:
+                fh.write(line)
+        except OSError:
+            pass
+        return text, usage
+
+
 def panel(tiles: Dict[str, dict], label: str, workers: int = 3) -> Dict[str, dict]:
     """tiles: name -> {ref: png, a: png, b: png}. Every tile is asked in both orders. Returns
     name -> {score_a (0..1), orders: [...]}; tiles with no valid verdict are omitted."""
@@ -258,7 +369,11 @@ def panel(tiles: Dict[str, dict], label: str, workers: int = 3) -> Dict[str, dic
                              B=str(P.matted(b_img, P.MAT_PADS[pads[1]], jdir))))
     _rng(label, "batches").shuffle(asks)
     batches = [asks[i:i + BATCH] for i in range(0, len(asks), BATCH)]
-    judge = P.ClaudeJudge(jdir)
+    if use_bedrock():
+        judge = BedrockJudge()
+        workers = int(os.environ.get("BENCH_BEDROCK_WORKERS", "12"))
+    else:
+        judge = P.ClaudeJudge(jdir)
     verdicts: Dict[str, Optional[dict]] = {}
 
     def one(batch):
@@ -326,8 +441,8 @@ def cmd_judge(a):
                         b=_render(rb[n]["out"], BENCH / a.b / "png" / f"{n}.png"))
     scores = panel(tiles, f"judge|{a.a}|{a.b}", a.workers)
     s = _summ(scores)
-    s.update(a=a.a, b=a.b, common=len(both), changed=len(changed), sampled=len(pick), model=MODEL)
-    (BENCH / f"judge_{a.a}_vs_{a.b}.json").write_text(json.dumps(dict(summary=s, tiles=scores), indent=1))
+    s.update(a=a.a, b=a.b, common=len(both), changed=len(changed), sampled=len(pick), model=judge_model())
+    Path(a.out or BENCH / f"judge_{a.a}_vs_{a.b}.json").write_text(json.dumps(dict(summary=s, tiles=scores), indent=1))
     print(json.dumps(s, indent=1))
 
 
@@ -346,8 +461,8 @@ def cmd_parity(a):
     s = _summ(scores)
     v = [x["score_a"] >= 0.5 for x in scores.values()]
     m, lo, hi = _ci([float(x) for x in v], seed=1)
-    s.update(tag=a.tag, share_ge_designer=m, share_ci95=[lo, hi], sampled=len(pick), model=MODEL)
-    (BENCH / f"parity_{a.tag}.json").write_text(json.dumps(dict(summary=s, tiles=scores), indent=1))
+    s.update(tag=a.tag, share_ge_designer=m, share_ci95=[lo, hi], sampled=len(pick), model=judge_model())
+    Path(a.out or BENCH / f"parity_{a.tag}.json").write_text(json.dumps(dict(summary=s, tiles=scores), indent=1))
     print(json.dumps(s, indent=1))
 
 
@@ -401,10 +516,12 @@ def main():
     p.add_argument("--b", required=True)
     p.add_argument("--max-tiles", type=int, default=60)
     p.add_argument("--workers", type=int, default=3)
+    p.add_argument("--out", default="", help="result json (default: bench/judge_<a>_vs_<b>.json or parity_<tag>.json)")
     p = sub.add_parser("parity")
     p.add_argument("--tag", required=True)
     p.add_argument("--max-tiles", type=int, default=60)
     p.add_argument("--workers", type=int, default=3)
+    p.add_argument("--out", default="", help="result json (default: bench/judge_<a>_vs_<b>.json or parity_<tag>.json)")
     p = sub.add_parser("tournament")
     p.add_argument("--n", type=int, default=200)
     p.add_argument("--out", default=str(WIDE / "tournament_set.json"))
