@@ -471,6 +471,6 @@ def predict(features: Dict[str, object]) -> Dict[str, Tuple[str, float]]:
         leaf = _walk(tree, features)
         v = leaf["v"]
         if v == "=":  # relative leaf: keep the source's own value
-            v = str(features.get("src_" + name, "="))
+            v = str(features.get("src_" + name, "n/a"))
         out[name] = (v, float(leaf["p"]))
     return out
