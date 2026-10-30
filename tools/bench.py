@@ -130,6 +130,7 @@ def tile_metrics(t: dict, out: dict) -> dict:
     from tools.rules import capacity_errors, hard_rule_errors, promise_errors
 
     src, tgt = t["source"], t["target"]
+    os.environ.setdefault("CHAMELEON_BRAND_KIT", str(CASES))  # the cases' assets (roles, alpha), not brand_kit's
     m = dict(hard=[], promise=[], capacity=[], audit=[], hidden=[], sim=None)
     m["hard"] = hard_rule_errors(src, out, tgt)
     if not m["hard"]:

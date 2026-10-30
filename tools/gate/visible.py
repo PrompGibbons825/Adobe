@@ -16,13 +16,18 @@ An element counts as **visible** when all of these hold (the steering definition
   the source canvas's shorter side, whichever is smaller;
 * any element keeps at least 1 px on both sides when the source had more.
 
-Opaque coverers are shapes and images at opacity >= 0.95 (an image's own transparent pixels are
-not looked at). Text never covers. This is measuring code: the gate's own, never the engine's.
+Opaque coverers are shapes and images at opacity >= 0.95; an image covers a grid point only where
+its fitted asset is opaque there (alpha >= 128, through the renderer's fit/crop geometry), so a
+product cutout or logo over a background no longer "hides" it. An image whose asset file is
+missing may be faded out: the renderer would draw a grey "missing asset" placeholder. Text never
+covers. This is measuring code: the gate's own, never the engine's.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List
+from functools import lru_cache
+from pathlib import Path
+from typing import Callable, Dict, List, Optional
 
 OPACITY_TOL = 0.05
 COVER_MAX = 0.5
@@ -63,7 +68,61 @@ def _paint_key(i_e):
     return (float(e.get("z_index", 0) or 0), i)
 
 
-def _covered(els: List[dict]) -> Dict[str, float]:
+def _assets(assets=None) -> Path:
+    from tools import bleed
+
+    return bleed._assets_dir(assets)
+
+
+@lru_cache(maxsize=256)
+def _alpha(path: str):
+    """(alpha array of the asset, width, height), or None if unreadable."""
+    try:
+        import numpy as np
+        from PIL import Image
+
+        with Image.open(path) as im:
+            w, h = im.size
+            a = im.convert("RGBA").split()[-1]
+            a.thumbnail((256, 256))
+            return np.asarray(a), w, h
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _opaque_at(o: dict, assets) -> Optional[Callable[[float, float], bool]]:
+    """For an image, a test "is the drawn asset opaque at canvas point (x, y)"; None = the box."""
+    if o.get("type") != "image" or not o.get("asset_id"):
+        return None
+    got = _alpha(str(_assets(assets) / str(o["asset_id"])))
+    if got is None:
+        return None
+    a, aw, ah = got
+    from fundamentals.image import fit_geometry
+
+    ox, oy, ow, oh = _box(o)
+    f = fit_geometry(ow, oh, aw, ah, o.get("fit", "contain"))
+    cx0, cy0, cx1, cy1 = f.content
+    kx0, ky0, kx1, ky1 = f.crop
+    th, tw = a.shape
+
+    def test(px: float, py: float) -> bool:
+        lx, ly = px - ox, py - oy
+        if not (cx0 <= lx < cx1 and cy0 <= ly < cy1):
+            return False
+        ax = kx0 + (lx - cx0) / max(1e-9, cx1 - cx0) * (kx1 - kx0)
+        ay = ky0 + (ly - cy0) / max(1e-9, cy1 - cy0) * (ky1 - ky0)
+        i, j = min(th - 1, max(0, int(ay * th / ah))), min(tw - 1, max(0, int(ax * tw / aw)))
+        return bool(a[i, j] >= 128)
+
+    return test
+
+
+def _missing_asset(e: dict, assets) -> bool:
+    return e.get("type") == "image" and bool(e.get("asset_id")) and not (_assets(assets) / str(e["asset_id"])).is_file()
+
+
+def _covered(els: List[dict], assets=None) -> Dict[str, float]:
     """Share of each element's box covered by opaque elements painted after it."""
     order = [e for _, e in sorted(enumerate(els), key=_paint_key)]
     out = {}
@@ -77,7 +136,7 @@ def _covered(els: List[dict]) -> Dict[str, float]:
             if o.get("type") in ("shape", "image") and _op(o) >= OPAQUE:
                 ox, oy, ow, oh = _box(o)
                 if ow > 0 and oh > 0 and ox < x + w and ox + ow > x and oy < y + h and oy + oh > y:
-                    later.append((ox, oy, ox + ow, oy + oh))
+                    later.append((ox, oy, ox + ow, oy + oh, _opaque_at(o, assets)))
         if not later:
             out[str(e.get("id"))] = 0.0
             continue
@@ -86,17 +145,17 @@ def _covered(els: List[dict]) -> Dict[str, float]:
             px = x + (gi + 0.5) * w / GRID
             for gj in range(GRID):
                 py = y + (gj + 0.5) * h / GRID
-                if any(a <= px <= c and b <= py <= d for a, b, c, d in later):
+                if any(a <= px <= c and b <= py <= d and (t is None or t(px, py)) for a, b, c, d, t in later):
                     hit += 1
         out[str(e.get("id"))] = hit / (GRID * GRID)
     return out
 
 
-def hidden_elements(src: dict, out: dict, tgt: dict) -> List[str]:
+def hidden_elements(src: dict, out: dict, tgt: dict, assets=None) -> List[str]:
     W, H = float(tgt["width"]), float(tgt["height"])
     SW, SH = float(src["canvas"]["width"]), float(src["canvas"]["height"])
     oe = {str(e.get("id")): e for e in out.get("elements", [])}
-    cov_s, cov_o = _covered(src["elements"]), _covered(out.get("elements", []))
+    cov_s, cov_o = _covered(src["elements"], assets), _covered(out.get("elements", []), assets)
     res = []
     for s in src["elements"]:
         i = str(s["id"])
@@ -104,7 +163,7 @@ def hidden_elements(src: dict, out: dict, tgt: dict) -> List[str]:
         if e is None:
             res.append(f"{i}: missing")
             continue
-        if _op(e) < _op(s) - OPACITY_TOL:
+        if _op(e) < _op(s) - OPACITY_TOL and not _missing_asset(e, assets):
             res.append(f"{i}: opacity {_op(s):.2f} -> {_op(e):.2f}")
             continue
         if cov_o.get(i, 0) > COVER_MAX and cov_o[i] > cov_s.get(i, 0) + 1e-6:

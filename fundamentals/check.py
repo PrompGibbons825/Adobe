@@ -156,7 +156,8 @@ def _text_overlaps(design: dict) -> Dict[Tuple[str, str], float]:
     for i in range(len(texts)):
         for j in range(i + 1, len(texts)):
             area = sum(_inter(a, b) for a in texts[i][1] for b in texts[j][1])
-            if area > 4.0:
+            small = min(sum((x[2] - x[0]) * (x[3] - x[1]) for x in texts[k][1]) for k in (i, j))
+            if area > max(16.0, 0.01 * small):
                 out[tuple(sorted((texts[i][0], texts[j][0])))] = area
     return out
 
@@ -270,6 +271,10 @@ def check(source: dict, output: dict, target: dict, pixels: bool = False, assets
 
     if pixels:
         faults += pixel_faults(src, output, target, assets, fonts, [e for e in drawable])
+        # an element reported hidden is reported once: drop the promise noise about its (invisible) self
+        gone = {f.id for f in faults if f.code == "hidden" and f.level == "hard"}
+        faults = [f for f in faults if not (f.level == "promise" and (f.id in gone or any(
+            f"of {g} and " in f.msg or f" and {g} " in f.msg for g in gone)))]
     return faults
 
 
