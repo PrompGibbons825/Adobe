@@ -132,21 +132,17 @@ def _vision(rgba, path: str = "") -> Optional[Vision]:
     imp = _importance(rgb, alpha)
     from . import vision_models as _vm
 
-    u2 = _vm.u2_saliency(rgb, alpha, sh, sw)
+    opaque = alpha.mean() > 0.9  # a photo, not a cut-out (its alpha already outlines the subject) or a logo
+    u2 = _vm.u2_saliency(rgba, alpha, sh, sw) if opaque else None
     if u2 is not None:
         imp = np.maximum(imp, 0.68 * u2)
-    faces = _faces(rgba) if alpha.mean() > 0.9 else []
+    faces = _faces(rgba) if opaque else []
     heads = tuple(_pad(f, 0.25, 0.45, 0.25, 0.25) for f in faces)
     people = tuple(_pad(f, 0.5, 0.45, 0.5, 0.8) for f in faces)
     baked: Tuple[Frac, ...] = ()
-    if path:
-        try:
-            st = os.stat(path)
-            raw_baked = _vm.baked_text(path, st.st_mtime_ns, st.st_size)
-            baked = tuple(f for f in raw_baked if (f[2] - f[0]) * (f[3] - f[1]) >= 0.003
-                          and not any(_iou(f, h) > 0.25 for h in heads))
-        except OSError:
-            baked = ()
+    if opaque:
+        baked = tuple(f for f in _vm.baked_text(rgba) if (f[2] - f[0]) * (f[3] - f[1]) >= 0.003
+                      and not any(_iou(f, h) > 0.25 for h in heads))
     for f in baked:
         x0, y0, x1, y1 = (int(round(v)) for v in (f[0] * sw, f[1] * sh, f[2] * sw, f[3] * sh))
         imp[max(0, y0):max(0, y1), max(0, x0):max(0, x1)] = np.maximum(

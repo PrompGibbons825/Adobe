@@ -56,15 +56,6 @@ def _faults(plan: Plan, d: Design, ctx: Ctx, source: dict, emit_fn: Callable) ->
         stats = pixels.measure(els, ctx.W, ctx.H, skip=set())
         if pixel_penalty(stats, src, imp) > 14.0:
             kinds.append("busy_photo")
-    try:
-        from tools.audit import flags
-
-        tgt = {"width": ctx.W, "height": ctx.H}
-        fl = flags(source, {"canvas": tgt, "elements": els}, tgt)
-        if any(f.startswith("empty ") for f in fl):
-            kinds.append("blank_band")
-    except Exception:
-        pass
     return tuple(dict.fromkeys(kinds))
 
 
@@ -73,8 +64,6 @@ def _repair(kind: str, plan: Plan, d: Design, ctx: Ctx) -> Optional[Plan]:
         return _shrink_to_fit(plan, d, ctx)
     if kind == "busy_photo":
         return _nudge_copy(plan, d, ctx)
-    if kind == "blank_band":
-        return _nudge_copy(plan, d, ctx, dy=-8.0)
     return None
 
 

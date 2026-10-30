@@ -7,7 +7,6 @@ network at run time. Everything degrades to empty when numpy, OpenCV or a model 
 from __future__ import annotations
 
 import math
-from functools import lru_cache
 from pathlib import Path
 from typing import List, Tuple
 
@@ -16,8 +15,8 @@ Frac = Tuple[float, float, float, float]
 _DIR = Path(__file__).resolve().parent / "models"
 U2NET = _DIR / "u2netp.onnx"
 OCR_DET = _DIR / "ch_PP-OCRv4_det_infer.onnx"
-U2_SIDE = 320
-OCR_MIN = 960  # detector resize, long side at least this (RapidOCR-style)
+U2_SIDE = 192  # square net input; 192 matches 320 (r=0.998 on the importance grid) at a third of the CPU
+OCR_SIDE = 640  # detector input, long side (baked-in copy worth protecting is large enough at this scale)
 
 try:
     import numpy as np
@@ -28,8 +27,21 @@ _U2 = None  # False once load or inference fails
 _OCR = None
 
 
-def u2_saliency(rgb, alpha, out_h: int, out_w: int):
-    """Salient-object map from U2-Netp, resized to (out_h, out_w), values 0..1."""
+def _rgb_u8(im):
+    """A PIL image as an RGB uint8 array, transparent pixels over white."""
+    from PIL import Image
+
+    if im.mode == "RGBA":
+        bg = Image.new("RGB", im.size, (255, 255, 255))
+        bg.paste(im, mask=im.split()[3])
+        im = bg
+    return np.asarray(im.convert("RGB"))
+
+
+def u2_saliency(im, alpha, out_h: int, out_w: int):
+    """Salient-object map from U2-Netp on the full-resolution PIL image ``im``, resized to
+    (out_h, out_w): the net's own 0..1 probability, so a photo with no
+    distinct subject stays low instead of being stretched to full scale. Standard U2-Net input: RGB, max-normalised, ImageNet mean/std."""
     if np is None:
         return None
     try:
@@ -37,8 +49,7 @@ def u2_saliency(rgb, alpha, out_h: int, out_w: int):
     except Exception:
         return None
     global _U2
-    h, w = rgb.shape[:2]
-    if h < 4 or w < 4 or _U2 is False:
+    if _U2 is False or im.size[0] < 4 or im.size[1] < 4:
         return None
     try:
         if _U2 is None:
@@ -46,17 +57,15 @@ def u2_saliency(rgb, alpha, out_h: int, out_w: int):
                 _U2 = False
                 return None
             _U2 = cv2.dnn.readNetFromONNX(str(U2NET))
-        sc = U2_SIDE / max(h, w)
-        sw, sh = max(8, round(w * sc)), max(8, round(h * sc))
-        small = cv2.resize(rgb, (sw, sh), interpolation=cv2.INTER_LINEAR)
-        blob = cv2.dnn.blobFromImage(small, scalefactor=1.0 / 255.0, size=(sw, sh),
-                                     mean=(0, 0, 0), swapRB=True, crop=False)
-        _U2.setInput(blob)
+        small = cv2.resize(_rgb_u8(im), (U2_SIDE, U2_SIDE), interpolation=cv2.INTER_AREA).astype(np.float32)
+        small /= max(1.0, float(small.max()))
+        small = (small - np.array([0.485, 0.456, 0.406], np.float32)) / np.array([0.229, 0.224, 0.225], np.float32)
+        _U2.setInput(small.transpose(2, 0, 1)[None].copy())
         out = _U2.forward()[0, 0]
-        out = cv2.resize(out, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
-        out = out * alpha[:out_h, :out_w] if alpha is not None else out
-        mx = float(out.max()) + 1e-9
-        return np.clip(out / mx, 0.0, 1.0).astype(np.float32)
+        out = cv2.resize(out, (out_w, out_h), interpolation=cv2.INTER_AREA)
+        if alpha is not None:
+            out = out * alpha[:out_h, :out_w]
+        return np.clip(out, 0.0, 1.0).astype(np.float32)
     except Exception:
         _U2 = False
         return None
@@ -66,10 +75,7 @@ def _ocr_preprocess(img):
     import cv2
 
     h, w = img.shape[:2]
-    if min(h, w) < OCR_MIN:
-        ratio = float(OCR_MIN) / min(h, w)
-    else:
-        ratio = 1.0
+    ratio = float(OCR_SIDE) / max(h, w)
     rh, rw = int(round(h * ratio / 32) * 32), int(round(w * ratio / 32) * 32)
     rh, rw = max(32, rh), max(32, rw)
     resized = cv2.resize(img, (rw, rh))
@@ -119,14 +125,12 @@ def _iou(a: Frac, b: Frac) -> float:
     return inter / union if union > 0 else 0.0
 
 
-@lru_cache(maxsize=64)
-def baked_text(path: str, mtime: int, size: int) -> Tuple[Frac, ...]:
-    """Text baked into a raster asset (detector only, no recognition)."""
+def baked_text(im) -> Tuple[Frac, ...]:
+    """Text baked into a raster asset (PIL image; detector only, no recognition)."""
     if np is None:
         return ()
     try:
-        import cv2
-        from PIL import Image
+        import cv2  # noqa: F401
     except Exception:
         return ()
     global _OCR
@@ -138,10 +142,7 @@ def baked_text(path: str, mtime: int, size: int) -> Tuple[Frac, ...]:
                 _OCR = False
                 return ()
             _OCR = cv2.dnn.readNetFromONNX(str(OCR_DET))
-        with Image.open(path) as im:
-            im.load()
-            rgb = np.asarray(im.convert("RGB"))
-        blob, src_hw, res_hw = _ocr_preprocess(rgb)
+        blob, src_hw, res_hw = _ocr_preprocess(_rgb_u8(im))
         _OCR.setInput(blob)
         pred = _OCR.forward()
         return tuple(_boxes_from_map(pred, src_hw, res_hw))
