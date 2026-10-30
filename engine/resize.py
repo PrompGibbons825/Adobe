@@ -45,7 +45,8 @@ def _candidates(ctx, model):
     # turning the design is for real strip conversions only (a skyscraper into
     # a leaderboard, ~30x): a 2:1 portrait into a 1:2 landscape (4x) is an
     # ordinary orientation change and keeps the design upright
-    if not getattr(ctx, "grids", False) and _fade(ctx) == 0.0:
+    if not getattr(ctx, "grids", False) and \
+            abs(math.log((ctx.W / ctx.H) / (ctx.Ws / ctx.Hs))) >= math.log(TURN_MIN):
         from .layout import tmpl_turn
         yield 0.0, lambda: tmpl_turn(ctx, model)
     flow = [u for u in model["units"] if u.role in FLOW_ROLES]
@@ -186,7 +187,8 @@ def _broken(tight, loose):
 BREAK_COST = 2.0   # per composition taken apart: it has to buy readability or space
 RESTACK_COST = 0.5  # per composition re-stacked along the other axis
 ROTATE_COST = 0.5   # per text piece turned into a vertical strip
-TURN_BONUS = 4.0    # the turned design, offered only from a 4x change of aspect
+TURN_MIN = float(os.environ.get("CHAMELEON_TURN_MIN", "8"))     # aspect change from which the design may turn
+TURN_BONUS = 4.0    # the turned design, offered only for real strip conversions (TURN_MIN)
 SAME_BONUS = 3.0    # the same design, rescaled, at a near-same shape (fades to 0 by a 4x change)
 UPRIGHT_COST = 0.5  # per turned text set upright (a restructure, like turning one)
 
