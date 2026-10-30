@@ -471,7 +471,7 @@ def all_of(*checks: Check) -> Check:
 
 def cases() -> List[Case]:
     return _base_cases() + round5_cases() + round7_cases() + round10_cases() + sprint_b_cases() + sprint_c_cases() \
-        + split_cases() + r12_cases() + r13_cases() + collage_cases() + r14_cases() + r15_cases()
+        + split_cases() + r12_cases() + r13_cases() + collage_cases() + r14_cases() + r15_cases() + r16_cases()
 
 
 def _base_cases() -> List[Case]:
@@ -1932,3 +1932,44 @@ def r15_cases() -> List[Case]:
              check=all_of(split_kept("photo", "panel", ("headline", "subhead", "cta_label")),
                           copy_has_room("headline", 0.06, 4))),
     ]
+
+
+def r16_cases() -> List[Case]:
+    """Round 16: a strip (728x90, 970x90, a 10:1 unit, 320x50). A post whose headline carries a
+    kicker above it and a sentence of supporting copy and small print under it: stacked into
+    the strip's few dozen pixels, the copy column sets everything, headline included, at the
+    type floor (or leaves the supporting copy out). Designers run the supporting copy as a
+    line of its own along the strip and give the row to the headline and the button."""
+    return [
+        Case("strip_supporting_copy_runs_as_a_line",
+             "a dense landscape post (logo, product, a twelve-word headline, a two-line paragraph, three "
+             "pill badges, a button, small print): on a strip nothing is left out, every piece of copy "
+             "keeps the usual 10 px, and the headline still reads as the headline, set larger than the "
+             "paragraph and the small print rather than squeezed into a narrow column at their size",
+             1920, 1080, [
+                 logo(120, 80, 300, 100),
+                 image("product", 120, 300, 420, 620),
+                 text("headline", 640, 200, 1100, 260, "Wild weekends: three hundred kilometres of marked "
+                      "trails, one week, no signal", 64, "Solstice Serif", True, align="left"),
+                 text("body", 640, 500, 1100, 110, "Small groups, expert local guides and cabins with a view, "
+                      "all included in one simple price for the whole week. Bring boots; we bring the rest.", 30, align="left"),
+                 *button("badge1", 640, 650, 260, 64, "ALL LEVELS", 24),
+                 *button("badge2", 920, 650, 220, 64, "GUIDED", 24, fill=PLUM),
+                 *button("badge3", 1160, 650, 180, 64, "NEW", 24),
+                 *button("cta", 640, 760, 420, 96, "Plan your route", 34),
+                 text("legal", 640, 940, 1100, 50, "Terms apply. Offer valid while stocks last.", 20, align="left"),
+             ], targets=("leaderboard", "large-leader", "1000x100"),
+             show=("headline", "cta_label", "product"),
+             check=all_of(nothing_hidden(), fonts_at_least({"body": 10, "legal": 10, "cta_label": 10}),
+                          above("headline", ("body", "legal"), 1.15))),
+    ]
+
+
+def above(head: str, others: Tuple[str, ...], ratio: float) -> Check:
+    """``head`` is set at least ``ratio`` times the font size of each of ``others``."""
+    def check(src, out, tgt):
+        o = {e["id"]: e for e in out["elements"]}
+        hs = float(o[head].get("font_size", 0))
+        return [f"{head} {hs:g}px is not {ratio:g}x {i} {float(o[i].get('font_size', 0)):g}px"
+                for i in others if i in o and hs < ratio * float(o[i].get("font_size", 0))]
+    return check

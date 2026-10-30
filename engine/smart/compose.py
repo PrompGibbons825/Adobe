@@ -444,19 +444,21 @@ def place_column(laid: Laid, boxes: List[Box], aligns: Sequence[str], d: Design,
     return out
 
 
-def place_row(laid: Laid, ctx: Ctx, zone: Box, ends_in_cta: bool = False) -> List[Placement]:
+def place_row(laid: Laid, ctx: Ctx, zone: Box, ends_in_cta: bool = False, grouped: bool = False) -> List[Placement]:
     """A row with ends is set the way a banner is: spare width goes into the
     gaps, so the first part holds the left margin and the last the right (the
     brand at one end, the call to action at the other), no gap opening past a
     quarter of the canvas. A row has ends when it has three or more parts, or
     when its last part is the call to action. Otherwise two parts read as one
     group: their gap breathes a little (up to three times its size) and the
-    pair is centred."""
+    pair is centred. ``grouped``: a row without a call to action whose secondary copy left it
+    (a tiered strip) reads as one group whatever its parts, and is centred the same way: with
+    its supporting copy gone, the headline pinned to the far end would leave a hole mid-strip."""
     parts: List[Laid] = laid.parts  # type: ignore[attr-defined]
     gaps: List[float] = laid.gap_list  # type: ignore[attr-defined]
     extra = max(0.0, zone.w - laid.w)
     n = len(gaps)
-    if n >= 2 or (n == 1 and ends_in_cta):
+    if not grouped and (n >= 2 or (n == 1 and ends_in_cta)):
         add = min(extra / n, max(0.0, ROW_GAP * ctx.W - max(gaps)))
     else:
         add = min(extra / (n + 1.0), 2.0 * max(gaps)) if n else 0.0
@@ -713,15 +715,33 @@ def _fold_all(fn, d: Design, ctx: Ctx, hidden: List[Item], fold: frozenset, floa
 
 
 def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_logo: bool = False,
-             insets=(0, 0, 0, 0), fold: frozenset = frozenset(), footer: bool = False) -> Optional[Plan]:
+             insets=(0, 0, 0, 0), fold: frozenset = frozenset(), footer: bool = False,
+             tier: bool = False) -> Optional[Plan]:
+    """Logo | hero | copy column(s) | CTA in one row across a wide canvas. With ``tier`` (a
+    strip, STRIP), the secondary copy (TIER_ROLES: a kicker, subhead, body, small print) leaves
+    the row for a line of its own at the strip's top or bottom edge, on the side of the headline
+    it sat in the source: the row keeps the headline and the call to action and the full strip
+    height for them, instead of stacking every line of copy into a few dozen pixels and setting
+    all of it at the floor (research H27.2 under S1: nothing is left out, the low-rank copy is
+    demoted to a running line, the rest stays legible)."""
     vis = _visible(d, hidden)
     hid = list(hidden)
     logo = next((i for i in vis if i.role == "logo"), None)
     hero = next((i for i in vis if i.role == "hero"), None)
     ctas = [i for i in vis if i.role == "cta"]
     texts = [i for i in vis if i.is_copy and i is not logo]
-    small_print = [i for i in texts if i.role == "legal"] if footer else []
-    texts = [i for i in texts if i not in small_print]
+    head_line: List[Item] = []
+    if tier:
+        lead = next((i for i in texts if i.role == "headline"), None)
+        small_print = [i for i in texts if i.role in TIER_ROLES]
+        if lead is None or not small_print or not _tier_room(ctx):
+            return None
+        small_print.sort(key=lambda i: (i.src_box.y, i.src_box.x))
+        head_line = [i for i in small_print if i.src_box.cy < lead.src_box.y]
+        small_print = [i for i in small_print if i not in head_line]
+    else:
+        small_print = [i for i in texts if i.role == "legal"] if footer else []
+    texts = [i for i in texts if i not in small_print and i not in head_line]
     badges = [i for i in vis if i.role in ("badge", "panel", "group") and (not i.corner or id(i) in fold)
               and not i.is_copy]
     floaters = [i for i in vis if i.corner and i.role != "logo" and id(i) not in fold]
@@ -736,8 +756,8 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
     if zone.w < 20 or zone.h < 12 or (not copy_rows and not ctas and logo is None and hero is None):
         return None
     centred = dominant_align(texts) == "center" if texts else True
-    full, feet = zone, []
-    if small_print:  # small print runs as one footer line under the row (see _row_footer)
+    full, feet, heads = zone, [], []
+    if small_print and not tier:  # small print runs as one footer line under the row (see _row_footer)
         feet = [realize(it, lo, ctx, max_w=zone.w, relax=0.6) for it in small_print]
         if any(f is None for f in feet):
             return None
@@ -745,6 +765,15 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
         if zone.h - foot_h < 12:
             return None
         zone = Box(zone.x, zone.y, zone.w, zone.h - foot_h)
+    elif tier:  # the demoted copy: a line along the top and one along the bottom (_tier_line)
+        heads = _tier_block(head_line, lo, ctx, zone.w)
+        feet = _tier_block(small_print, lo, ctx, zone.w)
+        if heads is None or feet is None:
+            return None
+        top_h, bot_h = _tier_height(heads, ctx), _tier_height(feet, ctx)
+        if zone.h - top_h - bot_h < TIER_ROW_MIN * zone.h:
+            return None
+        zone = Box(zone.x, zone.y + top_h, zone.w, zone.h - top_h - bot_h)
     kids: List[Node] = []
     if logo is not None and not stack_logo:
         kids.append(Leaf(logo, fill=True, cap_rel=1.7, min_rel=1.0, max_w_frac=0.2))
@@ -781,7 +810,7 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
         if laid is not None or (n == 1 and parts is None):
             break
     if laid is None:
-        if not footer and any(i.role == "legal" for i in texts) and not _in_panel(d, [i for i in texts
+        if not footer and not tier and any(i.role == "legal" for i in texts) and not _in_panel(d, [i for i in texts
                                                                                     if i.role == "legal"]):
             # S1: small print that will not fit the row's columns runs as a line along the foot
             # of the strip instead of being left out
@@ -790,8 +819,25 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
     if ctas and ctx.W >= STRIP * ctx.H:  # on a strip the CTA sits in a column of its own
         s, laid, relax = _with_bold_cta(root, d, ctx, zone, lo, hi, (s, laid, relax), STRIP_CTA)
     
-    placed = place_row(laid, ctx, laid.zone, ends_in_cta=bool(ctas))
-    if small_print:
+    placed = place_row(laid, ctx, laid.zone, ends_in_cta=bool(ctas), grouped=tier and not ctas)
+    if tier and placed:
+        # the lines sit against the row, not the strip's edges, and the block of row and lines
+        # is centred in the safe height: the demoted copy still reads with its headline
+        # ... and lines up with the headline: from its left edge, or centred under it
+        anchor = next(((x, r.w) for r, x, _ in placed if r.item.role == "headline"), None)
+        if anchor is None:
+            anchor = min(((x, r.w) for r, x, _ in placed if r.item.is_copy and r.item.role not in ("cta", "logo")),
+                         default=(full.x, full.w))
+        r0, r1 = min(y for _, _, y in placed), max(y + r.h for r, _, y in placed)
+        top_h, bot_h = _tier_height(heads, ctx), _tier_height(feet, ctx)
+        y0 = full.y + (full.h - (r1 - r0 + top_h + bot_h)) / 2.0
+        y0 = min(max(full.y, y0), full.b - (r1 - r0 + top_h + bot_h))
+        dy = y0 + top_h - r0
+        placed = [(r, x, y + dy) for r, x, y in placed]
+        band = Box(full.x, y0, full.w, r1 - r0 + top_h + bot_h)
+        placed += _tier_line(heads, band, anchor, centred, top=True)
+        placed += _tier_line(feet, band, anchor, centred, top=False)
+    elif small_print:
         placed += _row_footer(small_print, feet, placed, s, relax, ctx, full, centred)
     fl = []
     corner, failed = place_floaters(floaters, s, ctx, mx, my, relax)
@@ -803,13 +849,100 @@ def plan_row(d: Design, ctx: Ctx, hidden: List[Item], name: str = "row", stack_l
         else:
             fl.append(p)
     if bad:  # ... so it joins the row itself (S1: kept, never left out)
-        return plan_row(d, ctx, hidden, name, stack_logo, insets, _folded(fold, bad), footer)
+        return plan_row(d, ctx, hidden, name, stack_logo, insets, _folded(fold, bad), footer, tier)
     return Plan(name=name, placed=placed, hidden=hid, s=s, zone=zone, floaters=fl, relax=relax,
                 capped=s >= hi * 0.999)
 
 
 MAX_COPY_COLUMNS = 3  # a strip's copy may be re-stacked into this many columns side by side
 FOOT_GAP = 0.3  # x base type size: the gap between a strip's row and its small-print footer
+TIER_ROLES = ("subhead", "body", "legal", "text")  # copy a tiered strip runs as a line of its own
+TIER_ROW_MIN = 0.45  # the row of a tiered strip keeps at least this share of the safe height
+TIER_GAP = 1.6  # x base type size: between two pieces of demoted copy sharing one line
+TIER_MEASURE = 4.0  # demoted copy may run this many times its source line (items.READING_LINE caps it)
+
+
+def _tier_room(ctx: Ctx) -> bool:
+    """A tiered row is a strip's layout (STRIP): elsewhere the copy has the height to stack."""
+    return ctx.W >= STRIP * ctx.H
+
+
+Block = Tuple[List[Placement], float, float]  # pieces at offsets from the block's corner, w, h
+
+
+def _tier_block(items: Sequence[Item], lo: float, ctx: Ctx, w: float) -> Optional[Block]:
+    """The demoted copy of a tiered strip at its smallest legible size (as _row_footer reserves
+    small print), laid out in the least height ``w`` allows: side by side on one line; else side
+    by side, each piece wrapping in a share of the width in proportion to its length; else one
+    under another. Set at a long measure (TIER_MEASURE). ``([], 0, 0)`` for no items; None when a piece cannot be set at all."""
+    if not items:
+        return [], 0.0, 0.0
+    ctx = replace(ctx, measure=TIER_MEASURE)  # a running line: up to a full reading line long
+    gap = TIER_GAP * ctx.base_fs
+    nat = [realize(it, lo, ctx, relax=0.6) for it in items]
+    if any(r is None for r in nat):
+        return None
+    nat = [_one_line(it, r, lo, ctx, w) for it, r in zip(items, nat)]
+    options: List[Block] = []
+    room = w - gap * (len(items) - 1)
+    if len(items) > 1 and room > 0:
+        tot = sum(r.w for r in nat)
+        side = [r if r.w <= room * r.w / tot + 0.5 else realize(it, lo, ctx, max_w=room * r.w / tot, relax=0.6)
+                for it, r in zip(items, nat)]
+        if all(r is not None for r in side):
+            lh = max(r.h for r in side)
+            x, out = 0.0, []
+            for r in side:
+                out.append((r, x, (lh - r.h) / 2.0))
+                x += r.w + gap
+            if x - gap <= w + 0.5:
+                options.append((out, x - gap, lh))
+    col = [r if r.w <= w + 0.5 else realize(it, lo, ctx, max_w=w, relax=0.6) for it, r in zip(items, nat)]
+    if all(r is not None for r in col):
+        lg = FOOT_GAP * ctx.base_fs
+        y, out = 0.0, []
+        for r in col:
+            out.append((r, 0.0, y))
+            y += r.h + lg
+        options.append((out, max(r.w for r in col), y - lg))
+    if not options:
+        return None
+    return min(options, key=lambda o: o[2])
+
+
+def _one_line(it: Item, r: Real, lo: float, ctx: Ctx, w: float) -> Real:
+    """``r`` re-set on a single line when the width ``w`` allows (a reading line is a
+    preference; a running line under a strip's row may be longer), else ``r``."""
+    blk = next(iter(r.blocks.values()), None)
+    if blk is None or blk.n_lines <= 1 or len(r.blocks) > 1:
+        return r
+    one = realize(it, lo, ctx, max_w=w, max_h=r.h - (blk.n_lines - 1) * blk.line_step + 0.5, relax=0.6)
+    return one if one is not None else r
+
+
+def _tier_height(block: Block, ctx: Ctx) -> float:
+    """The height a tier block takes from the row, its gap to the row included."""
+    return block[2] + FOOT_GAP * ctx.base_fs if block[0] else 0.0
+
+
+def _tier_line(block: Block, zone: Box, anchor: Tuple[float, float], centred: bool,
+               top: bool) -> List[Placement]:
+    """A tier block at the top or bottom edge of ``zone``, lined up with ``anchor`` (the
+    headline's x and width): centred under it, or from its left edge; kept inside ``zone``.
+    Pieces stacked one under another share that alignment."""
+    out, bw, bh = block
+    if not out:
+        return []
+    stacked = len(out) > 1 and all(x == 0.0 for _, x, _ in out)
+    y0 = zone.y if top else zone.b - bh
+    ax, aw = anchor
+    res: List[Placement] = []
+    for r, dx, dy in out:
+        w = r.w if stacked else bw
+        x = ax + (aw - w) / 2.0 if centred else ax
+        x = max(zone.x, min(x, zone.r - w))
+        res.append((r, x + (0.0 if stacked else dx), y0 + dy))
+    return res
 
 
 def _in_panel(d: Design, items: Sequence[Item]) -> bool:
@@ -1177,10 +1310,26 @@ def generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
     """Candidate plans. With ``settle`` the search stops at the first stage whose plans keep
     every element; without it every stage runs, down to the hide-sets (plan_design asks for
     that only when no plan that keeps everything passes the final hard checks)."""
-    plans = _generate(d, ctx, settle)
+    plans = _untiered(_generate(d, ctx, settle))
     for p in plans:
         copyfit(p, d, ctx)
     return plans
+
+
+def _untiered(plans: List[Plan]) -> List[Plan]:
+    """A tiered strip (plan_row ``tier``) splits copy the source grouped; it is worth that only
+    when it buys type: its row keeps the type at full size, or at a looser rung than every
+    untiered row that shows as much. Otherwise the untiered rows stand alone, so a pixel more
+    or less of strip never flips between the two on a hair's difference in score."""
+    rows = [p for p in plans if p.name.startswith("row") and "-tier" not in p.name]
+
+    def worth(t: Plan) -> bool:
+        if t.relax >= 1.0:
+            return True
+        rivals = [p.relax for p in rows if p.lost() <= t.lost()]
+        return not rivals or t.relax > max(rivals)
+
+    return [p for p in plans if "-tier" not in p.name or worth(p)]
 
 
 def copyfit(p: Plan, d: Design, ctx: Ctx) -> None:
@@ -1264,6 +1413,10 @@ def _generate(d: Design, ctx: Ctx, settle: bool = True) -> List[Plan]:
         if r >= 1.7 or force_all:
             for stack_logo in (False, True):
                 yield "row" + ("-logo-stacked" if stack_logo else ""), plan_row, dict(stack_logo=stack_logo)
+            if _tier_room(ctx) and any(it.role in TIER_ROLES and it.is_copy for it in d.items):
+                for stack_logo in (False, True):  # a strip: secondary copy on a line of its own
+                    yield ("row-tier" + ("-logo-stacked" if stack_logo else ""), plan_row,
+                           dict(stack_logo=stack_logo, tier=True))
 
     measures = (1.0, WIDE_MEASURE) if r >= WIDER * d.W / d.H else (1.0,)
 

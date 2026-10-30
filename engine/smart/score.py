@@ -41,6 +41,9 @@ TRIVIAL = 30.0  # for a plan that is the source uniformly scaled into letterbox 
 TRIVIAL_ASPECT = math.log(1.5)  # ... once the aspect ratio has changed this much
 
 
+TIER_COST = 6.0  # prior points a tiered strip (compose.plan_row) pays for splitting the copy
+
+
 def _prior(name: str, r: float, r0: float = 1.0) -> float:
     lr = math.log(r)
     if name.startswith("adapt"):
@@ -65,6 +68,8 @@ def _prior(name: str, r: float, r0: float = 1.0) -> float:
         p = 10.0 - 18.0 * max(0.0, math.log(3.6) - lr)
         if "stacked" in name:
             p -= 2.0
+        if "-tier" in name:  # the copy the source grouped with its headline is split off
+            p -= TIER_COST
         return p
     return 0.0
 
