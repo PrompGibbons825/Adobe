@@ -641,6 +641,14 @@ def ink_span(blk: TextBlock, style: "TextStyle", align: str) -> Tuple[float, flo
     return lo, hi
 
 
+def _drawnbox_on() -> bool:
+    """Switch (anti-stacking rule): CHAMELEON_OFF=drawnbox (comma list) restores the advance-box,
+    int-size drawn_box of line/night 04de8b3."""
+    import os
+
+    return "drawnbox" not in {t.strip() for t in os.environ.get("CHAMELEON_OFF", "").split(",")}
+
+
 def drawn_box(el: dict):
     """Where a text element's glyphs actually land, as the renderer draws them:
     exact wrap at the element width, real advances (fallback fonts included),
@@ -650,6 +658,15 @@ def drawn_box(el: dict):
 
     style = TextStyle.of(el)
     w = float(el.get("width", 0) or 0)
+    if not _drawnbox_on():
+        blk = measure(str(el.get("content", "")), style, float(el.get("font_size", 12) or 12), w, exact=True)
+        g0, _ = glyph_span(blk, el.get("text_align", "left"))
+        x, y = float(el.get("x", 0) or 0), float(el.get("y", 0) or 0)
+        b = Box(x + g0, y, max(0.0, blk.ink_width), blk.height)
+        rot = float(el.get("rotation", 0) or 0)
+        if rot:
+            b = rotate_about(b, rot, x + w / 2.0, y + float(el.get("height", 0) or 0) / 2.0)
+        return b
     fsf = float(el.get("font_size", 12) or 12)
     try:
         ls = float(el.get("letter_spacing") or 0.0)
