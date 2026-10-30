@@ -61,8 +61,12 @@ class Retrieval(unittest.TestCase):
 
 
 class Switches(unittest.TestCase):
+    def setUp(self):
+        os.environ["CHAMELEON_ON"] = "search,retrieve"
+
     def tearDown(self):
         os.environ.pop("CHAMELEON_OFF", None)
+        os.environ.pop("CHAMELEON_ON", None)
 
     def test_off_removes_variants(self):
         d = analyze(SRC)
@@ -79,6 +83,15 @@ class Switches(unittest.TestCase):
             os.environ["CHAMELEON_OFF"] = off
             out = resize(SRC, {"width": 1080, "height": 1920})
             self.assertEqual(hard_rule_errors(SRC, out, {"width": 1080, "height": 1920}), [], off)
+
+
+class Defaults(unittest.TestCase):
+    def test_search_and_retrieve_default_off(self):
+        os.environ.pop("CHAMELEON_ON", None)
+        os.environ.pop("CHAMELEON_OFF", None)
+        d = analyze(SRC)
+        ctx = Ctx(W=1080.0, H=1920.0, W0=d.W, H0=d.H)
+        self.assertEqual([v[0] for v in C.extra_variants(d, ctx, True)], [])
 
 
 class LearnedTerm(unittest.TestCase):
