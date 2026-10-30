@@ -82,7 +82,7 @@ def size_block(S: Scene, b: Block, s: float, slot_w: float, kw: float, W: float,
         # legibility floor for text inside a rigid group (badge, button), bounded by the slot
         need = max(text_floor(S, f, W, H) / f for f in tfs)
         k = max(k, min(need, 1.8 * s, slot_w / b.w, 0.9 * H / b.h))   # boost, but stay in proportion
-    k = max(k, min(20.0, 0.4 * min(W, H)) / max(1e-6, min(b.w, b.h)))   # visible; >= 20 px keeps bitmap rounding under 5%
+    k = max(k, min(min(20.0, 0.4 * min(W, H)) / max(1e-6, min(b.w, b.h)), 0.9 * W / b.w, 0.9 * H / b.h))   # visible; >= 20 px keeps bitmap rounding under 5%
     return Placed(0, 0, b.w * k, b.h * k, s=k)
 
 

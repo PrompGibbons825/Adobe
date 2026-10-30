@@ -69,6 +69,7 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
         fp = min(20.0, 0.4 * min(W, H)) if e.get("type") == "image" else 1.0
         if min(w * sd, h * sd) < fp:          # bitmap rounding: keep images >= 20 px, aspect kept
             k = fp / max(1e-6, min(w * sd, h * sd))
+            k = max(1.0, min(k, 0.9 * W / (w * sd), 0.9 * H / (h * sd)))   # never wider than the canvas
             nw, nh = w * sd * k, h * sd * k
         e["x"], e["y"], e["width"], e["height"] = cx * W - nw / 2, cy * H - nh / 2, nw, nh
         inside = x >= -0.5 and y >= -0.5 and x + w <= S.W + 0.5 and y + h <= S.H + 0.5
@@ -111,6 +112,7 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
             floor_px = min(floor_px, 0.4 * min(W, H))
             if min(nw, nh) < floor_px:
                 k = floor_px / max(1e-6, min(nw, nh))
+                k = max(1.0, min(k, 0.9 * W / nw, 0.9 * H / nh))
                 nx, ny = nx + nw / 2 - nw * k / 2, ny + nh / 2 - nh * k / 2
                 nw, nh = nw * k, nh * k
             e["x"], e["y"], e["width"], e["height"] = nx, ny, nw, nh

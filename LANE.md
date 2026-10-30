@@ -121,3 +121,5 @@ of a tall canvas; text over a busy photo region.
 - 08:42Z bench 5b65ab8: sim 0.346, 6 hard tiles = rotated (-90 deg) photos taken as backdrop
   (aspect) and rotated text checked by its unrotated box. Fixed: rotated images never become
   backdrops; rotated text keeps rotated AABB, ink box and unrotated box inside the canvas.
+- 08:48Z image size floor (20 px) capped so an image never grows wider/taller than 0.9 of the
+  canvas (60:1 slivers were blown past the canvas edges).
