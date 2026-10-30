@@ -116,13 +116,47 @@ def _image_ratio(e: dict, s: dict, W: float, H: float) -> List[str]:
     return []
 
 
+def floor_area(texts: List[dict], floor: float) -> float:
+    """Least ink-box area the visible ``texts`` can occupy with every one at ``floor`` px: each
+    set on a single line (wrapping only adds area) at the floor size, width x line step."""
+    from engine.smart.textfit import TextStyle, measure
+
+    total = 0.0
+    for e in texts:
+        b = measure(str(e.get("content", "")), TextStyle.of(e), max(1, int(round(floor))), 1e9, exact=True)
+        total += b.ink_width * b.line_step * max(1, b.n_lines)
+    return total
+
+
+CAPACITY_K = 1.0  # exactly 1.0: above it the texts cannot all fit on the canvas at the floor, provably
+
+
+def capacity_impossible(out: dict, tgt: dict) -> bool:
+    """True when ``floor_area(texts, floor) > 1.0 * W * H``: holding the small-print floor is
+    impossible, so small print is reported as ``capacity`` instead of a failure (never as passing)."""
+    W, H = tgt["width"], tgt["height"]
+    floor = Ctx(W=W, H=H, W0=1, H0=1).judge_floor
+    texts = [e for e in out["elements"] if _visible_text(e)]
+    return floor_area(texts, floor) > CAPACITY_K * W * H
+
+
+def capacity_errors(out: dict, tgt: dict) -> List[str]:
+    """The small-print findings that ``promise_errors`` exempts because of capacity (else [])."""
+    if not capacity_impossible(out, tgt):
+        return []
+    floor = Ctx(W=tgt["width"], H=tgt["height"], W0=1, H0=1).judge_floor
+    return [f"capacity: {e['id']}: {e['font_size']}px < {floor}px, texts need more than the canvas at the floor"
+            for e in out["elements"] if _visible_text(e) and e["font_size"] < floor]
+
+
 def promise_errors(src: dict, out: dict, tgt: dict) -> List[str]:
     errs: List[str] = []
     W, H = tgt["width"], tgt["height"]
     floor = Ctx(W=W, H=H, W0=1, H0=1).judge_floor
     texts = [e for e in out["elements"] if _visible_text(e)]
+    cap = capacity_impossible(out, tgt)
     for e in texts:
-        if e["font_size"] < floor:
+        if e["font_size"] < floor and not cap:
             errs.append(f"{e['id']}: small print {e['font_size']}px < {floor}px")
         db = drawn_box(e)
         if db.x < -TOL or db.y < -TOL or db.r > W + TOL or db.b > H + TOL:

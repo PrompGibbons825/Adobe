@@ -74,7 +74,7 @@ SUITES = [
 ]
 MUST_BE_ZERO = ("hard", "ghost")
 MUST_NOT_RISE = ("promise", "contrast", "hierarchy", "hidden")
-REPORT_ONLY = ("bleed",)
+REPORT_ONLY = ("bleed", "capacity")
 TOLERABLE = ("promise", "contrast", "hierarchy")  # rows a prereg's floor_tolerance may loosen
 PROFILES = {
     "default": {"suites": [n for n, _ in SUITES], "report_rows": ()},
@@ -201,7 +201,7 @@ def tile_metrics(src_dir: Path, out_dir: Path, kit: Optional[Path] = None) -> Di
     if kit:
         os.environ["CHAMELEON_BRAND_KIT"] = str(Path(kit).resolve())
     from tools.rules import (bleed_report, contrast_errors, ghost_text, hard_rule_errors, hierarchy_errors,
-                             promise_errors)
+                             promise_errors, capacity_errors)
     from tools.gate.visible import hidden_elements
 
     assets = Path(kit).resolve() / "assets" if kit else None
@@ -227,6 +227,7 @@ def tile_metrics(src_dir: Path, out_dir: Path, kit: Optional[Path] = None) -> Di
                             ("contrast", lambda: contrast_errors(src, out, tgt)),
                             ("hierarchy", lambda: hierarchy_errors(src, out)),
                             ("hidden", lambda: hidden_elements(src, out, tgt)),
+                            ("capacity", lambda: capacity_errors(out, tgt)),
                             ("bleed", lambda: bleed_report(src, out, tgt))):
                 try:
                     m[key] = fn()

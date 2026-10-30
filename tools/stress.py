@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from engine.resize import resize  # noqa: E402
-from tools.rules import hard_rule_errors, promise_errors, render_image  # noqa: E402
+from tools.rules import capacity_errors, hard_rule_errors, promise_errors, render_image  # noqa: E402
 from tools.sheet import CATALOGUE  # noqa: E402
 
 ASSETS = ["solstice_bottle.png", "solstice_logo_lockup.png", "solstice_bg_gradient.png", "does_not_exist.png"]
@@ -119,6 +119,7 @@ def main() -> int:
     rng = random.Random(a.seed)
     targets = list(CATALOGUE.values())
     fails, fallbacks, worst = 0, 0, (0.0, None)
+    capacity = 0
     times = []
     for i in range(a.n):
         src = random_design(rng)
@@ -143,6 +144,9 @@ def main() -> int:
             print(f"[{i}] FALLBACK {src['canvas']} -> {tgt}\n" + buf.getvalue().strip().splitlines()[-1])
         # the safe fallback (impossible content) only promises the hard rules
         errs = hard_rule_errors(src, out, tgt) + ([] if fell_back else promise_errors(src, out, tgt))
+        if capacity_errors(out, tgt):  # provably cannot hold the floor: reported, never counted as passing
+            capacity += 1
+            print(f"[{i}] CAPACITY {src['canvas']} -> {tgt}: {capacity_errors(out, tgt)[0]}")
         if a.render:
             try:
                 with redirect_stderr(io.StringIO()):
@@ -153,7 +157,7 @@ def main() -> int:
             fails += 1
             print(f"[{i}] {src['canvas']} -> {tgt}: {errs[:4]}")
     times.sort()
-    print(f"\n{a.n} designs: {fails} rule failures, {fallbacks} fallbacks; "
+    print(f"\n{a.n} designs: {fails} rule failures, {capacity} capacity-exempt, {fallbacks} fallbacks; "
           f"median {times[len(times) // 2]:.2f}s, p95 {times[int(len(times) * 0.95)]:.2f}s, worst {worst[0]:.2f}s (#{worst[1]})")
     return 1 if fails else 0
 
