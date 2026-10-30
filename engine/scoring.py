@@ -1,7 +1,7 @@
 """Feature score of a realised layout. Higher is better."""
 import math
 
-WEIGHTS = dict(text=0.5, leg=3.0, img=10.8, fid=9.3, fill=1.0, panes=0.0, kdrop=0.185)  # img/fid/kdrop fit by lab/learn.py (sim to designer); leg and fill floored by hand (sim cannot see readability)
+WEIGHTS = dict(text=0.5, leg=3.0, img=10.8, fid=9.3, fill=1.0, panes=0.0, kdrop=0.185, tiny=5.0)  # img/fid/kdrop fit by lab/learn.py (sim to designer); leg and fill floored by hand (sim cannot see readability)
 
 
 def features(L, W, H, sW, sH, s_ref):
@@ -22,6 +22,9 @@ def features(L, W, H, sW, sH, s_ref):
             wsum += wt
     tl /= max(wsum, 1e-9)
     ll /= max(wsum, 1e-9)
+    tiny = sum(1.0 for u, f, X, Y in L.placed for e in f.els if e['type'] == 'text' and e['font_size'] < 10)
+    ntxt = sum(1.0 for u, f, X, Y in L.placed for e in f.els if e['type'] == 'text')
+    tiny /= max(ntxt, 1.0)
     il, asum = 0.0, 0.0
     for u, f, X, Y in L.placed:
         if u.texts and not u.is_image:
@@ -48,7 +51,7 @@ def features(L, W, H, sW, sH, s_ref):
     cov = (x1 - x0) * (y1 - y0) / (W * H)
     fill = max(0.0, -math.log(max(cov, 1e-3) / 0.7))
     kd = max(0.0, -math.log(max(L.k / s_ref, 1e-3)))
-    L.feat = dict(text=tl, leg=ll, img=il, fid=d, fill=fill, panes=float(len(getattr(L, 'panes', [1])) - 1), kdrop=kd)
+    L.feat = dict(text=tl, leg=ll, img=il, fid=d, fill=fill, panes=float(len(getattr(L, 'panes', [1])) - 1), kdrop=kd, tiny=tiny)
     return L.feat
 
 

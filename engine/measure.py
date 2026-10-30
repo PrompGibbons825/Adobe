@@ -46,7 +46,8 @@ def layout(el, size, width):
     Returns (n_lines, max_line_width)."""
     weight, style = style_of(el)
     return _layout(str(el.get("content", "")), el.get("font_family", "Montserrat"), weight, style,
-                   float(size), float(width), float(el.get("letter_spacing", 0) or 0))
+                   float(size), float(width),
+                   float(el.get("letter_spacing", 0) or 0) * float(size) / max(1e-6, float(el.get("font_size", size))))
 
 
 @lru_cache(maxsize=300000)

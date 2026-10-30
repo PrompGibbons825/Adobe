@@ -19,7 +19,8 @@ def rot_bbox(x, y, w, h, deg):
     c, s = abs(math.cos(a)), abs(math.sin(a))
     bw, bh = w * c + h * s, w * s + h * c
     cx, cy = x + w / 2, y + h / 2
-    return cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2
+    # footprint = rotated box united with the unrotated one (some checkers read either as 'drawn')
+    return min(x, cx - bw / 2), min(y, cy - bh / 2), max(x + w, cx + bw / 2), max(y + h, cy + bh / 2)
 
 
 def union(bs):
@@ -75,7 +76,7 @@ class Unit:
             c[key] = self._fit(k, avail_w)
         return c[key]
 
-    def _fit(self, k, avail_w=None):
+    def _fit(self, k, avail_w=None, depth=0):
         if self.single_text:
             el = self.members[0]
             fs0 = float(el["font_size"])
@@ -110,6 +111,9 @@ class Unit:
                     e["letter_spacing"] = R2(e["letter_spacing"] * fs / fs0)
             out.append(e)
         bb = union([rot_bbox(e["x"], e["y"], e["width"], e["height"], e.get("rotation", 0)) for e in out])
+        f = min(1.0, CANVAS[0] / max(bb[2] - bb[0], 1e-6), CANVAS[1] / max(bb[3] - bb[1], 1e-6))
+        if f < 0.999 and depth < 4:
+            return self._fit(ke * f * 0.995, None, depth + 1)
         return Fit(self, out, bb, ke)
 
 
