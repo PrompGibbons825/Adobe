@@ -35,7 +35,7 @@ def plan_design(source: dict, target: dict):
         forget_realized()  # items are keyed by identity: a fresh analysis must not meet stale sizes
         d = analyze(source, lockups=lockups)
         W, H = float(target["width"]), float(target["height"])
-        ctx = Ctx(W=W, H=H, W0=d.W, H0=d.H, display_room=display_room(d, W, H), copy_fs=_copy_fs(d))
+        ctx = Ctx(W=W, H=H, W0=d.W, H0=d.H, display_room=display_room(d, W, H))
         # S1: the search first stops at plans that keep every element; only if none of those
         # passes the hard checks is it run to the end, where plans may leave something out
         for settle in (True, False):
@@ -66,18 +66,6 @@ def plan_design(source: dict, target: dict):
         if not any(it.lockup for it in d.items):
             break
     raise RuntimeError(reason)
-
-
-class _NOFACE:
-    faces = ()
-
-
-def _copy_fs(d: Design) -> float:
-    """The median source size of the design's visible text: what its copy is typically set at."""
-    sizes = sorted(float(e.get("font_size", 0) or 0) for it in d.items for e in it.els
-                   if e.get("type") == "text" and str(e.get("content", "")).strip())
-    sizes = [z for z in sizes if z > 0]
-    return sizes[len(sizes) // 2] if sizes else 0.0
 
 
 def _quiet(d: Design, ctx: Ctx, plans) -> list:
@@ -212,12 +200,7 @@ def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
 
     if len(plans) < 1 or not pixels.available():
         return
-    # two grounds under one line (pixels.split_share) is the collision with a smooth subject; on a
-    # photo of people every line beside them straddles hair and wall, and the face terms
-    # (vision.rank) already judge where copy goes, so there the split is not charged
-    split = not any(e.get("type") == "image" and (vision.analyze(e.get("asset_id")) or _NOFACE).faces
-                    for e in d.backgrounds)
-    src = pixels.measure(d.elements, d.W, d.H, skip=set(), split=split)
+    src = pixels.measure(d.elements, d.W, d.H, skip=set())
     if not src:
         return
     display = frozenset(e["id"] for it in d.items if it.role == "headline" and it.kind == "text" for e in it.els
@@ -229,7 +212,7 @@ def _pixel_rerank(plans, d: Design, ctx: Ctx, top: int = 8) -> None:
             for e in r.item.els:
                 imp[e["id"]] = r.item.importance
         hidden = {e["id"] for it in p.hidden for e in it.els}
-        stats = pixels.measure(emit(p, d, ctx), ctx.W, ctx.H, skip=hidden, split=split)
+        stats = pixels.measure(emit(p, d, ctx), ctx.W, ctx.H, skip=hidden)
         pen = pixel_penalty(stats, src, imp, display)
         p.breakdown["pixels"] = -pen
         p.score -= pen

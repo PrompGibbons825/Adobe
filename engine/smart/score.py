@@ -258,8 +258,6 @@ def _inflation(placed, d: Design, ctx: Ctx) -> float:
     return total
 
 
-SPLIT = 0.6  # x importance, for copy that now straddles two grounds (pixels.split_share) ...
-SPLIT_SLACK = 0.15  # ... past the source's share plus this
 DISPLAY_BUSY = 1.5  # x the busy charge, for display type (the headline): it must read at a glance
 
 
@@ -270,21 +268,15 @@ def pixel_penalty(stats, src_stats, importance, display=frozenset()) -> float:
     small, the headline is the copy that must keep to it, while a button carries
     its own fill and secondary copy may run on past it."""
     pen = 0.0
-    for tid, st in stats.items():
-        c, busy = st[0], st[1]
+    for tid, (c, busy) in stats.items():
         imp = importance.get(tid, 40.0)
-        s0 = src_stats.get(tid, (4.5, 0.0, 0.0))
-        c0, b0 = s0[0], s0[1]
+        c0, b0 = src_stats.get(tid, (4.5, 0.0))
         target = max(1.5, min(c0, 4.5))
         if c < 0.85 * target:
             pen += imp * 1.5 * (1.0 - c / target)
         calm = max(1.5 * b0, 0.06)
         if busy > calm:
             pen += imp * 0.6 * min(1.0, (busy - calm) / 0.1) * (DISPLAY_BUSY if tid in display else 1.0)
-        if len(st) > 2:  # straddling two grounds the source kept it on one of (split_share)
-            sp = st[2] - (s0[2] if len(s0) > 2 else 0.0) - SPLIT_SLACK
-            if sp > 0:
-                pen += imp * SPLIT * min(1.0, sp / 0.3) * (DISPLAY_BUSY if tid in display else 1.0)
     return pen
 
 

@@ -127,36 +127,7 @@ def text_stats(arr, f: float, e: dict) -> Optional[Tuple[float, float]]:
     return float(np.percentile(c, 10)), busy
 
 
-SPLIT_DIST = 0.12  # RGB distance (0..1 units) from a box's median colour past which a pixel is other ground
-
-
-def split_share(arr, f: float, e: dict) -> float:
-    """Share of a text box's backdrop pixels that are not its main ground (farther than
-    SPLIT_DIST from the box's median colour): a box half on a plain wall and half on a smooth
-    armchair and its cushion straddles two grounds. Neither contrast nor texture sees that
-    collision when both grounds are calm and light; this does. Measured under the glyphs'
-    own box (textfit.drawn_box), not the element's, which may run past the line."""
-    from .textfit import drawn_box
-
-    try:
-        g = drawn_box(e)
-        bx, by, bw, bh = g.x, g.y, g.w, g.h
-    except Exception:  # noqa: BLE001
-        bx, by, bw, bh = e["x"], e["y"], e["width"], e["height"]
-    h, w = arr.shape[:2]
-    x0, y0 = int(max(0, bx * f)), int(max(0, by * f))
-    x1, y1 = int(min(w, (bx + bw) * f + 1)), int(min(h, (by + bh) * f + 1))
-    if x1 - x0 < 1 or y1 - y0 < 1:
-        return 0.0
-    bg = arr[y0:y1, x0:x1].reshape(-1, 3)
-    med = np.median(bg, axis=0)
-    return float((np.sqrt(((bg - med) ** 2).sum(-1)) > SPLIT_DIST).mean())
-
-
-def measure(elements: List[dict], W: float, H: float, skip: set,
-            split: bool = False) -> Dict[str, Tuple[float, ...]]:
-    """{text id: (contrast p10, busy p90)} against the backdrop; with ``split``, also the
-    split_share as a third value."""
+def measure(elements: List[dict], W: float, H: float, skip: set) -> Dict[str, Tuple[float, float]]:
     arr, f = backdrop(elements, W, H)
     if arr is None:
         return {}
@@ -166,5 +137,5 @@ def measure(elements: List[dict], W: float, H: float, skip: set,
             continue
         st = text_stats(arr, f, e)
         if st:
-            out[e["id"]] = st + (split_share(arr, f, e),) if split else st
+            out[e["id"]] = st
     return out

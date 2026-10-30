@@ -44,7 +44,6 @@ class Ctx:
     cta_min: float = 0.0  # px: the least label size of a call to action in this plan (strips)
     keep_px: float = 0.0  # px: when set, the type floor of a plan that must keep everything (see keep_floor)
     scale_cap: float = 0.0  # when set, the most the layout scale may be in this plan (quiet.py)
-    copy_fs: float = 0.0  # px: the design's typical copy size in the source (median), for the rank floor
 
     @property
     def display_max(self) -> float:
@@ -104,33 +103,9 @@ def display_size(W: float, H: float) -> float:
     return min(W, H) * (0.15 + 0.27 * min(1.0, max(0.0, (e - 2.0) / 4.0)))
 
 
-RANK = 1.5  # copy the source set this much larger than its typical copy is display copy
-
-
-def rank_floor(fs0: float, role: str, ctx: Ctx, relax: float = 1.0) -> float:
-    """The floor of a text set ``fs0`` in the source. A squeezed plan (keep_px under the usual
-    floor) sets secondary copy under the usual floor, but holds the headline and CTA at it
-    (LEGIBLE_ROLES); copy the source set well above its typical size (a price at twice the
-    subhead's) is display copy whatever role it was inferred to have, and is held there too.
-    Squeezing it would invert the source's hierarchy: the price set smaller than the subhead."""
-    floor = ctx.floor(role, relax)
-    if ctx.keep_px and ctx.copy_fs > 0 and fs0 >= RANK * ctx.copy_fs:
-        floor = max(floor, float(ctx.usual_floor))
-    return floor
-
-
-def lockup_floor(big: float, ctx: Ctx) -> float:
-    """The least size of a lockup's smallest part (its parts keep their proportions): the judge
-    floor, or the usual floor for a lockup of display copy in a squeezed plan (rank_floor: the
-    cents of a price are as much the price as its figure)."""
-    if ctx.keep_px and ctx.copy_fs > 0 and big >= RANK * ctx.copy_fs:
-        return float(max(ctx.judge_floor, ctx.usual_floor))
-    return float(ctx.judge_floor)
-
-
 def font_for(fs0: float, s: float, role: str, ctx: Ctx, relax: float = 1.0) -> int:
     fs0 = max(1.0, float(fs0))
-    floor = min(fs0 * max(1.0, s), rank_floor(fs0, role, ctx, relax))
+    floor = min(fs0 * max(1.0, s), ctx.floor(role, relax))
     return max(ctx.judge_floor, int(round(max(fs0 * s, floor))))
 
 
@@ -370,7 +345,7 @@ def _realize_lockup_line(it: Item, s: float, ctx: Ctx, max_w: float, max_h: floa
     glyphs = [textfit.drawn_box(e) for e in parts]
     # parts already side by side keep their own spacing (a figure and its cents); the rest get a word space
     beside = [min(a.b, b.b) - max(a.y, b.y) > 0 and b.x >= a.x for a, b in zip(glyphs, glyphs[1:])]
-    g = max(s, lockup_floor(max(fs0), ctx) / min(fs0))
+    g = max(s, ctx.judge_floor / min(fs0))
     for _ in range(8):
         blocks = [textfit.measure(str(e.get("content", "")), TextStyle.of(e), max(int(f * g), ctx.judge_floor),
                                   1e9, exact=True) for e, f in zip(parts, fs0)]
@@ -560,14 +535,12 @@ def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, r
         it.memo["overlap"] = {(i, j): _overlap(g0[a["id"]], g0[b["id"]])
                               for i, a in enumerate(texts) for j, b in enumerate(texts) if i < j}
     glyphs0, overlap0 = it.memo["glyphs"], it.memo["overlap"]
-    # the parts of display copy (a price's figure and its cents) share its floor in a squeezed plan
-    part_floor = lockup_floor(max(fs0.values()), ctx) if texts else float(ctx.judge_floor)
     g = s
     if texts:  # the biggest line on the group must stay legible
         big = max(fs0.values())
         g = max(g, font_for(big, s, "body" if it.role == "panel" else it.role, ctx, relax) / big)
         if it.lockup:
-            g = max(g, lockup_floor(big, ctx) / min(fs0.values()))
+            g = max(g, ctx.judge_floor / min(fs0.values()))
 
     def layout(g: float):
         local, fonts, blocks = {}, {}, {}
@@ -577,7 +550,7 @@ def _realize_generic(it: Item, s: float, ctx: Ctx, max_w: float, max_h: float, r
         glyphs, starts = {}, {}
         for m in texts:
             content, style = str(m.get("content", "")), TextStyle.of(m)
-            fs = max(int(fs0[m["id"]] * g), part_floor)  # rounded down, but never small print
+            fs = max(int(fs0[m["id"]] * g), ctx.judge_floor)  # rounded down, but never small print
             w = textfit.width_keeping_breaks(content, style, fs0[m["id"]], max(1.0, el_box(m).w), fs)
             w = textfit.tight_width(content, style, fs, w)
             blk = textfit.measure(content, style, fs, w, exact=True)

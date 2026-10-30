@@ -5,6 +5,3 @@ quarter, busy foliage below. Used only by tests/finicky.py (headline_outgrows_qu
 wall_beside_pattern.jpg: synthetic (numpy noise and stripes, seed 11; written for this suite): a
 plain pale wall down the left 36% and over the top 24%, a light busy pattern elsewhere. Used only by
 tests/finicky.py (headline_on_busy_but_contrasty).
-chair_beside_wall.jpg: synthetic (PIL shapes, numpy noise seed 13; written for this suite): a smooth rose
-armchair with a white cushion right of centre before a plain pale wall, boards along the bottom
-fifth. Used only by tests/finicky.py (headline_off_smooth_subject).

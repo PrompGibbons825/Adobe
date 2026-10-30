@@ -25,7 +25,6 @@ a pixel of any asset.
 
 from __future__ import annotations
 
-import math
 from dataclasses import replace
 from typing import List, Optional, Tuple
 
@@ -49,7 +48,6 @@ MIN_BAND = 0.14  # a quiet band is at least this share of the canvas along its a
 MAX_BAND = 0.8  # ... and less than this (a canvas readable almost everywhere needs no help)
 BANDS = 2  # the longest bands looked at, per axis
 STEPS = 6  # bisection steps for the headline's scale cap
-ON_SUBJECT = 0.04  # share of the headline's box a quiet-head plan may set on the photo's subject
 WIDE_GAIN = 1.15  # a wider headline measure must buy at least this much scale in a band
 
 
@@ -126,46 +124,6 @@ def _ground(plan: Plan, d: Design, ctx: Ctx):
     mine = {e["id"] for r, _, _ in plan.placed + plan.floaters for e in r.item.els}
     els = [e for e in emit(plan, d, ctx) if e["id"] not in mine]
     return pixels.backdrop(els, ctx.W, ctx.H)
-
-
-def _subject(plan: Plan, d: Design, ctx: Ctx, shape, f: float):
-    """Boolean map (the ground's grid): where the photo's subject is drawn under this plan's
-    crop: the people (head and shoulders), and the weightiest part of the picture (its
-    importance map at or past vision.SUBJECT_Q). A smooth subject (a white cushion, a pale
-    bottle) passes the contrast and texture test, yet copy set on it collides with the very
-    thing the photo shows: quiet ground is the calm part around the subject, never the subject."""
-    from . import vision
-
-    m = np.zeros(shape, dtype=bool)
-    for e in d.backgrounds:
-        if e.get("type") != "image":
-            continue
-        v = vision.analyze(e.get("asset_id"))
-        if v is None or not v.subject:
-            break
-        box = plan.fixed.get(e["id"])
-        if box is None:
-            from . import _decor_rects
-
-            box = vision.bg_box(e, plan, d, ctx, _decor_rects(d, ctx)) or vision.centre_box(v, ctx.W, ctx.H)
-        bx, by, bw, bh = box
-        h, w = shape
-        for fx0, fy0, fx1, fy1 in v.people:
-            c0, c1 = max(0, int((bx + fx0 * bw) * f)), min(w, int(math.ceil((bx + fx1 * bw) * f)))
-            r0, r1 = max(0, int((by + fy0 * bh) * f)), min(h, int(math.ceil((by + fy1 * bh) * f)))
-            if c1 > c0 and r1 > r0:
-                m[r0:r1, c0:c1] = True
-        imp = v.imp
-        ih, iw = imp.shape
-        thr = float(np.quantile(imp, vision.SUBJECT_Q))
-        xs = ((np.arange(w) + 0.5) / f - bx) / bw
-        ys = ((np.arange(h) + 0.5) / f - by) / bh
-        cx = np.clip((xs * iw).astype(int), 0, iw - 1)
-        cy = np.clip((ys * ih).astype(int), 0, ih - 1)
-        inside = ((ys >= 0) & (ys < 1))[:, None] & ((xs >= 0) & (xs < 1))[None, :]
-        m |= (imp[cy[:, None], cx[None, :]] >= thr) & inside
-        break  # the first canvas-covering photo is the ground
-    return m
 
 
 def _tone(e: dict) -> bool:
@@ -257,18 +215,16 @@ def plans(d: Design, ctx: Ctx, field: List[Plan]) -> List[Plan]:
     out: List[Plan] = []
     try:
         for fixed in [dict(base.fixed)] + [{**base.fixed, **sl} for sl in _slides(d, ctx)]:
-            ground = replace(base, fixed=fixed)
-            arr, f = _ground(ground, d, ctx)
+            arr, f = _ground(replace(base, fixed=fixed), d, ctx)
             if arr is None:
                 continue
-            sub = _subject(ground, d, ctx, arr.shape[:2], f)
-            out += _from_ground(d, ctx, base, head, readable_map(arr, colour), f, fixed, sub)
+            out += _from_ground(d, ctx, base, head, readable_map(arr, colour), f, fixed)
     except BudgetExceeded:
         pass  # out of budget: the quiet plans found so far join the field
     return out
 
 
-def _from_ground(d: Design, ctx: Ctx, base: Plan, head, ok, f: float, fixed: dict, sub=None) -> List[Plan]:
+def _from_ground(d: Design, ctx: Ctx, base: Plan, head, ok, f: float, fixed: dict) -> List[Plan]:
     h, w = ok.shape
     mx, my = margins(d, ctx)
     top, bottom = story_band(ctx)
@@ -307,12 +263,6 @@ def _from_ground(d: Design, ctx: Ctx, base: Plan, head, ok, f: float, fixed: dic
                               max(0, int(xx * f)):max(1, int((xx + rr.w) * f))]
                     if cell.size and float(cell.mean()) < ROW_OK:
                         return False
-                    # and off the photo's subject: a smooth cushion reads, but copy on it collides
-                    if sub is not None:
-                        on = sub[max(0, int(yy * f)):max(1, int((yy + rr.h) * f)),
-                                 max(0, int(xx * f)):max(1, int((xx + rr.w) * f))]
-                        if on.size and float(on.mean()) > ON_SUBJECT:
-                            return False
             return seen > 0
 
         free = attempt("quiet-head", ins, c, vside=vside)
