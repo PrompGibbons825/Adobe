@@ -31,3 +31,8 @@
 - Faults found by the bench and fixed: letter_spacing was not scaled with font in fit (1px text), rotated text footprint, glyph descent past last line pitch.
 - Tried and reverted: partial-bleed bg layers clipped with cover transform (aspect rule fires: 13 hard tiles).
 - Not tuned on the tournament set: weights fit on 226 non-tournament tasks; the tournament set is used only for evaluation.
+
+## 08:05Z results
+- Parity panel (tools.bench parity, 60 tiles of the tournament set, claude-sonnet-5-5 judge, commit before last bg tweak): win rate vs designer 0.367 (CI 0.26-0.48), share >= designer 0.43. Same panel for incumbents main 0.275, sprint 0.267.
+- Docker (--cpus 2 --memory 3g --network none, input/): 3/3 OK, exit 0. Stress: 1200 runs (300 designs x 4 formats) 0 faults on the first head; 200 runs 0 on the latest. Deterministic (md5 equal across two runs). CPU p95 about 1 s/target.
+- Weakest: extreme strips with 10+ elements (text below 10px, nothing may be dropped); strongest: near-square and wide-from-square, where pin keeps the source composition.
