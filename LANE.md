@@ -123,3 +123,18 @@ incumbent, its notes, README or any other lane.
   86 -> 59, copy over copy 13 of 307; input small print 60 -> 31 elements (L3 on strips).
   Cost: dev IoU with designers 0.394 -> 0.377 (bigger type than the designers' at small sizes).
   Stress 300 x 3: 0 faults.
+- 08:22Z head 2e333b6. Docker (`--cpus 2 --memory 3g --network none`): input/ OK (0.30 / 0.04 /
+  0.05 s); stress 900 outputs in the container: 0 faults, p50 0.026 s, p95 0.11 s, max 0.84 s.
+  Tournament set, measured once (not tuned on): fundamentals.check 0 hard on 160 tiles; promise:
+  small print on 33 tiles, copy over copy on 8; box IoU with the designers 0.358 (square 0.40,
+  tall 0.38, wide 0.37, extreme 0.28, strip 0.27). B0's bench run is queued behind loop/capped.
+
+## Summary
+
+- Learned from data (Crello family index, 895 families / 9,120 pairs / 105k element rows, held
+  out: every dev-case family): the designers' median move (proportional anchor; type and box
+  scale = sqrt(area ratio) x a per-aspect-change factor) and where designers start to
+  re-arrange (|log aspect change| ~ 0.9). Per-element learned moves (kNN, ridge, whole-layout
+  retrieval) all lost to the anchor on held-out families: positions are not predictable from
+  geometry alone (oracle positions would give IoU 0.79).
+- Everything else is constraint repair, measured with the renderer's own model.
