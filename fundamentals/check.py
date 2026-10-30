@@ -107,7 +107,15 @@ def _same_colour(a, b) -> bool:
 
 def _any_rgba(v):
     s = _shape_rgba(v)
-    return s if s is not None else parse_color(v)
+    if s is not None:
+        return s
+    try:
+        return parse_color(v)
+    except Exception:  # noqa: BLE001  named, #rrggbbaa, hsl(): what an engine must normalise
+        from PIL import ImageColor
+
+        c = ImageColor.getcolor(str(v).strip(), "RGBA")
+        return c[0], c[1], c[2], c[3] / 255.0
 
 
 def _lum(rgb) -> float:
@@ -163,8 +171,9 @@ def _text_overlaps(design: dict) -> Dict[Tuple[str, str], float]:
 
 
 def small_print_floor(W: float, H: float, cap_em: float = 0.70) -> int:
-    """Smallest int font size whose cap height is CAP_AT_1024 px at a 1024 px long-side view."""
-    return max(1, math.ceil(CAP_AT_1024 * max(W, H) / 1024.0 / cap_em))
+    """Smallest int font size whose cap height is CAP_AT_1024 px at a 1024 px long-side view, and
+    never under 10 px (research 04; the same floor as tools/rules.py)."""
+    return max(10, math.ceil(CAP_AT_1024 * max(W, H) / 1024.0 / cap_em))
 
 
 def capacity_bound(texts: List[dict], floor: int, W: float, H: float) -> float:
@@ -223,7 +232,7 @@ def check(source: dict, output: dict, target: dict, pixels: bool = False, assets
             if k not in e:
                 F(Fault("hard", "schema", eid, f"missing {k}"))
         for k in ("font_weight", "font_style", "text_align", "fit", "shape_type"):
-            if k in e and e[k] not in SCHEMA_ENUMS[k]:
+            if k in e and e[k] not in SCHEMA_ENUMS[k] and e[k] != s.get(k):  # passing the source's value on is faithful
                 F(Fault("hard", "schema", eid, f"{k} {e[k]!r} not in {SCHEMA_ENUMS[k]}"))
         for k in ("rotation", "opacity"):
             if k in e and _num(e[k]) is None:
@@ -270,7 +279,10 @@ def check(source: dict, output: dict, target: dict, pixels: bool = False, assets
             F(Fault("promise", "copy_over_copy", a, f"ink of {a} and {b} overlap ({area:.0f} px2)", "model"))
 
     if pixels:
-        faults += pixel_faults(src, output, target, assets, fonts, [e for e in drawable])
+        try:
+            faults += pixel_faults(src, output, target, assets, fonts, [e for e in drawable])
+        except Exception as x:  # noqa: BLE001  the scorer's renderer would fail on this output too
+            faults.append(Fault("hard", "render_crash", None, f"the renderer fails on the output: {type(x).__name__}: {str(x)[:120]}", "pixels"))
         # an element reported hidden is reported once: drop the promise noise about its (invisible) self
         gone = {f.id for f in faults if f.code == "hidden" and f.level == "hard"}
         faults = [f for f in faults if not (f.level == "promise" and (f.id in gone or any(
@@ -331,7 +343,8 @@ def _check_image(e: dict, s: dict, W: float, H: float, assets, F) -> None:
     sw, sh = _num(s.get("width")) or 0, _num(s.get("height")) or 0
     w, h = float(e["width"]), float(e["height"])
     if w <= 0 or h <= 0:
-        F(Fault("hard", "image_collapsed", eid, f"{w}x{h}"))
+        if sw > 0 and sh > 0:
+            F(Fault("hard", "image_collapsed", eid, f"{w}x{h}"))
         return
     full = e["x"] <= TOL and e["y"] <= TOL and e["x"] + w >= W - TOL and e["y"] + h >= H - TOL \
         and e.get("fit") == "cover"
@@ -345,7 +358,9 @@ def _check_image(e: dict, s: dict, W: float, H: float, assets, F) -> None:
     if fit.missing:
         F(Fault("info", "missing_asset", eid, f"{e.get('asset_id')!r} not found: renders a grey placeholder"))
     elif fit.distortion > ASPECT_TOL:
-        F(Fault("hard", "distorted", eid, f"fit {fit.fit!r} draws the asset {fit.distortion:.0%} off its aspect"))
+        d0 = image_fit(s, assets_dir(assets)).distortion if s.get("type") == "image" else 0.0
+        if fit.distortion > d0 + ASPECT_TOL:  # a stretch the source already had is the design
+            F(Fault("hard", "distorted", eid, f"fit {fit.fit!r} draws the asset {fit.distortion:.0%} off its aspect (source {d0:.0%})"))
 
 
 def _check_shape(e: dict, s: dict, F) -> None:
@@ -417,9 +432,14 @@ def pixel_faults(src: dict, output: dict, target: dict, assets=None, fonts=None,
     spx: List[Optional[_Px]] = [None]
 
     def source():
+        """Renders of the source; None when the renderer cannot draw the source itself (named
+        colours, bad enums...): source-relative judgements then assume it was fine."""
         if spx[0] is None:
-            spx[0] = _Px(src, assets, fonts)
-        return spx[0]
+            try:
+                spx[0] = _Px(src, assets, fonts)
+            except Exception:  # noqa: BLE001
+                spx[0] = False
+        return spx[0] or None
 
     pad = 64
     roles = bleed.roles(src, assets)
@@ -447,14 +467,14 @@ def pixel_faults(src: dict, output: dict, target: dict, assets=None, fonts=None,
             continue  # a background layer is covered by design
         vis = px.visible(eid)
         if vis is not None and vis < VISIBLE_MIN:
-            v0 = source().visible(eid)
-            hard = v0 is not None and v0 >= VISIBLE_MIN
+            v0 = source().visible(eid) if source() else None
+            hard = v0 is None or v0 >= VISIBLE_MIN
             faults.append(Fault("hard" if hard else "info", "hidden", eid,
                                 f"only {vis:.0%} of its pixels show" + (f" (source {v0:.0%})" if v0 is not None else ""), "pixels"))
     for e in texts:
         c = px.contrast(e)
         if c is not None and c < 3.0:
-            c0 = source().contrast(e) if str(e["id"]) in source().sc.rows else None
+            c0 = source().contrast(e) if source() and str(e["id"]) in source().sc.rows else None
             if c0 is None or c < 0.7 * min(c0, 4.5):
                 faults.append(Fault("promise", "contrast", str(e["id"]), f"contrast {c:.1f}:1 against what is under it"
                                     + (f" (source {c0:.1f}:1)" if c0 else ""), "pixels"))
