@@ -113,3 +113,8 @@ of a tall canvas; text over a busy photo region.
 - 08:40Z `fundamentals.check` on stress found decor bleeding further than in the source (132
   off_canvas) and aspect faults on cover panels: decor now keeps at least its source on-canvas
   share per axis; large non-backdrop images always keep aspect; group images >= 20 px.
+- 08:35Z official bench (B0, tournament set) on 7db7bd0: sim 0.368 (lane-learn 0.361, compose
+  0.341), 0 crashes, 6 hard tiles (aspect on cover panels, decor bleed: fixed since), 62 hidden
+  tiles (others 52-76). The collision guard costs IoU; dev set (120 tasks, family-disjoint from
+  the tournament): guard off 0.392 / 11 copy-over-copy, 0.02 0.357 / 2, 0.15 0.370 / 3.
+  Chose 0.15. Guard also rejects pictures newly buried (>50%) under a later picture.

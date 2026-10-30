@@ -64,7 +64,7 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
                     continue
                 tried.add(name)
                 cand = emit(S, placed, W, H)
-                bad = _collisions(source, cand)    # verify at the destination: drawn boxes, not the plan
+                bad = _collisions(source, cand)   # verify at the destination: drawn boxes, not the plan
                 if best is None or bad < best[0]:
                     best = (bad, cand)
                 if bad == 0:
@@ -79,6 +79,12 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
         import traceback
         traceback.print_exc(file=sys.stderr)
         return _fallback(source, target_canvas)
+
+
+# new overlap (share of the smaller box) beyond the source's own layering that counts as a
+# collision. Dev set (120 family-disjoint tasks): 0.02 -> sim 0.357, 2 copy-over-copy;
+# 0.15 -> 0.370, 3; off -> 0.392, 11.
+_GUARD = 0.15
 
 
 def _collisions(source: dict, out: dict) -> int:
@@ -97,14 +103,21 @@ def _collisions(source: dict, out: dict) -> int:
         a = els[i]
         for j in range(i + 1, len(els)):
             b = els[j]
-            if a.get("type") != "text" and b.get("type") != "text":
-                continue
             if a["width"] * a["height"] >= 0.8 * W * H or b["width"] * b["height"] >= 0.8 * W * H:
                 continue          # backdrop
             sa, sb = src[a["id"]], src[b["id"]]
+            if a.get("type") != "text" and b.get("type") != "text":
+                # a picture newly buried under a later one (hidden content)
+                lo, hi = (a, b) if a.get("z_index", 0) <= b.get("z_index", 0) else (b, a)
+                slo, shi = src[lo["id"]], src[hi["id"]]
+                c_out = inter(lo, hi) / max(1e-6, lo["width"] * lo["height"])
+                c_src = inter(slo, shi) / max(1e-6, slo["width"] * slo["height"])
+                if c_out > 0.5 and c_src < 0.2:
+                    n += 1
+                continue
             r_src = inter(sa, sb) / max(1e-6, min(sa["width"] * sa["height"], sb["width"] * sb["height"]))
             r_out = inter(a, b) / max(1e-6, min(a["width"] * a["height"], b["width"] * b["height"]))
-            if r_out > r_src + 0.02 and not (r_src > 0.5 and r_out > 0.5):   # deeper than the source's own layering
+            if r_out > r_src + _GUARD and not (r_src > 0.5 and r_out > 0.5):   # deeper than the source's own layering
                 n += 1
     return n
 

@@ -66,6 +66,10 @@ def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
         x, y, w, h = float(e["x"]), float(e["y"]), float(e["width"]), float(e["height"])
         cx, cy = (x + w / 2) / S.W, (y + h / 2) / S.H
         nw, nh = max(1.0, w * sd), max(1.0, h * sd)
+        fp = min(20.0, 0.4 * min(W, H)) if e.get("type") == "image" else 1.0
+        if min(w * sd, h * sd) < fp:          # bitmap rounding: keep images >= 20 px, aspect kept
+            k = fp / max(1e-6, min(w * sd, h * sd))
+            nw, nh = w * sd * k, h * sd * k
         e["x"], e["y"], e["width"], e["height"] = cx * W - nw / 2, cy * H - nh / 2, nw, nh
         inside = x >= -0.5 and y >= -0.5 and x + w <= S.W + 0.5 and y + h <= S.H + 0.5
         if inside:
