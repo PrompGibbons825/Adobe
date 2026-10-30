@@ -43,33 +43,45 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
     concern (see RULES.md) — spend your effort on quality, not speed.
     """
 
-    # ------------------------------------------------------------------
-    # Naive baseline so this file runs out of the box. This is a uniform
-    # stretch — literally the thing the brief tells you NOT to do ("a
-    # naive program stretches the picture; a good one moves the
-    # furniture"). It's here so `python -m engine.main` produces valid,
-    # schema-correct output on day one. Replace the body of this function;
-    # do not just tune these three lines.
-    # ------------------------------------------------------------------
-    scale_x = target_canvas["width"] / source["canvas"]["width"]
-    scale_y = target_canvas["height"] / source["canvas"]["height"]
+    try:
+        from engine.opt.analyse import analyse
+        from engine.opt.emit import emit
+        from engine.opt.solve import search
+        W = float(target_canvas["width"])
+        H = float(target_canvas["height"])
+        S = analyse(source)
+        scored = search(S, W, H)
+        placed = scored[0][3] if scored else {}
+        out = emit(S, placed, W, H)
+        out["canvas"] = {"width": target_canvas["width"], "height": target_canvas["height"]}
+        return out
+    except Exception:  # noqa: BLE001
+        import sys
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return _fallback(source, target_canvas)
 
+
+def _fallback(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
+    """Uniform fit of the whole design, centred; backdrop-sized images cover the canvas."""
+    W, H = float(target_canvas["width"]), float(target_canvas["height"])
+    W0, H0 = float(source["canvas"]["width"]), float(source["canvas"]["height"])
+    s = min(W / W0, H / H0)
+    ox, oy = (W - W0 * s) / 2, (H - H0 * s) / 2
     out_elements = []
     for el in source["elements"]:
-        el = dict(el)  # shallow copy — don't mutate the input
-        el["x"] = el["x"] * scale_x
-        el["y"] = el["y"] * scale_y
-        el["width"] = el["width"] * scale_x
-        el["height"] = el["height"] * scale_y
-        if el["type"] == "text":
-            # font_size scaling isn't required to be uniform — this is
-            # just a starting point. Floored at 1px: the schema requires
-            # font_size >= 1, and an extreme downscale (e.g. a tall poster
-            # squeezed into a short banner) can otherwise compute < 1.
-            el["font_size"] = max(1.0, el["font_size"] * min(scale_x, scale_y))
+        el = dict(el)
+        w, h = float(el.get("width", 1)), float(el.get("height", 1))
+        if el.get("type") != "text" and w * h >= 0.85 * W0 * H0:
+            el.update(x=0.0, y=0.0, width=W, height=H)
+            if el.get("type") == "image":
+                el["fit"] = "cover"
+        else:
+            nw, nh = max(1.0, w * s), max(1.0, h * s)
+            el["x"] = min(max(0.0, ox + float(el.get("x", 0)) * s), max(0.0, W - nw))
+            el["y"] = min(max(0.0, oy + float(el.get("y", 0)) * s), max(0.0, H - nh))
+            el["width"], el["height"] = min(nw, W), min(nh, H)
+            if el.get("type") == "text":
+                el["font_size"] = max(1, int(float(el.get("font_size", 12)) * s))
         out_elements.append(el)
-
-    return {
-        "canvas": {"width": target_canvas["width"], "height": target_canvas["height"]},
-        "elements": out_elements,
-    }
+    return {"canvas": {"width": target_canvas["width"], "height": target_canvas["height"]}, "elements": out_elements}

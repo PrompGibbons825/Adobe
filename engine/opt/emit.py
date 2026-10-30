@@ -1,0 +1,141 @@
+"""Write element boxes from a placed layout and guarantee the hard rules (owner: final JSON)."""
+from __future__ import annotations
+
+import copy
+import math
+from typing import Dict
+
+from .analyse import Scene
+from .layout import Placed
+from .measure import longest_word, text_block
+
+
+def _fit_text(el: dict, fs: int, width: float) -> int:
+    while fs > 1:
+        n, maxw, h = text_block(el, fs, width)
+        if maxw <= width + 0.5 and longest_word(el, fs) <= width + 0.5:
+            return fs
+        fs = fs - 1 if fs <= 12 else int(fs * 0.95)
+    return max(1, fs)
+
+
+def _rot_aabb(x, y, w, h, deg):
+    if not deg:
+        return x, y, w, h
+    t = math.radians(deg)
+    c, s = abs(math.cos(t)), abs(math.sin(t))
+    rw, rh = w * c + h * s, w * s + h * c
+    cx, cy = x + w / 2, y + h / 2
+    return cx - rw / 2, cy - rh / 2, rw, rh
+
+
+def emit(S: Scene, placed: Dict[int, Placed], W: float, H: float) -> dict:
+    out = [copy.deepcopy(e) for e in S.els]
+    for i in S.backdrop:
+        e = out[i]
+        ow, oh = float(e.get("width", 1)), float(e.get("height", 1))
+        e["x"], e["y"], e["width"], e["height"] = 0.0, 0.0, float(W), float(H)
+        if e.get("type") == "image" and abs((W / H) / (ow / oh) - 1) > 0.01:
+            e["fit"] = "cover"
+    for i in S.panels:
+        e = out[i]
+        e["x"] = e["x"] / S.W * W
+        e["y"] = e["y"] / S.H * H
+        e["width"] = max(1.0, e["width"] / S.W * W)
+        e["height"] = max(1.0, e["height"] / S.H * H)
+    sd = min(W / S.W, H / S.H) * 0.5 + 0.5 * math.sqrt(W * H / (S.W * S.H))
+    sd = min(sd, max(W / S.W, H / S.H))
+    for i in S.decor:
+        e = out[i]
+        x, y, w, h = float(e["x"]), float(e["y"]), float(e["width"]), float(e["height"])
+        cx, cy = (x + w / 2) / S.W, (y + h / 2) / S.H
+        nw, nh = max(1.0, w * sd), max(1.0, h * sd)
+        e["x"], e["y"], e["width"], e["height"] = cx * W - nw / 2, cy * H - nh / 2, nw, nh
+        inside = x >= -0.5 and y >= -0.5 and x + w <= S.W + 0.5 and y + h <= S.H + 0.5
+        if inside:
+            e["x"] = min(max(0.0, e["x"]), W - nw)
+            e["y"] = min(max(0.0, e["y"]), H - nh)
+    for b in S.blocks:
+        pl = placed.get(b.bid)
+        if pl is None:
+            continue
+        if b.kind == "text":
+            e = out[b.text_idx]
+            e["x"], e["y"], e["width"], e["height"] = pl.x, pl.y, pl.w, pl.h
+            e["font_size"] = int(pl.fs or e.get("font_size", 16))
+            continue
+        s = pl.w / b.w
+        for i in b.members:
+            e = out[i]
+            src = S.els[i]
+            nx = pl.x + (float(src["x"]) - b.x) * s
+            ny = pl.y + (float(src["y"]) - b.y) * s
+            nw = float(src["width"]) * s
+            nh = float(src["height"]) * s
+            if min(nw, nh) < 1.0:
+                k = 1.0 / max(1e-6, min(nw, nh))
+                nw, nh = nw * k, nh * k
+            e["x"], e["y"], e["width"], e["height"] = nx, ny, nw, nh
+            if e.get("type") == "text":
+                fs0 = float(src.get("font_size", 16) or 16)
+                fs = max(1, int(fs0 * s))
+                fs = _fit_text(e, fs, nw)
+                e["font_size"] = fs
+                n, maxw, th = text_block(e, fs, nw)
+                if maxw > nw:
+                    e["x"] = nx + nw / 2 - (maxw + 1) / 2
+                    e["width"] = nw = maxw + 1
+                    n, maxw, th = text_block(e, fs, nw)
+                if th > nh:
+                    cy = ny + nh / 2
+                    e["y"] = cy - th / 2
+                    e["height"] = th
+    return finalize(S, {"canvas": {"width": W, "height": H}, "elements": out})
+
+
+def finalize(S: Scene, design: dict) -> dict:
+    W = float(design["canvas"]["width"])
+    H = float(design["canvas"]["height"])
+    bleed_ok = set(S.decor)
+    for k, e in enumerate(design["elements"]):
+        for key in ("x", "y", "width", "height"):
+            e[key] = float(e.get(key, 0.0))
+        if e.get("type") == "text":
+            fs = int(max(1, round(float(e.get("font_size", 12)))))
+            # make sure text fits the canvas, then the box covers the rendered text
+            w = min(e["width"], W)
+            fs = _fit_text(e, fs, w)
+            n, maxw, th = text_block(e, fs, w)
+            while th > H and fs > 1:
+                fs -= 1
+                n, maxw, th = text_block(e, fs, w)
+            e["font_size"] = fs
+            if maxw > w:
+                w2 = min(W, maxw + 1)
+                e["x"] -= (w2 - w) / 2
+                w = w2
+                n, maxw, th = text_block(e, fs, w)
+            e["width"] = w
+            if th > e["height"]:
+                e["height"] = th
+        if k in bleed_ok:
+            src = S.els[k]
+            sx, sy, sw, sh = float(src["x"]), float(src["y"]), float(src["width"]), float(src["height"])
+            if sx < -0.5 or sy < -0.5 or sx + sw > S.W + 0.5 or sy + sh > S.H + 0.5:
+                continue
+        rot = float(e.get("rotation", 0) or 0)
+        ax, ay, aw, ah = _rot_aabb(e["x"], e["y"], e["width"], e["height"], rot)
+        if aw > W or ah > H:
+            f = min(W / aw, H / ah) * 0.999
+            cx, cy = e["x"] + e["width"] / 2, e["y"] + e["height"] / 2
+            e["width"] *= f
+            e["height"] *= f
+            e["x"], e["y"] = cx - e["width"] / 2, cy - e["height"] / 2
+            if e.get("type") == "text":
+                e["font_size"] = max(1, int(e["font_size"] * f))
+            ax, ay, aw, ah = _rot_aabb(e["x"], e["y"], e["width"], e["height"], rot)
+        dx = -ax if ax < 0 else (W - (ax + aw) if ax + aw > W else 0.0)
+        dy = -ay if ay < 0 else (H - (ay + ah) if ay + ah > H else 0.0)
+        e["x"] += dx
+        e["y"] += dy
+    return design
