@@ -14,8 +14,10 @@ imports or state:
 The pick was fixed on the final comparison's judged tiles (2026-10-30 data) before the
 benchmark that tests it:
 
-  1. Drop outputs that fail `engine/combo/rules.faults`: ids, canvas, geometry, copy and fonts
-     unchanged, no stretched picture, nothing hidden, the bleed policy.
+  1. Drop outputs that fail `engine/combo/rules.faults`, the stage-one rules as decided on
+     2026-10-31 (context/notes/adobe-rules.md): ids, shape and fields, copy byte for byte, fonts
+     and colours unchanged, nothing past the canvas, no stretch and no cropped logo or product,
+     every element visible (missing assets included).
   2. Keep Night's output unless another passing output's proxy penalty (`engine/combo/terms`, the
      calibrated source-relative judge proxy) is lower by more than MARGIN.
   3. If none passes, the output with the fewest faults, then the lowest penalty.
