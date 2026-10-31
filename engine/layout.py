@@ -1833,10 +1833,10 @@ def _fill(ctx, model, whole):
     if not whole:
         for t in upright:
             if "\n" in str(t.get("content", "")):
-                pieces.append([t] + [e for e in els if e is not t and e["type"] != "text" and e not in surfaces
+                pieces.append([t] + [e for e in els if e is not t and e not in surfaces
                                      and e["id"] not in framed and _overlap_share(_box(e), _box(t)) >= 0.6])
     for ons in pieces:
-        if len(ons) < (2 if whole else 3):
+        if len(ons) < 2:
             continue
         bs = [_box(e) for e in ons]
         x0, y0, x1, y1 = min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs)
