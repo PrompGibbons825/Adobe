@@ -1,10 +1,7 @@
-# Combined engine (combo/four): the union of the four engines' dependencies, pinned to the
+# Combined engine (combo/strict): the union of Night's and Learn's dependencies, pinned to the
 # versions the 2026-10-31 benchmark ran with (worktrees/jeff-engine-v1/.venv).
 Pillow==13.0.0
 git+https://github.com/CyberAgentAILab/cr-renderer@a17e1fb9a732959dd6c21ae168d5ee09d74bd64f
 skia-python==144.1
 numpy==2.4.6
-opencv-python-headless==4.14.0.94   # night: YuNet faces; jeff: Haar cascades
-onnxruntime==1.31.0                 # jeff: CLIP logo detection, OCR read check (CPU, offline)
-rapidocr-onnxruntime==1.4.4         # jeff: OCR models ship inside the wheel (pulls opencv-python)
-tokenizers==0.23.3                  # jeff: CLIP text tokenizer
+opencv-python-headless==4.14.0.94   # night: YuNet face detector (232 KB, in git)

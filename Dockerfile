@@ -26,11 +26,6 @@ COPY chameleon_design_schema_v0.9.json .
 COPY brand_kit/ ./brand_kit/
 COPY renderer/ ./renderer/
 COPY engine/ ./engine/
-COPY tools/fetch_jeff_models.py ./tools/fetch_jeff_models.py
-
-# Jeff's engine's CLIP logo model and saliency mask are too large for git: fetched at BUILD time
-# into engine/subs/jeff/engine/models/. Nothing is downloaded at run time.
-RUN python tools/fetch_jeff_models.py
 
 # input/ and output/ are mounted as volumes at run time (see README) —
 # not baked into the image.

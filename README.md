@@ -26,12 +26,41 @@ docker run --rm --network none \
   -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output my-chameleon-engine
 ```
 
-No model, no network, no extra dependencies: the engine uses only what the starter
-already installs (skia and numpy through cr-renderer, and Pillow). A task takes
-about 0.3 s at the median and under 2 s at the 95th percentile; the first task
-in a run also pays a few seconds of one-time font and library loading.
+No network at run time. The only model is OpenCV's YuNet face detector (232 KB,
+committed in `engine/subs/night/engine/smart/models/`, MIT licence), used to keep copy off
+faces and crop photos around their subject. Everything installs at build time from
+`requirements.txt`. A task takes about 5-15 s (two engines run in parallel; the slower one sets
+the time).
 
 ## Approach
+
+### Two engines and a strict pick
+
+`engine/resize.py` runs two complete layout engines on every design, in parallel and in
+separate processes, each a full package under `engine/subs/<name>/`:
+
+- **night**: candidate layouts (stack, split, row, photo/panel regions, collage, quiet bands on
+  photos) scored by a rubric-shaped score with a small learned ranking term, photo-aware
+  crops, and a ladder that demotes before it drops. It is the engine described in the rest of
+  this section. Its layouts read best, but on dense designs pushed into small banners it can
+  still leave an element hidden.
+- **learn**: the designers' median move for the change of shape (learned from real
+  multi-size template families), applied to units that belong together, then repaired for
+  margins, collisions and legibility. Its layouts are plainer, and it almost never hides
+  anything.
+
+Every output is first clamped inside the canvas (`engine/combo/strict.py: clamp`), then
+checked against the stage-one rules (`engine/combo/strict.py: faults`): every id once, nothing
+off the canvas, copy, fonts and colours unchanged, no picture stretched, and nothing hidden
+(no opacity 0, no type at 2 px or less, nothing collapsed, nothing fully buried under an opaque
+layer it was not under in the source). The first passing output in the order night, learn is
+returned. If neither passes, type set at 2 px or less is lifted and opacity hiding is undone,
+then a uniform fit-and-centre layout with a type floor is tried. On 420 test resizes of
+designs neither engine was tuned on, every output passed.
+
+### The night engine
+
+Paths in this section are relative to `engine/subs/night/`.
 
 The engine works the way a designer resizing by hand would. It works out what each
 piece is and what belongs together, considers several ways the design could be
@@ -185,6 +214,9 @@ fit-and-centre layout, so a run never crashes.
 
 ## Testing (dev only, not part of the image)
 
+The tools below were written for the night engine and import its `engine.smart`; run them from
+`engine/subs/night/`'s own tree, or add that package to `engine.__path__` first.
+
 ```bash
 python -m unittest discover -s tests -t .        # everything (a few minutes)
 python -m tests.run [names] --sheet out.png      # the finicky suite as one report + contact sheet
@@ -220,9 +252,11 @@ python -m tools.audit --n 40 --seed 1 --sheet audit.png        # layout quality 
 
 ```
 engine/
-  resize.py          entry point (resize + safe fallback)
+  resize.py          entry point: runs both engines, clamps, checks, picks
   main.py            orchestrator from the starter kit (unchanged)
-  smart/             the layout engine described above
+  combo/             the strict rule check, clamp and rescue (strict.py), shared rule helpers
+  subs/night/        the night engine (engine/smart/), run in its own process
+  subs/learn/        the learn engine (engine/learn/), run in its own process
 renderer/            vendored converter + cr-renderer wiring (unchanged)
 brand_kit/           assets and fonts referenced by the designs
 tests/               finicky cases, harness, unit tests (dev only)
