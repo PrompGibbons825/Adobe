@@ -320,7 +320,7 @@ def _prefer_same(pool, fade):
     if not same or fade <= 0:
         return pool
     top = max(pool, key=lambda c: c[0])
-    pick = max(same, key=lambda c: (round(defects(c) / 2), c[0]))
+    pick = max(same, key=lambda c: (round(defects(c) / 2), c[5].get("t", 0.0), c[0]))     # then the largest type
     if pick is top or defects(pick) < max(defects(c) for c in pool if c is not pick) - SAME_MARGIN * fade:
         return pool
     if pick[3].get("readability", 0.0) < top[3].get("readability", 0.0) - 1.0:

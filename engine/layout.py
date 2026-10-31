@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from .analyze import norm_rot
@@ -1172,6 +1174,7 @@ def tmpl_same(ctx, model, mode="center"):
                 else:
                     f = img_vis_frac(e) if e["type"] == "image" else (0.0, 0.0, 1.0, 1.0)
                     P.vis[e["id"]] = (x + f[0] * w, y + f[1] * h, x + f[2] * w, y + f[3] * h)
+    _cover_tilted(P, model, ctx.W / ctx.Ws, ctx.H / ctx.Hs, ctx.Ws, ctx.Hs, ctx.W, ctx.H)
     P.same = True
     P.meta = {"template": f"same-{mode}", "t": s / ctx.t_star if ctx.t_star else 1.0}
     return P
@@ -1546,6 +1549,64 @@ def _fill_rect(e, sx, sy):
     return (e["x"] * sx, e["y"] * sy, (e["x"] + e["width"]) * sx, (e["y"] + e["height"]) * sy)
 
 
+def _tilted_cover(e, sx, sy, Ws, Hs):
+    """A tilted photo that ran past the canvas never showed its slanted edges.
+    Returns its new size and centre: at its own proportions, large enough to
+    still cover everything it covered, or None if it stayed inside the canvas."""
+    from .analyze import norm_rot
+    if abs(norm_rot(e.get("rotation", 0) or 0)) % 90 <= 1 or not _is_photo(e):
+        return None
+    t = math.radians(e["rotation"])
+    c, n = math.cos(t), math.sin(t)
+    cx, cy = e["x"] + e["width"] / 2, e["y"] + e["height"] / 2
+    q = [(cx + a * c - b * n, cy + a * n + b * c)
+         for a in (-e["width"] / 2, e["width"] / 2) for b in (-e["height"] / 2, e["height"] / 2)]
+    if all(0 <= x <= Ws and 0 <= y <= Hs for x, y in q):
+        return None
+    x0, y0 = max(0.0, min(x for x, _ in q)) * sx, max(0.0, min(y for _, y in q)) * sy
+    x1, y1 = min(Ws, max(x for x, _ in q)) * sx, min(Hs, max(y for _, y in q)) * sy
+    nx, ny = (x0 + x1) / 2, (y0 + y1) / 2        # about what it showed: the least zoom
+    W, H = Ws * sx, Hs * sy
+    eyes = (saliency.analyze(e.get("asset_id") or "") or {}).get("eyes") or []
+    pad = 0.08 * min(W, H)
+    for _ in range(12):
+        k = 0.0
+        for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+            lx, ly = (x - nx) * c + (y - ny) * n, -(x - nx) * n + (y - ny) * c
+            k = max(k, 2 * abs(lx) / e["width"], 2 * abs(ly) / e["height"])
+        # eyes first: the picture slides until they are on the canvas
+        dx = dy = 0.0
+        for q in eyes:
+            a, b = (q[0] - 0.5) * e["width"] * k, (q[1] - 0.5) * e["height"] * k
+            ex, ey = nx + a * c - b * n, ny + a * n + b * c
+            dx = max(dx, pad - ex) if ex < pad else min(dx, W - pad - ex) if ex > W - pad else dx
+            dy = max(dy, pad - ey) if ey < pad else min(dy, H - pad - ey) if ey > H - pad else dy
+        if abs(dx) < 0.5 and abs(dy) < 0.5:
+            break
+        nx, ny = nx + dx, ny + dy
+    return e["width"] * k, e["height"] * k, nx, ny, (x0, y0, x1, y1)
+
+
+def _cover_tilted(P, model, sx, sy, Ws, Hs, W, H):
+    # only a backdrop (the bottom layer, large): a tilted photo that is a piece
+    # of the layout keeps its size
+    low = min(e.get("z_index", 0) for e in model["els"].values())
+    for e in [e for e in model["els"].values() if e.get("z_index", 0) == low and e["width"] * e["height"] >= 0.3 * Ws * Hs]:
+        tilt = _tilted_cover(e, sx, sy, Ws, Hs) if e["type"] == "image" else None
+        if tilt:
+            w, h, cx, cy, shown = tilt
+            P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h, rotation=e["rotation"])
+            P.bleed = getattr(P, "bleed", set()) | {e["id"]}
+            P.vis[e["id"]] = shown
+
+
+def _overlap_share(a, b):
+    """The share of box a that lies inside box b."""
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    return max(0.0, w) * max(0.0, h) / max(1e-6, (a[2] - a[0]) * (a[3] - a[1]))
+
+
 def _inside(a, b):
     m = 0.02 * max(b[2] - b[0], b[3] - b[1])        # a box may stand a hair past the shape
     return a[0] >= b[0] - m and a[1] >= b[1] - m and a[2] <= b[2] + m and a[3] <= b[3] + m
@@ -1588,21 +1649,35 @@ def _set_texts(texts, k, sx, sy, W, H, holders, keep_clear=(), framed=None):
         cx, cy = place(cx, cy, k) if place else (cx * sx, cy * sy)
         x, y = cx - w / 2, cy - m["height"] / 2
         if hr is not None:
+            x0_, y0_ = x, y
             x = min(max(x, hr[0]), hr[2] - w)
             if m["height"] > hr[3] - hr[1]:
                 return None
             y = min(max(y, hr[1]), hr[3] - m["height"])
+            if place and (abs(x - x0_) > 2 or abs(y - y0_) > 2):
+                return None                 # a locked piece does not fit: never pushed out of its lines
         if x < 0 or y < 0 or x + w > W or y + m["height"] > H:
+            if place:
+                return None                 # too large to stay locked: the type comes down
             x, y = min(max(x, 0.0), W - w), min(max(y, 0.0), H - m["height"])
             if m["height"] > H:
                 return None
         v = tf.visual_box(e2, x, y, w, fs, m)
         out[e["id"]] = (dict(x=x, y=y, width=w, height=m["height"], font_size=fs, content=flat), v)
     ids = list(out)
+    overlaid = set()
+    if framed:
+        drawn = {e["id"]: (e["x"], e["y"], e["x"] + e["width"], e["y"] + tf.measure(e, max(1, int(e["font_size"])), e["width"])["height"])
+                 for e in texts}
+        overlaid = {(a, b) for a in drawn for b in drawn if a != b
+                    and min(drawn[a][2], drawn[b][2]) > max(drawn[a][0], drawn[b][0])
+                    and min(drawn[a][3], drawn[b][3]) > max(drawn[a][1], drawn[b][1])}
     for i, a in enumerate(ids):
         va = out[a][1]
         for b in ids[i + 1:]:
             vb = out[b][1]
+            if framed.get(a) is not None and framed.get(a) is framed.get(b) and (a, b) in overlaid:
+                continue                    # one piece, overlapping as the designer set them
             if min(va[2], vb[2]) - max(va[0], vb[0]) > 0 and min(va[3], vb[3]) - max(va[1], vb[1]) > 0:
                 return None
     for b, allowed in keep_clear:
@@ -1627,6 +1702,8 @@ def _photo_place(e, r):
     x0, y0 = (1 - wx) / 2, (1 - wy) / 2
     eyes = (info or {}).get("eyes") or []
     cut = any(not (x0 + 0.03 <= q[0] <= x0 + wx - 0.03 and y0 + 0.03 <= q[1] <= y0 + wy - 0.03) for q in eyes)
+    if not eyes and wy < 0.999 and _keeps_upright(e):
+        cut = True      # a person or a scene the face finder missed: its top stays
     if not cut and keep >= 0.5:
         return r, True
     k = min(rw / e["width"], rh / e["height"])
@@ -1635,7 +1712,19 @@ def _photo_place(e, r):
     return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), False
 
 
+RIGID_FLOOR = 0.85   # whole groups stay rigid only if the type keeps this share of its size
+
+
 def tmpl_fill(ctx, model):
+    """Groups kept whole where the type can afford it; otherwise only the
+    lockups of lines on their bars stay locked."""
+    whole, lines = _fill(ctx, model, True), _fill(ctx, model, False)
+    if whole is None or (lines is not None and whole.meta["t"] < RIGID_FLOOR * lines.meta["t"]):
+        return lines
+    return whole
+
+
+def _fill(ctx, model, whole):
     from .analyze import _box, norm_rot
     W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
     sx, sy = W / Ws, H / Hs
@@ -1644,17 +1733,27 @@ def tmpl_fill(ctx, model):
     els = [e for u in model["units"] if u.role not in SAME_ROLES_SKIP for e in _uels(u)]
     upright = [e for e in els if e["type"] == "text" and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1]
     surfaces = [e for e in els if _is_surface(e, Ws, Hs) and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1]
+    # a large shaped panel laid over a photo is one composition with it: the
+    # poster scales as a whole, not piece by piece
+    for o in els:
+        if o["type"] == "image" and o not in surfaces and o["width"] * o["height"] >= 0.2 * Ws * Hs \
+                and not _is_photo(o) and any(_is_photo(e) and _overlap_share(_box(o), _box(e)) >= 0.05 for e in surfaces):
+            return None
     rects = {}
     for e in surfaces:
         r = _fill_rect(e, sx, sy)
         cover = True
         if _is_photo(e):
             r, cover = _photo_place(e, r)
+            if not cover and any(o is not e and min(_box(o)[2], _box(e)[2]) > max(_box(o)[0], _box(e)[0])
+                                 and min(_box(o)[3], _box(e)[3]) > max(_box(o)[1], _box(e)[1]) for o in surfaces):
+                return None     # a card on a photo that cannot crop: they cannot part ways
         rects[e["id"]] = r
         P.set(e["id"], x=r[0], y=r[1], width=r[2] - r[0], height=r[3] - r[1])
         if cover:
             P.set(e["id"], fit="cover")
         P.vis[e["id"]] = r
+    _cover_tilted(P, model, sx, sy, Ws, Hs, W, H)
     # the panel each text sat in, as it is now
     holders = {}
     for t in upright:
@@ -1664,9 +1763,19 @@ def tmpl_fill(ctx, model):
               and o["x"] <= cx <= o["x"] + o["width"] and o["y"] <= cy <= o["y"] + o["height"]
               and not _is_photo(o)]
         if hs:
-            r = rects[min(hs, key=lambda o: o["width"] * o["height"])["id"]]
+            o = min(hs, key=lambda o: o["width"] * o["height"])
+            if tf.measure(t, max(1, int(t["font_size"])), t["width"])["height"] > o["height"]:
+                continue                # it overhangs its panel by design
+            r = rects[o["id"]]
             pad = 0.04 * min(r[2] - r[0], r[3] - r[1])
             holders[t["id"]] = (r[0] + pad, r[1] + pad, r[2] - pad, r[3] - pad)
+    on_surface = {}
+    for t in upright:
+        cx, cy = _copy_centre(t)
+        hs = [o for o in surfaces if o.get("z_index", 0) < t.get("z_index", 0) and o["width"] * o["height"] < 0.9 * Ws * Hs
+              and o["x"] <= cx <= o["x"] + o["width"] and o["y"] <= cy <= o["y"] + o["height"]]
+        if hs and t["id"] in [t["id"] for t in upright]:
+            on_surface[t["id"]] = min(hs, key=lambda o: o["width"] * o["height"])["id"]
     # what copy must stay off: eyes and faces it did not cover in the source,
     # and the small marks and drawings it was clear of
     def clear_of(b):
@@ -1699,25 +1808,75 @@ def tmpl_fill(ctx, model):
     # an outline shape around copy (a see-through hexagon, a thin frame) and
     # what sits in it are one piece: they grow together about the shape's centre
     frames = [e for e in els if e["type"] == "image" and e not in surfaces
-              and (saliency.analyze(e.get("asset_id") or "") or {"opaque_frac": 1})["opaque_frac"] < 0.6
+              and (saliency.analyze(e.get("asset_id") or "") or {"opaque_frac": 1})["opaque_frac"] < 0.9
               and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1 and e["width"] * e["height"] >= 0.08 * Ws * Hs
-              and any(_inside(_box(t), _box(e)) for t in upright)]
+              and any(_overlap_share(_box(t), _box(e)) >= 0.6 for t in upright)]
     framed = {}
     for f in sorted(frames, key=lambda e: -e["width"] * e["height"]):
         fx, fy = f["x"] + f["width"] / 2, f["y"] + f["height"] / 2
         def place(x, y, k_, fx=fx, fy=fy):
             return fx * sx + (x - fx) * k_, fy * sy + (y - fy) * k_
         for e in els:
-            if e is not f and e not in surfaces and _inside(_box(e), _box(f)):
+            if e is not f and e not in surfaces and _overlap_share(_box(e), _box(f)) >= 0.6:
                 framed[e["id"]] = place
+    # a design set as one centred column stays one: its pieces do not spread apart
+    column = whole and len(upright) >= 2 and sum(abs(_copy_centre(t)[0] - Ws / 2) <= 0.08 * Ws for t in upright) >= 0.7 * len(upright)
+    if column:
+        def place(x, y, k_):
+            return Ws / 2 * sx + (x - Ws / 2) * k_, Hs / 2 * sy + (y - Hs / 2) * k_
+        for e in els:
+            if e not in surfaces and e["id"] not in framed and e["width"] * e["height"] < 0.3 * Ws * Hs:
+                framed[e["id"]] = place
+    # a group the analysis found is one piece: it scales as a whole from its
+    # alignment edge, so its lines, bars and shared edges stay as designed
+    pieces = [[e for e in _uels(u) if e not in surfaces and e["id"] not in framed
+               and e["width"] * e["height"] < 0.3 * Ws * Hs]
+              for u in model["units"] if u.role not in SAME_ROLES_SKIP] if whole else []
+    if not whole:
+        for t in upright:
+            if "\n" in str(t.get("content", "")):
+                pieces.append([t] + [e for e in els if e is not t and e["type"] != "text" and e not in surfaces
+                                     and e["id"] not in framed and _overlap_share(_box(e), _box(t)) >= 0.6])
+    for ons in pieces:
+        if len(ons) < (2 if whole else 3):
+            continue
+        bs = [_box(e) for e in ons]
+        x0, y0, x1, y1 = min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs)
+        al = [t.get("text_align", "left") for t in ons if t["type"] == "text"]
+        side = max(set(al), key=al.count) if al else "center"
+        # the design's only text block, spanning most of the canvas, stays centred
+        alone = sum(1 for t in upright if t in ons) == len(upright)
+        if alone:                   # the design's one block: its decoration moves with it
+            ons += [e for e in els if e not in ons and e not in surfaces and e["id"] not in framed
+                    and e["width"] * e["height"] < 0.3 * Ws * Hs]
+        fx = (x0 + x1) / 2 if alone and x1 - x0 >= 0.5 * Ws else x0 if side == "left" else x1 if side == "right" else (x0 + x1) / 2
+        fy = (y0 + y1) / 2
+
+        def place(x, y, k_, fx=fx, fy=fy):
+            return fx * sx + (x - fx) * k_, fy * sy + (y - fy) * k_
+        for e in ons:
+            framed[e["id"]] = place
     marks = [e for e in marks if e["id"] not in framed]
 
     def attempt(k_):
         if any(f["width"] * k_ > W or f["height"] * k_ > H for f in frames):
             return None
-        return _set_texts(upright, k_, sx, sy, W, H, holders,
-                          keep + [(mark_box(e, k_), clear_of(_box(e))) for e in marks]
-                          + [(turned_box(e, k_), set()) for e in turned], framed)
+        for e in els:                       # every locked piece stays on the canvas
+            if e["id"] in framed and e["type"] != "text" and e["x"] >= 0 and e["y"] >= 0 \
+                    and e["x"] + e["width"] <= Ws and e["y"] + e["height"] <= Hs:
+                ax, ay = framed[e["id"]](e["x"] + e["width"] / 2, e["y"] + e["height"] / 2, k_)
+                if ax - e["width"] * k_ / 2 < 0 or ay - e["height"] * k_ / 2 < 0 \
+                        or ax + e["width"] * k_ / 2 > W or ay + e["height"] * k_ / 2 > H:
+                    return None
+        got = _set_texts(upright, k_, sx, sy, W, H, holders,
+                         keep + [(mark_box(e, k_), clear_of(_box(e))) for e in marks]
+                         + [(turned_box(e, k_), set()) for e in turned], framed)
+        for i, o in on_surface.items():     # copy stays on the panel or photo it sat on
+            if got and i in got:
+                v, r = got[i][1], rects[o]
+                if not (r[0] <= (v[0] + v[2]) / 2 <= r[2] and r[1] <= (v[1] + v[3]) / 2 <= r[3]):
+                    return None
+        return got
     lo = s
     best = attempt(lo)
     if best is None:
@@ -1742,6 +1901,8 @@ def tmpl_fill(ctx, model):
         if e["id"] in framed:
             cx, cy = framed[e["id"]](e["x"] + e["width"] / 2, e["y"] + e["height"] / 2, k)
         w, h = e["width"] * k, e["height"] * k
+        if e["id"] in getattr(P, "bleed", ()):
+            continue
         long_thin = e["id"] not in framed and max(e["width"], e["height"]) > 6 * max(1e-6, min(e["width"], e["height"]))
         if e["type"] == "text":
             fs = max(1, int(e["font_size"] * k))
