@@ -22,6 +22,8 @@ from typing import Any
 
 from .analyze import FLOW_ROLES, analyze, norm_rot
 from .finalize import finalize
+from . import nobleed
+from .nobleed import NO_BLEED, contain, raw_off, settle
 from .layout import Ctx, tmpl_backdrop, tmpl_card_panel, tmpl_grid, tmpl_panel, tmpl_row, tmpl_split, tmpl_stack
 from .score import score
 
@@ -401,7 +403,22 @@ def _unwrap(source):
 
 
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
-    return _resize(_unwrap(source), target_canvas)
+    out = _resize(_unwrap(source), target_canvas)
+    if not NO_BLEED:
+        return out
+    contain(out)
+    if raw_off(out):
+        # a box on its side overruns the canvas before rotation, which the
+        # structural check counts: lay the design out again without turning
+        global TURN_MIN
+        turn, TURN_MIN = TURN_MIN, float("inf")
+        nobleed.UPRIGHT = True
+        try:
+            out = _resize(_unwrap(source), target_canvas)
+        finally:
+            TURN_MIN = turn
+            nobleed.UPRIGHT = False
+    return settle(out)
 
 
 def _resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:

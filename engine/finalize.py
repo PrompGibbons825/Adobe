@@ -10,6 +10,8 @@ import numpy as np
 
 from . import saliency
 from .blocks import GroupBlock, ImageBlock, img_vis_frac, rot_bounds
+from . import nobleed
+from .nobleed import NO_BLEED
 
 HIDE_ROLES = {"missing", "offcanvas"}
 
@@ -231,7 +233,7 @@ def _turned_info(info, k):
 def place_bg(ctx, P, unit, model=None):
     el = unit.els[0]
     W, H = ctx.W, ctx.H
-    if el["id"] in getattr(P, "bleed", ()) and "rotation" in P.props.get(el["id"], {}):
+    if el["id"] in getattr(P, "bleed", ()) and "rotation" in P.props.get(el["id"], {}) and not nobleed.UPRIGHT:
         return                  # the layout already turned and placed this picture
     info = saliency.analyze(el.get("asset_id") or "") if el["type"] == "image" else None
     if info is None:
@@ -239,6 +241,10 @@ def place_bg(ctx, P, unit, model=None):
         return
     from .analyze import norm_rot
     rot = norm_rot(el.get("rotation", 0) or 0)
+    if NO_BLEED and rot and (abs(abs(rot) - 90) > 1 or nobleed.UPRIGHT):
+        rot = 0.0               # a turned box would leave the canvas: the picture stands upright
+        P.set(el["id"], rotation=0)
+        el = dict(el, rotation=0)
     turned = 0
     if abs(abs(rot) - 90) <= 30 or abs(abs(rot) - 270) <= 30:
         # turned only to fit the source's shape? If the new canvas suits the
@@ -263,7 +269,7 @@ def place_bg(ctx, P, unit, model=None):
     sb = info["sal_box"]
     concentrated = (sb[2] - sb[0]) * (sb[3] - sb[1]) < 0.45 or bool(info.get("eyes"))
     x0, y0 = cx0, cy0
-    if concentrated and not (wx > 0.98 and wy > 0.98):
+    if concentrated and not (wx > 0.98 and wy > 0.98) and not NO_BLEED:
         # rule of thirds: slide the crop so the subject sits on the third line
         # opposite the text (only along the axis that has room to slide)
         fx, fy = info["centroid"]
@@ -274,9 +280,27 @@ def place_bg(ctx, P, unit, model=None):
         if wy < 0.98:
             ty = _thirds_target(tc[1] if tc else None, H)
             y0 = min(max(fy - ty * wy, 0.0), 1 - wy)
-    if model is not None and (wx < 0.98 or wy < 0.98):
+    if model is not None and (wx < 0.98 or wy < 0.98) and not NO_BLEED:
         x0, y0 = _best_window(ctx, P, el, model, info, (x0, y0), wx, wy, bw, bh)
-    if turned:
+    if NO_BLEED and turned:
+        P.set(el["id"], x=(W - H) / 2, y=(H - W) / 2, width=H, height=W, fit="cover")
+    elif NO_BLEED:
+        P.set(el["id"], x=0, y=0, width=W, height=H, fit="cover")     # the renderer centres this crop
+        eb = _eye_band(info)
+        if eb:
+            # the crop cannot slide, so the box narrows until its centred crop reaches the eyes
+            need_y = min(1.0, 2 * max(0.5 - eb[1], eb[3] - 0.5) + 0.06)
+            need_x = min(1.0, 2 * max(0.5 - eb[0], eb[2] - 0.5) + 0.06)
+            if need_y > wy or need_x > wx:
+                a = (iw * max(wx, need_x)) / (ih * max(wy, need_y))
+                bw_, bh_ = min(W, H * a), min(H, W / a)
+                tc = _text_center(P, model) if model else None
+                left = tc is not None and tc[0] > W / 2
+                top = tc is not None and tc[1] > H / 2
+                bx, by = (0 if left else W - bw_), (0 if top else H - bh_)
+                P.set(el["id"], x=bx, y=by, width=bw_, height=bh_)
+                x0, y0 = 0.5 - max(wx, need_x) / 2, 0.5 - max(wy, need_y) / 2
+    elif turned:
         # the upright view's box, turned back about the same centre
         cx, cy = -x0 * bw + bw / 2, -y0 * bh + bh / 2
         P.set(el["id"], x=cx - bh / 2, y=cy - bw / 2, width=bh, height=bw)
