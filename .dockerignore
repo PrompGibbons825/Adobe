@@ -6,6 +6,7 @@
 output
 tests
 tools
+!tools/fetch_jeff_models.py
 **/__pycache__
 *.pyc
 .DS_Store
