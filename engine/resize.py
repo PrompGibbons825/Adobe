@@ -10,7 +10,8 @@ process with its own full `engine/` package under `engine/subs/<name>/`:
 The pick (2026-10-31): every output first goes through `engine/combo/strict.clamp` (every box
 inside the canvas), then `engine/combo/strict.faults` (the stage-one rules as decided in
 context/notes/adobe-rules.md, nothing hidden, nothing off-canvas). Night's output is kept when it
-passes; otherwise Learn's; otherwise the output with the fewest faults, Night first on a tie. If
+passes; otherwise Night's layout with every unit it dropped put back
+(`engine/combo/strict.unhide`, CHAMELEON_UNHIDE=0 turns it off) if that passes; otherwise Learn's; otherwise the output with the fewest faults, Night first on a tie. If
 neither engine answers, a fit-and-centre layout with a type floor.
 
 On the judged official-format tiles this order scored 6.22 against 4.67 for Night alone and 5.66
@@ -39,6 +40,7 @@ from typing import Any, Dict, List, Optional
 REPO = Path(__file__).resolve().parents[1]
 SUBS = Path(__file__).resolve().parent / "subs"
 ENGINES = ["night", "learn"]
+LEAD = "night"
 
 RUNNER = r"""
 import json, os, sys
@@ -105,6 +107,18 @@ def choose(source: dict, target: dict, runs: List[Dict[str, Any]]) -> Dict[str, 
     for r in order:
         if not r["faults"]:
             return {"run": r, "why": f"first passing ({r['engine']})"}
+        if r["engine"] == LEAD and os.environ.get("CHAMELEON_UNHIDE", "1") != "0":
+            # Night's layout reads best; put back the units it dropped before falling back to Learn
+            from engine.combo.strict import unhide
+
+            try:
+                fixed = unhide(source, r["out"], target)
+                f = faults(source, fixed, target, kit) if fixed is not None else ["unhide: no free room"]
+            except Exception:  # noqa: BLE001
+                traceback.print_exc(file=sys.stderr)
+                f = ["unhide failed"]
+            if not f:
+                return {"run": dict(r, out=fixed, faults=f), "why": f"unhidden ({r['engine']})"}
     from engine.combo.strict import clamp, rescue
 
     for r in order:  # lift type at 2 px or less and undo opacity hiding, then check again

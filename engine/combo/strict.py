@@ -17,9 +17,10 @@ Read with the rules decided on 2026-10-31 (context/notes/adobe-rules.md):
 """
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from . import rules as R
 
@@ -182,3 +183,155 @@ def clamp(out: dict, tgt: dict) -> dict:
         o.update(x=min(max(x, 0.0), W - w), y=min(max(y, 0.0), H - h), width=w, height=h)
         els.append(o)
     return dict(out, elements=els)
+
+
+TEXT_FLOOR = 7.0  # px: the smallest type a restored unit may be set at
+
+
+def _hidden_ids(src: dict, out: dict) -> set:
+    """Ids the engine dropped: opacity taken to (near) zero, type at 2 px or less, a box collapsed
+    below 2 px, or a box mostly off the canvas, where the source showed the element."""
+    so = {str(e.get("id")): e for e in src.get("elements", [])}
+    res = set()
+    for e in out.get("elements", []):
+        i = str(e.get("id"))
+        s = so.get(i)
+        if s is None:
+            continue
+        op = R._num(e.get("opacity"))
+        sop = R._num(s.get("opacity"))
+        fs = R._num(e.get("font_size"))
+        w, h = R._num(e.get("width")) or 0.0, R._num(e.get("height")) or 0.0
+        sw, sh = R._num(s.get("width")) or 0.0, R._num(s.get("height")) or 0.0
+        if (1.0 if op is None else op) <= 0.05 < (1.0 if sop is None else sop):
+            res.add(i)
+        elif e.get("type") == "text" and fs is not None and fs <= R.TINY_TEXT:
+            res.add(i)
+        elif (w < 2 or h < 2) and sw >= 2 and sh >= 2:
+            res.add(i)
+    return res
+
+
+def _units(src: dict, ids: set) -> List[List[dict]]:
+    """Hidden source elements grouped into units that travel together: one group_id, or text whose
+    source box lies on a hidden shape or image."""
+    els = [e for e in src.get("elements", []) if str(e.get("id")) in ids]
+    parent = {str(e["id"]): str(e["id"]) for e in els}
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def box(e):
+        return tuple(float(R._num(e.get(k)) or 0.0) for k in ("x", "y", "width", "height"))
+
+    for a in els:
+        for b in els:
+            if a is b:
+                continue
+            if a.get("group_id") and a.get("group_id") == b.get("group_id"):
+                parent[find(str(a["id"]))] = find(str(b["id"]))
+            elif a.get("type") == "text" and b.get("type") in ("shape", "image"):
+                ax, ay, aw, ah = box(a)
+                bx, by, bw, bh = box(b)
+                cx, cy = ax + aw / 2, ay + ah / 2
+                if bx <= cx <= bx + bw and by <= cy <= by + bh:
+                    parent[find(str(a["id"]))] = find(str(b["id"]))
+    groups = {}
+    for e in els:
+        groups.setdefault(find(str(e["id"])), []).append(e)
+    return sorted(groups.values(), key=lambda u: min(float(R._num(e.get("z_index")) or 0) for e in u))
+
+
+def unhide(src: dict, out: dict, tgt: dict) -> Optional[dict]:
+    """Keep the engine's layout and put back every unit it dropped: each unit is restored as a rigid
+    copy of its source arrangement (type scaled with it, so lines break as in the source), as large
+    as fits in free space up to the layout's own scale, at the free spot nearest its relative place
+    in the source, never with type under TEXT_FLOOR. Kept elements are not moved. Returns None when
+    some unit has no free room at that size: overlapping it onto the layout reads worse than the
+    fallback engine."""
+    W, H = float(tgt["width"]), float(tgt["height"])
+    SW, SH = float(src["canvas"]["width"]), float(src["canvas"]["height"])
+    ids = _hidden_ids(src, out)
+    if not ids:
+        return out
+    so = {str(e.get("id")): e for e in src.get("elements", [])}
+    kept = [e for e in out["elements"] if str(e.get("id")) not in ids]
+    # the layout's own scale: median type ratio of kept copy, else the uniform fit
+    ratios = sorted(float(e["font_size"]) / float(so[str(e["id"])]["font_size"]) for e in kept
+                    if e.get("type") == "text" and R._num(e.get("font_size")) and R._num(so[str(e["id"])].get("font_size")))
+    s_lay = ratios[len(ratios) // 2] if ratios else min(W / SW, H / SH)
+    # occupancy on a coarse grid: every kept element that is not a full-canvas background
+    g = max(1.0, max(W, H) / 240.0)
+    gw, gh = int(math.ceil(W / g)), int(math.ceil(H / g))
+    occ = [[0] * gw for _ in range(gh)]
+
+    def mark(x, y, w, h):
+        for r in range(max(0, int(y / g)), min(gh, int(math.ceil((y + h) / g)))):
+            row = occ[r]
+            for c in range(max(0, int(x / g)), min(gw, int(math.ceil((x + w) / g)))):
+                row[c] = 1
+
+    def cost(x, y, w, h):
+        n = 0
+        for r in range(max(0, int(y / g)), min(gh, int(math.ceil((y + h) / g)))):
+            n += sum(occ[r][max(0, int(x / g)):min(gw, int(math.ceil((x + w) / g)))])
+        return n
+
+    for e in kept:
+        x, y, w, h = (float(R._num(e.get(k)) or 0.0) for k in ("x", "y", "width", "height"))
+        if w * h >= 0.85 * W * H or (R._num(e.get("opacity")) if e.get("opacity") is not None else 1.0) < 0.5:
+            continue
+        mark(x, y, w, h)
+    placed = {}
+    pad = max(2.0, 0.01 * min(W, H))
+    for unit in _units(src, ids):
+        ux0 = min(float(e["x"]) for e in unit)
+        uy0 = min(float(e["y"]) for e in unit)
+        ux1 = max(float(e["x"]) + float(e["width"]) for e in unit)
+        uy1 = max(float(e["y"]) + float(e["height"]) for e in unit)
+        uw, uh = max(1.0, ux1 - ux0), max(1.0, uy1 - uy0)
+        fsmin = min((float(e["font_size"]) for e in unit if e.get("type") == "text" and R._num(e.get("font_size"))), default=None)
+        s_floor = TEXT_FLOOR / fsmin if fsmin else 2.0 / min(uw, uh)
+        s_hi = min(max(s_lay, s_floor), (W - 2 * pad) / uw, (H - 2 * pad) / uh)
+        s_lo = min(s_floor, s_hi)
+        # relative place in the source, as the preferred centre
+        pcx, pcy = (ux0 + uw / 2) / SW * W, (uy0 + uh / 2) / SH * H
+        best = None
+        s = s_hi
+        while True:
+            w, h = uw * s, uh * s
+            step = max(g, min(w, h) / 4)
+            yy = pad
+            while yy + h <= H - pad + 1e-6:
+                xx = pad
+                while xx + w <= W - pad + 1e-6:
+                    c = cost(xx - pad / 2, yy - pad / 2, w + pad, h + pad)
+                    d = math.hypot(xx + w / 2 - pcx, yy + h / 2 - pcy) / math.hypot(W, H)
+                    key = (c > 0, c, -s, d)
+                    if best is None or key < best[0]:
+                        best = (key, xx, yy, s)
+                    xx += step
+                yy += step
+            if (best and best[0][0] is False) or s <= s_lo * 1.0001:
+                break
+            s = max(s_lo, s * 0.85)
+        if best is None or best[0][0] or best[3] < s_floor * 0.999:
+            return None  # no free room for this unit at a legible size: leave it to another engine
+        _, bx, by, s = best
+        for e in unit:
+            o = dict(next(x for x in out["elements"] if str(x.get("id")) == str(e["id"])))
+            sop = R._num(e.get("opacity"))
+            o.update(x=bx + (float(e["x"]) - ux0) * s, y=by + (float(e["y"]) - uy0) * s,
+                     width=float(e["width"]) * s, height=float(e["height"]) * s,
+                     opacity=1.0 if sop is None else sop, z_index=e.get("z_index", o.get("z_index")))
+            if e.get("type") == "text" and R._num(e.get("font_size")):
+                o["font_size"] = max(TEXT_FLOOR if fsmin else 1.0, float(e["font_size"]) * s)
+            if e.get("type") == "image" and e.get("fit"):
+                o["fit"] = e["fit"]
+            placed[str(e["id"])] = o
+        mark(bx, by, uw * s, uh * s)
+    els = [placed.get(str(e.get("id")), e) for e in out["elements"]]
+    return clamp(dict(out, elements=els), tgt)
