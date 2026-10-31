@@ -1,0 +1,70 @@
+{
+ "weights": {
+  "dropped_text": 3.947,
+  "dropped_art": 1.2853,
+  "contrast_loss": 0.0,
+  "busy_gain": 0.0,
+  "abs_low_contrast": 2.7708,
+  "abs_busy": 0.0,
+  "coll_text_art": 0.5889,
+  "coll_text_text": 0.0,
+  "coll_art": 0.0,
+  "spill": 0.0531,
+  "cut_text": 3.5058,
+  "cut_art": 0.0,
+  "tiny512": 3.3228,
+  "tiny1024": 0.1182,
+  "text_shrink": 0.4748,
+  "art_shrink": 0.0,
+  "hierarchy": 0.0,
+  "align_lost": 2.062,
+  "near_miss": 1.7332,
+  "tight_margin": 1.6939,
+  "imbalance": 2.0452,
+  "underfill": 1.9567,
+  "overfill": 0.4265,
+  "aspect": 0.0,
+  "order_flip": 0.0,
+  "bare_canvas": 1.1281
+ },
+ "lambda": 0.0003,
+ "prior": "zero",
+ "pairs": 179,
+ "tol": 0.25,
+ "asks": 358,
+ "cv_agreement_confident": 0.7081,
+ "cv_agreement_strong": 0.7444,
+ "cv_agreement_asks": 0.6732,
+ "per_criterion_top": {
+  "collisions": {
+   "cut_text": 2.61,
+   "tiny512": 2.568,
+   "abs_low_contrast": 2.375,
+   "align_lost": 1.909,
+   "dropped_art": 1.808
+  },
+  "readable": {
+   "dropped_text": 4.019,
+   "tiny512": 3.658,
+   "cut_text": 3.576,
+   "imbalance": 3.154,
+   "abs_low_contrast": 2.309
+  },
+  "brand": {
+   "cut_text": 3.592,
+   "tiny512": 3.1,
+   "abs_low_contrast": 2.782,
+   "align_lost": 2.568,
+   "underfill": 2.431
+  },
+  "intentional": {
+   "tiny512": 3.501,
+   "cut_text": 2.988,
+   "align_lost": 2.499,
+   "dropped_text": 2.43,
+   "abs_low_contrast": 2.206
+  }
+ },
+ "source": "ws/judge-calibration labels (10-06), terms re-measured on this tree (tools.judge.fit features)",
+ "note": "P(a beats b) = sigmoid(sum_k w_k * (t_b,k - t_a,k)); terms from tools/judge/terms.py"
+}

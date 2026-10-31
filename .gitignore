@@ -26,3 +26,8 @@ tools/crello/cache/
 tools/crello/cases/assets/
 tools/crello/cases/
 tools/crello/eval/
+
+# Combined engine: Jeff's large vision models are fetched at build time (tools/fetch_jeff_models.py)
+/engine/subs/jeff/engine/models/u2netp.onnx
+/engine/subs/jeff/engine/models/isnet-general-use.onnx
+/engine/subs/jeff/engine/models/clip/

@@ -1,0 +1,2015 @@
+"""Layout templates. Each returns a Placed (or None if it can't fit).
+
+- stack: one centered/left column, reading order from source (tall/square)
+- split: hero image in its own column, text stack beside it (wide)
+- row:   everything on one line, logo | hero | text | cta (ultra-wide banners)
+"""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+
+from .analyze import norm_rot
+from .blocks import GroupBlock, ImageBlock, Placed, TextBlock, img_vis_frac, make_block
+from . import saliency
+from . import textfit as tf
+
+
+class Ctx:
+    def __init__(self, model, target):
+        self.model = model
+        self.Ws, self.Hs = model["canvas"]
+        self.W, self.H = target["width"], target["height"]
+        self.t_star = ((self.W * self.H) / (self.Ws * self.Hs)) ** 0.5
+        self.margin = 0.06 * min(self.W, self.H) + 0.01 * max(self.W, self.H)
+        # a border that echoes the canvas edge keeps its inset; content stays inside it
+        k = min(self.W, self.H) / min(self.Ws, self.Hs)
+        self.border_scale = k
+        for u in model["units"]:
+            if u.role == "border":
+                inner = max(getattr(u, "insets", (0, 0, 0, 0))) * k
+                if inner > 0:
+                    self.margin = max(self.margin, inner + 0.04 * min(self.W, self.H))
+
+
+def _src_gaps(units):
+    gaps = []
+    for a, b in zip(units, units[1:]):
+        gaps.append(b.bbox[1] - a.bbox[3])
+    return gaps
+
+
+MIN_FS = {"headline": 16, "cta": 12, "subhead": 11, "body": 11, "group": 10, "badges": 9, "legal": 7}
+
+
+def _src_fs(u):
+    els = u.els if u.kind != "badges" else [e for m in u.members for e in m.els]
+    fss = [e["font_size"] for e in els if e["type"] == "text"]
+    return min(fss) if fss else None
+
+
+def grows(u, units):
+    """The pieces that grow into free space: the hero visual and the headline
+    (alone or as the composition carrying it)."""
+    if u.role == "hero":
+        return True
+    return u.role == "headline"
+
+
+def block_scale(u, t, k, boost=True, grow=False):
+    if u.role == "hero":
+        return t * k
+    if grow:                       # the headline grows with k but never shrinks below t
+        return t * max(1.0, k)
+    fs = _src_fs(u)
+    if boost and fs and u.role in MIN_FS:
+        return max(t, MIN_FS[u.role] / fs)
+    return t
+
+
+def _stack_sizes(blocks, units, t, k, max_w, boost=True):
+    return [b.size(block_scale(u, t, k, boost, grows(u, units)), max_w) for b, u in zip(blocks, units)]
+
+
+def stack(ctx: Ctx, P: Placed, units, rect, align, t_hi):
+    """Try with minimum-legibility boosts first; if the content can't fit
+    that way, fall back to pure proportional scaling (nothing is dropped)."""
+    r = _stack(ctx, P, units, rect, align, t_hi, True)
+    if r is None:
+        r = _stack(ctx, P, units, rect, align, t_hi, False)
+    return r
+
+
+def _stack(ctx: Ctx, P: Placed, units, rect, align, t_hi, boost):
+    """Lay units out top-to-bottom in rect. Returns chosen t or None."""
+    if not units:
+        return t_hi
+    units = sorted(units, key=lambda u: u.cy)
+    blocks = [make_block(u, ctx.Ws, ctx) for u in units]
+    rx, ry, rw, rh = rect
+    base_gaps = [min(max(g, 0.02 * ctx.Hs), 0.08 * ctx.Hs) for g in _src_gaps(units)]
+    has_hero = any(grows(u, units) for u in units)
+    k_min = 0.6 if any(u.role == "hero" for u in units) else 1.0
+
+    def total(t, k):
+        sizes = _stack_sizes(blocks, units, t, k, rw, boost)
+        return sum(s[1] for s in sizes) + sum(g * t for g in base_gaps), sizes
+
+    # with no hero image, keep room for the headline to stand 1.4x above the rest
+    k_t = 1.4 if k_min == 1.0 and has_hero else k_min
+    lo, hi = 0.0, t_hi
+    if total(hi, k_t)[0] <= rh:
+        lo = hi
+    else:
+        for _ in range(30):
+            mid = (lo + hi) / 2
+            if total(mid, k_t)[0] <= rh:
+                lo = mid
+            else:
+                hi = mid
+    t = lo
+    if t <= 0.003:
+        return None
+    k = k_min
+    if has_hero:
+        klo, khi = k_min, 1.8
+        for _ in range(25):
+            mid = (klo + khi) / 2
+            if total(t, mid)[0] <= rh:
+                klo = mid
+            else:
+                khi = mid
+        k = klo
+    tot, sizes = total(t, k)
+    gaps = [g * t for g in base_gaps]
+    slack = rh - tot
+    if gaps and sum(gaps) > 0 and slack > 0:
+        extra = min(slack, sum(gaps) * 1.5)
+        f = 1 + extra / sum(gaps)
+        gaps = [g * f for g in gaps]
+        slack -= extra
+    y = ry + max(0.0, slack) / 2
+    for i, (b, u) in enumerate(zip(blocks, units)):
+        b.place(P, rx, y, block_scale(u, t, k, boost, grows(u, units)), rw, align)
+        y += sizes[i][1] + (gaps[i] if i < len(gaps) else 0)
+    return t
+
+
+def t_cap(ctx, col_w):
+    # type may grow with the canvas: a small banner's 15px headline becomes ~50px on a big one.
+    # Blank space the designer left in the source (content filling little of
+    # it) is not a size to preserve: content may grow into the new canvas.
+    fill = ctx.model.get("src_fill", 0.55) if hasattr(ctx, "model") else 0.55
+    room = max(1.0, (0.5 / max(0.05, fill)) ** 0.5)
+    return min(1.25 * ctx.t_star * room, 3.0)
+
+
+def tmpl_stack(ctx, flow, align="center", region="full", tscale=1.0):
+    P = Placed()
+    m = ctx.margin
+    W, H = ctx.W, ctx.H
+    rect = {
+        "full": (m, m, W - 2 * m, H - 2 * m),
+        "left": (m, m, W * 0.55 - 1.5 * m, H - 2 * m),
+        "right": (W * 0.45 + 0.5 * m, m, W * 0.55 - 1.5 * m, H - 2 * m),
+        "top": (m, m, W - 2 * m, H * 0.55 - 1.5 * m),
+        "bottom": (m, H * 0.45 + 0.5 * m, W - 2 * m, H * 0.55 - 1.5 * m),
+    }[region]
+    t = stack(ctx, P, flow, rect, align, t_cap(ctx, rect[2]) * tscale)
+    if t is None:
+        return None
+    P.meta = {"template": f"stack-{region}-{align}" + ("-herofirst" if tscale < 1 else ""), "t": t}
+    return P
+
+
+def tmpl_split(ctx, flow, side="left", frac=0.45, align="left"):
+    if ctx.W / ctx.H < 1.15:
+        return None
+    heroes = [u for u in flow if u.role == "hero"]
+    if not heroes:
+        return None
+    hero = heroes[0]
+    rest = [u for u in flow if u is not hero]
+    P = Placed()
+    m = ctx.margin
+    W, H = ctx.W, ctx.H
+    is_img = hero.kind == "image"
+    hb = ImageBlock(hero) if is_img else make_block(hero, ctx.Ws, ctx)
+    col_w = W * frac - 1.5 * m
+    s = hb.scale_for(10.0, col_w, H - 2 * m)
+    hw, hh = (hb.vw * s, hb.vh * s) if is_img else (hb.w * s, hb.h * s)
+    if side == "left":
+        hx = m + (col_w - hw) / 2
+        text_rect = (W * frac + 0.5 * m, m, W * (1 - frac) - 1.5 * m, H - 2 * m)
+    else:
+        hx = W * (1 - frac) + 0.5 * m + (col_w - hw) / 2
+        text_rect = (m, m, W * (1 - frac) - 1.5 * m, H - 2 * m)
+    if is_img:
+        hb.place_vis(P, hx, (H - hh) / 2, s)
+    else:
+        hb.place_at(P, hx, (H - hh) / 2, s)
+    t = stack(ctx, P, rest, text_rect, align, t_cap(ctx, text_rect[2]))
+    if t is None:
+        return None
+    P.meta = {"template": f"split-{side}-{frac}-{align}", "t": t}
+    return P
+
+
+ROW_ORDER = {"logo": 0, "hero": 1, "text": 2, "headline": 2, "subhead": 2, "body": 2, "group": 3,
+             "legal": 3, "badges": 4, "cta": 5}
+
+
+def _fit_column(texts, col_w, h_avail, fs_cap):
+    """Joint fit of a column of texts: one scale t for all (keeps hierarchy)."""
+    if not texts:
+        return None
+    head_fs = max(u.els[0]["font_size"] for u in texts)
+
+    def layout(t):
+        ms, tot = [], 0.0
+        for i, u in enumerate(texts):
+            el = tf.flow(u.els[0])
+            fs = max(5, int(el["font_size"] * t))
+            m = tf.measure(el, fs, col_w)
+            if m["word_w"] > col_w:
+                return None
+            ms.append(m)
+            tot += m["height"] + (fs * 0.3 if i else 0)
+        return ms if tot <= h_avail else None
+
+    lo, hi = 0.0, fs_cap / head_fs
+    if layout(hi):
+        return layout(hi)
+    for _ in range(25):
+        mid = (lo + hi) / 2
+        if layout(mid):
+            lo = mid
+        else:
+            hi = mid
+    return layout(lo) if lo > 0 else None
+
+
+def _rot_frame(fb, u, L, S):
+    """A card in a strip takes the thickness that gives its text the largest size."""
+    best = None
+    for f in (0.35, 0.5, 0.7, 1.0, 1.4):
+        th = min(S, f * L)
+        Pv = Placed()
+        fb.place_box(Pv, 0.0, 0.0, L, th, 3.0)
+        fss = [Pv.props[i]["font_size"] for i in u.ids if "font_size" in Pv.props.get(i, {})]
+        if not fss:
+            continue
+        key = (min(fss), -th)
+        if best is None or key > best[0]:
+            best = (key, Pv, th)
+    if best is None:
+        return None
+    return best[1], best[2], 0.0
+
+
+def _rot_layout(ctx, u, L, S):
+    """Lay a unit out in a virtual rect L long and up to S thick (text reflows
+    to lines L long, using the strip's full length). Returns (placed,
+    thickness used, offset) or None."""
+    from .blocks import FrameBlock
+    if u.kind == "frame":
+        marks = [u] + list(u.children)
+        for m in marks:
+            m._in_strip = True
+        try:
+            return _rot_frame(FrameBlock(u, ctx), u, L, S)
+        finally:
+            for m in marks:
+                m._in_strip = False
+    Pv = Placed()
+    t = stack(ctx, Pv, [u], (0.0, 0.0, L, S), "center", t_cap(ctx, L) * 1.5)
+    if t is None:
+        return None
+    bs = [Pv.vis[i] for i in u.ids if i in Pv.vis]
+    if not bs:
+        return None
+    v0, v1 = min(b[1] for b in bs), max(b[3] for b in bs)
+    return Pv, v1 - v0, -v0
+
+
+def _put_rotated(P, Pv, u, model_els, x, y0, L, dv):
+    """Map a virtual layout into a vertical strip at (x, y0), turned -90
+    degrees so its lines read bottom to top along the strip."""
+    for eid in u.ids:
+        p = Pv.props.get(eid)
+        if p is None:
+            continue
+        el = model_els[eid]
+        w, h = p.get("width", el["width"]), p.get("height", el["height"])
+        cu, cv = p["x"] + w / 2, p["y"] + h / 2 + dv
+        cx, cy = x + cv, y0 + L - cu
+        rot = ((el.get("rotation", 0) or 0) - 90) % 360
+        q = dict(p)
+        q.update(x=cx - w / 2, y=cy - h / 2, rotation=rot - 360 if rot > 180 else rot)
+        P.set(eid, **q)
+        if eid in Pv.vis:
+            a0, b0, a1, b1 = Pv.vis[eid]
+            P.vis[eid] = (x + b0 + dv, y0 + L - a1, x + b1 + dv, y0 + L - a0)
+
+
+def _upright(u):
+    """A copy of a group whose pieces are all turned ~90 degrees, turned back
+    upright as a whole about its centre. Returns (unit copy, {id: rotation})."""
+    from .analyze import Unit
+    from .analyze import norm_rot
+    # every text turned the same way (+-90); the card under it turns with it
+    trots = [norm_rot(e.get("rotation", 0)) for e in u.els if e["type"] == "text"]
+    if not trots:
+        return None
+    r = trots[0]
+    if not all(abs(abs(x) - 90) < 2 and abs(x - r) < 2 for x in trots):
+        return None
+    x0, y0, x1, y1 = u.bbox
+    gx, gy = (x0 + x1) / 2, (y0 + y1) / 2
+    import math
+    a = math.radians(-r)
+    ca, sa = math.cos(a), math.sin(a)
+    els, newrot = [], {}
+    for e in u.els:
+        cx, cy = e["x"] + e["width"] / 2 - gx, e["y"] + e["height"] / 2 - gy
+        nx, ny = cx * ca - cy * sa, cx * sa + cy * ca
+        # only the words turn back; a picture or drawing keeps its own angle
+        nr = norm_rot((e.get("rotation", 0) or 0) - r) if e["type"] == "text" else norm_rot(e.get("rotation", 0) or 0)
+        c = dict(e, rotation=nr)
+        c["x"], c["y"] = gx + nx - e["width"] / 2, gy + ny - e["height"] / 2
+        els.append(c)
+        newrot[e["id"]] = nr
+    return Unit(u.uid, u.role, "group", els), newrot
+
+
+def tmpl_row(ctx, flow, item_scale=1.0, ncols=1, area=None, P=None, rotate=False):
+    """Everything on one line, every unit kept: logo | hero | text column(s) | groups | badges | cta.
+    `area` = (x, width) restricts the row to a vertical band of the canvas.
+    Aligned pieces are left to finalize, which keeps them on their anchor's line."""
+    from .blocks import BadgesBlock
+    ax, W = area if area else (0.0, ctx.W)
+    H = ctx.H
+    if W / H < 2.2:
+        return None
+    flow = [u for u in flow if u.role != "aligned"]
+    P = P if P is not None else Placed()
+    mv = 0.12 * H
+    hA = H - 2 * mv
+    gut = max(0.015 * W, 0.6 * mv)
+    texts = sorted([u for u in flow if u.kind == "text" and u.role != "cta"], key=lambda u: (u.bbox[1], u.bbox[0]))
+    others = [u for u in flow if u not in texts]
+    items = []  # dict(order, kind, block, w, h, s, unit)
+    for u in others:
+        it = {"order": ROW_ORDER.get(u.role, 3), "unit": u, "x0": u.bbox[0]}
+        has_txt = any(e["type"] == "text" for e in u.els)
+        if rotate and has_txt and u.kind in ("group", "ribbon"):
+            up = _upright(u)
+            if up is not None:
+                b = GroupBlock(up[0])
+                sc = b.scale_for(10.0, 0.32 * W * item_scale, hA * 0.9 * item_scale)
+                it.update(kind="group", block=b, w=b.w * sc, h=b.h * sc, s=sc, upright=up[1])
+                items.append(it)
+                continue
+        if rotate and has_txt and u.kind in ("frame", "group") and u.role not in ("headline", "subhead", "cta") \
+                and not any(abs(norm_rot(e.get("rotation", 0))) > 1 for e in u.els):
+            r = _rot_layout(ctx, u, hA, 0.2 * W)
+            if r is not None:
+                it.update(kind="rot", Pv=r[0], w=r[1], h=hA, dv=r[2])
+                items.append(it)
+                continue
+        if u.kind == "image":
+            b = ImageBlock(u)
+            fh = {"hero": 1.15, "logo": 0.75}.get(u.role, 0.6)
+            sc = b.scale_for(10.0, (0.45 if u.role == "hero" else 0.22) * W * item_scale, hA * fh * item_scale)
+            it.update(kind="img", block=b, w=b.vw * sc, h=b.vh * sc, s=sc)
+        elif u.kind == "badges":
+            b = BadgesBlock(u)
+            ih = max(x.h for x in b.items)
+            sc = hA * 0.42 * item_scale / ih
+            for _ in range(20):
+                bw, bh = b.size(sc, 0.3 * W)
+                if bh <= hA * 0.95:
+                    break
+                sc *= 0.9
+            it.update(kind="badges", block=b, w=bw, h=bh, s=sc, maxw=0.3 * W)
+        elif u.kind == "text":  # text CTA
+            el = u.els[0]
+            mm = tf.fit(el, 0.25 * W, hA * 0.6, min(hA * 0.45, el["font_size"]), 1, 1)
+            if mm is None:
+                return None
+            it.update(kind="ctatext", block=u, w=mm["width"], h=mm["height"], s=mm)
+        elif u.kind == "frame":
+            from .blocks import FrameBlock
+            b = FrameBlock(u, ctx)
+            h = hA * 0.98 * item_scale
+            w = min(h * b.t_aspect, 0.5 * W)
+            h = w / b.t_aspect
+            it.update(kind="frame", block=b, w=w, h=h, s=h / b.dims(1.0)[1])
+        else:
+            b = make_block(u, ctx.Ws, ctx)
+            fh = {"cta": 0.7, "badges": 0.5, "headline": 1.0, "hero": 1.1}.get(u.role, 0.8)
+            # a group carrying the main picture may take up to 45% of the banner
+            wcap = 0.45 if (u.role == "hero" or any(e["type"] == "image" and e["width"] * e["height"] >= 0.15 * ctx.Ws * ctx.Hs
+                                                     for e in u.els)) else 0.32
+            sc = b.scale_for(10.0, wcap * W * item_scale, hA * fh * item_scale)
+            it.update(kind="group", block=b, w=b.w * sc, h=b.h * sc, s=sc)
+        items.append(it)
+    cols = []
+    if texts:
+        if ncols == 2 and len(texts) >= 2:
+            cols = [texts[:1], texts[1:]]
+        else:
+            cols = [texts]
+        for c in cols:
+            items.append({"order": 2, "kind": "textcol", "unit": None, "texts": c, "x0": c[0].bbox[0]})
+    if not items:
+        return None
+    items.sort(key=lambda it: (it["order"], it["x0"]))
+
+    def pad(it, side):
+        if it["kind"] == "img":
+            b = it["block"]
+            return (b.v[0] if side == 0 else 1 - b.v[2]) * b.el["width"] * it["s"]
+        return 0.0
+    mL = max(0.03 * W, mv, pad(items[0], 0) + 2)
+    mR = max(0.03 * W, mv, pad(items[-1], 1) + 2)
+    fixed = sum(it["w"] for it in items if it["kind"] != "textcol")
+    n = len(items)
+    col_total = W - mL - mR - fixed - gut * (n - 1)
+    tcols = [it for it in items if it["kind"] == "textcol"]
+    # the largest type already set in cards/groups: loose secondary text in a
+    # column must not outgrow it (a legal line is never bigger than the headline)
+    refs = []          # (source size, size set here) of texts already placed in cards and groups
+    for it in items:
+        u = it.get("unit")
+        if u is None or not any(e["type"] == "text" for e in u.els):
+            continue
+        for e in u.els:
+            if e["type"] != "text":
+                continue
+            if it["kind"] == "rot" and e["id"] in it["Pv"].props:
+                refs.append((e["font_size"], it["Pv"].props[e["id"]].get("font_size", 0)))
+            elif it["kind"] in ("group", "frame"):
+                refs.append((e["font_size"], e["font_size"] * it["s"]))
+    if tcols:
+        if col_total < 0.14 * W * len(tcols):
+            return None
+        shares = [1.0] if len(tcols) == 1 else [0.58, 0.42]
+        for it, sh in zip(tcols, shares):
+            cw = col_total * sh
+            cap = hA * (0.5 if len(it["texts"]) > 1 else 0.62)
+            # stay smaller than every text that was larger than this column's in the source
+            col_src = max(u.els[0]["font_size"] for u in it["texts"])
+            above = [out for src, out in refs if src > 1.05 * col_src and out > 0]
+            if above:
+                cap = min(cap, max(7.0, 0.9 * min(above)))
+            ms = _fit_column(it["texts"], cw, hA, cap)
+            if ms is None or ms[0]["fs"] < 7:
+                return None
+            it.update(w=max(m["width"] for m in ms), h=sum(m["height"] for m in ms)
+                      + sum(m["fs"] * 0.3 for m in ms[1:]), ms=ms, colw=cw)
+    total_w = sum(it["w"] for it in items)
+    free = W - mL - mR - total_w
+    g = free / (n - 1) if n > 1 else 0
+    if n > 1 and g < gut * 0.5:
+        return None
+    g = min(g, 0.08 * W)
+    x = ax + mL + (W - mL - mR - total_w - g * (n - 1)) / 2
+    cy = H / 2
+    head_t = 1.0
+    for it in items:
+        k = it["kind"]
+        if k == "img":
+            it["block"].place_vis(P, x, cy - it["h"] / 2, it["s"])
+        elif k == "group":
+            it["block"].place_at(P, x, cy - it["h"] / 2, it["s"])
+            for eid, r in it.get("upright", {}).items():
+                P.set(eid, rotation=r)
+            if it.get("upright"):
+                P.rotated = getattr(P, "rotated", 0) + 1
+            if it["unit"].role == "headline":
+                head_t = it["s"]       # a headline lockup: its scale is the text scale
+        elif k == "frame":
+            it["block"].place_box(P, x, cy - it["h"] / 2, it["w"], it["h"], it["s"])
+            if it["unit"].role == "headline":
+                head_t = it["s"]
+        elif k == "rot":
+            _put_rotated(P, it["Pv"], it["unit"], ctx.model["els"], x, cy - it["h"] / 2, it["h"], it["dv"])
+            P.rotated = getattr(P, "rotated", 0) + 1
+        elif k == "badges":
+            it["block"].place(P, x, cy - it["h"] / 2, it["s"], it["w"] + 1, "left")
+        elif k == "ctatext":
+            el, mm = it["unit"].els[0], it["s"]
+            y = tf.optical_top(el, mm["fs"], 1, cy)
+            P.set(el["id"], x=x, y=y, width=mm["width"] + mm["fs"], height=mm["height"], font_size=mm["fs"], text_align="left")
+            P.vis[el["id"]] = tf.visual_box(dict(el, text_align="left"), x, y, mm["width"] + mm["fs"], mm["fs"], mm)
+        else:
+            y = cy - it["h"] / 2
+            ids = []
+            for u, m in zip(it["texts"], it["ms"]):
+                el = u.els[0]
+                asc, cap, desc = tf.metrics(el)
+                P.set(el["id"], x=x, y=y, width=it["colw"], height=m["height"], font_size=m["fs"], text_align="left",
+                      content=tf.flow(el)["content"])
+                P.vis[el["id"]] = tf.visual_box(dict(el, text_align="left"), x, y, it["colw"], m["fs"], m)
+                ids.append(el["id"])
+                if u.role == "headline":
+                    head_t = m["fs"] / el["font_size"]
+                y += m["height"] + m["fs"] * 0.3
+            vb = [P.vis[i] for i in ids]
+            dy = cy - (min(b[1] for b in vb) + max(b[3] for b in vb)) / 2
+            for i in ids:
+                P.props[i]["y"] += dy
+                v = P.vis[i]
+                P.vis[i] = (v[0], v[1] + dy, v[2], v[3] + dy)
+        x += it["w"] + g
+    P.meta = {"template": f"row-s{item_scale}-c{len(tcols)}" + ("-rot" if rotate else ""), "t": head_t}
+    return P
+
+
+def _inner_row(ctx, P, units, rect, t):
+    """Row inside a frame. One piece: icon | text. Two or more: the pieces
+    flank the text (first one left, second right, alternating), and the text
+    column sits centered between them. Returns the text scale, or None."""
+    rx, ry, rw, rh = rect
+    texts = sorted([u for u in units if u.kind == "text"], key=lambda u: (u.bbox[1], u.bbox[0]))
+    rest = sorted([u for u in units if u.kind != "text"], key=lambda u: (u.bbox[1], u.bbox[0]))
+    if not rest or not texts:
+        return None
+    g = 0.06 * rh
+    sized = []
+    for u in rest:
+        b = make_block(u, ctx.Ws, ctx)
+        if isinstance(b, ImageBlock):
+            s = b.scale_for(t * 1.6, 0.3 * rw, 0.8 * rh)
+            w, h = b.vw * s, b.vh * s
+        elif isinstance(b, GroupBlock):
+            s = b.scale_for(t * 1.6, 0.3 * rw, 0.8 * rh)
+            w, h = b.w * s, b.h * s
+        else:
+            s = t
+            w, h = b.size(s, 0.3 * rw)
+        sized.append((b, s, w, h))
+    symmetric = len(sized) >= 2
+    left = sized[0::2] if symmetric else sized
+    right = sized[1::2] if symmetric else []
+    wl = sum(x[2] + g for x in left)
+    wr = sum(x[2] + g for x in right)
+    side = max(wl, wr) if symmetric else wl
+    col_w = rw - side * (2 if symmetric else 1)
+    if col_w < 0.25 * rw:
+        return None
+    cap = max(u.els[0]["font_size"] for u in texts) * t * 1.6
+    ms = _fit_column(texts, col_w, rh, cap)
+    if ms is None:
+        return None
+    tw = max(m["width"] for m in ms)
+    th = sum(m["height"] for m in ms) + sum(m["fs"] * 0.3 for m in ms[1:])
+    cy = ry + rh / 2
+    align = "center" if symmetric else "left"
+    if symmetric:
+        cx = rx + rw / 2                      # text centered in the frame
+        tx = cx - tw / 2
+        lx_end, rx_start = tx - g, tx + tw + g
+    else:
+        tx = rx + (rw - wl - tw) / 2 + wl
+        lx_end, rx_start = tx - g, None
+
+    def put(b, s, x, w, h):
+        if isinstance(b, ImageBlock):
+            b.place_vis(P, x, cy - h / 2, s)
+        elif isinstance(b, GroupBlock):
+            b.place_at(P, x, cy - h / 2, s)
+        else:
+            b.place(P, x, cy - h / 2, s, w, "left")
+    x = lx_end
+    for b, s, w, h in reversed(left):        # pack leftwards from the text
+        x -= w
+        put(b, s, x, w, h)
+        x -= g
+    x = rx_start if rx_start is not None else 0
+    for b, s, w, h in right:
+        put(b, s, x, w, h)
+        x += w + g
+    y = cy - th / 2
+    for u, m in zip(texts, ms):
+        el = u.els[0]
+        # a little slack around the column, but never past the frame's inner edges
+        bx = max(rx, tx - m["fs"] / 2)
+        bw = min(tw + m["fs"], rx + rw - bx)
+        if align == "center":
+            bw = 2 * min(tx + tw / 2 - bx, bx + bw - (tx + tw / 2))
+            bx = tx + tw / 2 - bw / 2
+        P.set(el["id"], x=bx, y=y, width=bw, height=m["height"], font_size=m["fs"], text_align=align,
+              content=tf.flow(el)["content"])
+        P.vis[el["id"]] = tf.visual_box(dict(el, text_align=align), bx, y, bw, m["fs"], m)
+        y += m["height"] + m["fs"] * 0.3
+    return ms[0]["fs"] / texts[0].els[0]["font_size"]
+
+
+def inner_layout(ctx, P, units, rect, t):
+    """Lay out a frame's contents inside rect, trying both a column and a row
+    (icons beside a text column); keep whichever lets the text be larger."""
+    options = []
+    col = Placed()
+    tt = stack(ctx, col, units, rect, "center", t * 1.6)
+    if tt is not None:
+        options.append((tt * 1.5, "column", col))  # keeps the designer's structure unless a row is much larger
+    if rect[2] / max(1.0, rect[3]) > 1.3:
+        row = Placed()
+        tr = _inner_row(ctx, row, units, rect, t)
+        if tr is not None:
+            options.append((tr, "row", row))
+    if not options:
+        return None
+    _, mode, best = max(options, key=lambda o: o[0])
+    for k, v in best.props.items():
+        P.set(k, **v)
+    P.vis.update(best.vis)
+    P.frame_modes = getattr(P, "frame_modes", {})
+    P.frame_modes.update(getattr(best, "frame_modes", {}))
+    return mode
+
+
+def place_photo_panel(ctx, P, hero, rect, side):
+    """Crop a hero that fills its box to fill `rect`, a full-bleed band along one
+    canvas edge. The photo keeps its proportions; it is scaled to cover the
+    band and slides along the band so its subject sits mid-band. Any excess
+    runs off the canvas edges the band touches, never into the content."""
+    from . import saliency
+    el = hero.els[0]
+    info = saliency.analyze(el.get("asset_id") or "")
+    if info is None:
+        return False
+    rx, ry, rw, rh = rect
+    s = max(rw / el["width"], rh / el["height"])
+    bw, bh = el["width"] * s, el["height"] * s
+    sb = info["sal_box"]
+    concentrated = (sb[2] - sb[0]) * (sb[3] - sb[1]) < 0.45 or bool(info.get("eyes"))
+    fx, fy = info["centroid"] if concentrated else (0.5, 0.5)
+    # a diffuse subject still has an extent: follow it along an axis it doesn't fill
+    if not concentrated:
+        if sb[2] - sb[0] < 0.8:
+            fx = (sb[0] + sb[2]) / 2
+        if sb[3] - sb[1] < 0.8:
+            fy = (sb[1] + sb[3]) / 2
+    if side in ("left", "right"):
+        # vertical slide is free (top and bottom are canvas edges)
+        y = min(max(ry + rh / 2 - fy * bh, ry + rh - bh), ry)
+        # horizontally the inner edge is pinned to the band; excess goes outward
+        x = rx + rw - bw if side == "left" else rx
+    else:
+        x = min(max(rx + rw / 2 - fx * bw, rx + rw - bw), rx)
+        y = ry + rh - bh if side == "top" else ry
+    P.set(el["id"], x=x, y=y, width=bw, height=bh)
+    P.vis[el["id"]] = (rx, ry, rx + rw, ry + rh)
+    P.panel = {"id": el["id"], "rect": rect, "side": side}
+    return True
+
+
+def _main_picture(ctx, flow):
+    """If no croppable hero exists, offer the design's largest box-filling
+    detailed picture as one, lifting it out of its group (the rest of the
+    group stays together). Returns (flow, number of groups split)."""
+    from . import saliency
+    from .analyze import Unit, _fills_box
+    if any(u.role == "hero" and getattr(u, "croppable", False) for u in flow):
+        return flow, 0
+    best = None
+    for u in flow:
+        for e in u.els:
+            if e["type"] != "image" or not _fills_box(e):
+                continue
+            info = saliency.analyze(e.get("asset_id") or "")
+            if info is None or info["busyness"] < 0.03:
+                continue
+            a = e["width"] * e["height"]
+            if a >= 0.15 * ctx.Ws * ctx.Hs and (best is None or a > best[0]):
+                best = (a, u, e)
+    if best is None:
+        return flow, 0
+    _, u, e = best
+    pic = Unit(e["id"], "hero", "image", [e])
+    pic.croppable = True
+    if len(u.els) == 1:
+        return [pic if v is u else v for v in flow], 0
+    rest = Unit(u.uid + ":rest", u.role, "group", [x for x in u.els if x is not e])
+    return [v for v in flow if v is not u] + [pic, rest], 1
+
+
+def tmpl_panel(ctx, flow, side="left", frac=0.4):
+    """A croppable hero fills a full-bleed band on one side of the canvas;
+    everything else is laid out in the rest (as a row on extreme banners,
+    as a stack otherwise)."""
+    W, H = ctx.W, ctx.H
+    wide = side in ("left", "right")
+    if (wide and W / H < 1.2) or (not wide and H / W < 1.2):
+        return None
+    flow, lifted = _main_picture(ctx, flow)
+    heroes = [u for u in flow if u.role == "hero" and getattr(u, "croppable", False)]
+    if not heroes:
+        return None
+    hero = heroes[0]
+    rest = [u for u in flow if u is not hero]
+    # The photo fills the band's full cross-size and is cropped only along the
+    # band (the free axis, which runs off the canvas). If at full cross-size it
+    # is longer than the band, the band grows to show it whole; a photo that
+    # would need more than 60% of the canvas is a backdrop, not a panel.
+    el = hero.els[0]
+    A = el["width"] / max(1e-6, el["height"])
+    natural = A * H / W if wide else (W / A) / H
+    if natural > 0.6:
+        return None
+    frac = max(frac, natural)
+    P = Placed()
+    if wide:
+        pw = W * frac
+        rect = (0.0, 0.0, pw, H) if side == "left" else (W - pw, 0.0, pw, H)
+    else:
+        ph = H * frac
+        rect = (0.0, 0.0, W, ph) if side == "top" else (0.0, H - ph, W, ph)
+    if not place_photo_panel(ctx, P, hero, rect, side):
+        return None
+    m = ctx.margin
+    if wide:
+        cx0 = rect[2] if side == "left" else 0.0
+        cw = W - rect[2]
+        if cw / H >= 2.2:
+            R = tmpl_row(ctx, rest, 1.0, 1, area=(cx0, cw), P=P, rotate=getattr(ctx, "rotate", False))
+            if R is None:
+                R = tmpl_row(ctx, rest, 0.7, 1, area=(cx0, cw), P=P, rotate=getattr(ctx, "rotate", False))
+            if R is None:
+                return None
+            t = R.meta["t"]
+        else:
+            t = stack(ctx, P, rest, (cx0 + m, m, cw - 2 * m, H - 2 * m), "center", t_cap(ctx, cw))
+    else:
+        cy0 = rect[3] if side == "top" else 0.0
+        ch = H - rect[3]
+        t = stack(ctx, P, rest, (m, cy0 + m, W - 2 * m, ch - 2 * m), "center", t_cap(ctx, W))
+    if t is None:
+        return None
+    P.meta = {"template": f"panel-{side}-{frac}" + ("-lifted" if lifted else ""), "t": t}
+    P.lifted = lifted
+    return P
+
+
+def tmpl_backdrop(ctx, flow, align="center", region="full"):
+    """A full-bleed hero photo becomes the backdrop (cropped to cover the
+    canvas in finalize, like a background); the rest is stacked over it."""
+    heroes = [u for u in flow if u.role == "hero" and getattr(u, "backdrop", False)]
+    if not heroes:
+        return None
+    hero = heroes[0]
+    P = tmpl_stack(ctx, [u for u in flow if u is not hero], align, region)
+    if P is None:
+        return None
+    P.backdrop = hero
+    P.meta["template"] = "backdrop-" + P.meta["template"]
+    return P
+
+
+def _picture_card_panel(ctx, flow, side, frac):
+    """A group made of a plain card carrying a picture (an illustration on a
+    coloured card) becomes the band: the card fills the band (cropped, never
+    stretched) and the picture scales with the band's cross size."""
+    from . import saliency
+    from .analyze import _fills_box
+    W, H = ctx.W, ctx.H
+    wide = side in ("left", "right")
+    best = None
+    for u in flow:
+        if u.kind != "group":
+            continue
+        cards = [e for e in u.els if e["type"] == "image" and _fills_box(e)
+                 and (saliency.analyze(e.get("asset_id") or "") or {}).get("plain", 0) >= 0.85]
+        pics = [e for e in u.els if e["type"] == "image"
+                and (saliency.analyze(e.get("asset_id") or "") or {}).get("plain", 1) < 0.85]
+        if not cards or not pics:
+            continue
+        c = max(cards, key=lambda e: e["width"] * e["height"])
+        b = u.bbox
+        if c["width"] * c["height"] < 0.5 * (b[2] - b[0]) * (b[3] - b[1]):
+            continue
+        if best is None or c["width"] * c["height"] > best[1]["width"] * best[1]["height"]:
+            best = (u, c)
+    if best is None:
+        return None
+    u, c = best
+    P = Placed()
+    if wide:
+        rect = (0.0, 0.0, W * frac, H) if side == "left" else (W - W * frac, 0.0, W * frac, H)
+        s = H / c["height"]
+    else:
+        rect = (0.0, 0.0, W, H * frac) if side == "top" else (0.0, H - H * frac, W, H * frac)
+        s = W / c["width"]
+    rx, ry, rw, rh = rect
+    # the group keeps its arrangement around the card's centre, at the band's scale
+    ccx, ccy = c["x"] + c["width"] / 2, c["y"] + c["height"] / 2
+    tx, ty = rx + rw / 2, ry + rh / 2
+    from .blocks import GroupBlock
+    gb = GroupBlock(u)
+    gb.place_at(P, tx + (gb.x0 - ccx) * s, ty + (gb.y0 - ccy) * s, s)
+    P.set(c["id"], x=rx, y=ry, width=rw, height=rh, fit="cover")
+    P.vis[c["id"]] = rect
+    P.panel = {"id": c["id"], "rect": rect, "side": side}
+    rest = [v for v in flow if v is not u]
+    m = ctx.margin
+    if wide:
+        ox = rect[2] if side == "left" else 0.0
+        area = (ox + m, m, W - rect[2] - 2 * m, H - 2 * m)
+    else:
+        oy = rect[3] if side == "top" else 0.0
+        area = (m, oy + m, W - 2 * m, H - rect[3] - 2 * m)
+    t = stack(ctx, P, rest, area, src_align(rest), t_cap(ctx, area[2])) if rest else 1.0
+    if t is None:
+        return None
+    P.meta = {"template": f"cardpanel-{side}-{frac}", "t": t}
+    return P
+
+
+def tmpl_card_panel(ctx, flow, side="left", frac=0.5):
+    """A card (a frame whose container is a flat, box-filling piece) becomes a
+    full-bleed band on one side, its text reflowed inside; the background
+    shows on the other side. The card is cropped to the band (excess runs off
+    the canvas edges it touches), never stretched."""
+    from .blocks import FrameBlock
+    W, H = ctx.W, ctx.H
+    wide = side in ("left", "right")
+    if (wide and W / H < 1.2) or (not wide and H / W < 1.2):
+        return None
+    frames = [u for u in flow if u.kind == "frame"]
+    if not frames:
+        return _picture_card_panel(ctx, flow, side, frac)
+    card = max(frames, key=lambda u: u.container["width"] * u.container["height"])
+    fb = FrameBlock(card, ctx)
+    if not fb.crop_card and card.container["type"] != "shape":
+        return None
+    P = Placed()
+    if wide:
+        bw, bh = W * frac, H
+        rect = (0.0, 0.0, bw, bh) if side == "left" else (W - bw, 0.0, bw, bh)
+    else:
+        bw, bh = W, H * frac
+        rect = (0.0, 0.0, bw, bh) if side == "top" else (0.0, H - bh, bw, bh)
+    c = card.container
+    rx, ry, rw, rh = rect
+    if c["type"] == "image":
+        s = max(rw / c["width"], rh / c["height"])
+        cw_, ch_ = c["width"] * s, c["height"] * s
+        # excess runs outward only: pinned to the band's inner edge
+        if wide:
+            cx = rx + rw - cw_ if side == "left" else rx
+            cy = ry + (rh - ch_) / 2
+        else:
+            cx = rx + (rw - cw_) / 2
+            cy = ry + rh - ch_ if side == "top" else ry
+        P.set(c["id"], x=cx, y=cy, width=cw_, height=ch_)
+    else:
+        P.set(c["id"], x=rx, y=ry, width=rw, height=rh)
+    P.vis[c["id"]] = rect
+    P.panel = {"id": c["id"], "rect": rect, "side": side}
+    m = ctx.margin
+    inner = (rx + m, ry + m, rw - 2 * m, rh - 2 * m)
+    P.frame_modes = {}
+    P.frame_modes[card.uid] = inner_layout(ctx, P, card.children, inner, 1.25 * ctx.t_star)
+    if P.frame_modes[card.uid] is None:
+        return None
+    rest = [u for u in flow if u is not card]
+    t = 1.0
+    pics = [u for u in rest if u.role == "hero" and getattr(u, "croppable", False)]
+    others = [u for u in rest if u not in pics and u.role not in ("aligned", "minor")]
+    if pics and not others:
+        # the card on one side, the picture filling the other edge to edge (no white margins)
+        if wide:
+            r2 = (rect[2], 0.0, W - rect[2], H) if side == "left" else (0.0, 0.0, W - rect[2], H)
+            s2 = "right" if side == "left" else "left"
+        else:
+            r2 = (0.0, rect[3], W, H - rect[3]) if side == "top" else (0.0, 0.0, W, H - rect[3])
+            s2 = "bottom" if side == "top" else "top"
+        P2 = Placed()
+        if place_photo_panel(ctx, P2, pics[0], r2, s2):
+            for k, v in P2.props.items():
+                P.set(k, **v)
+            P.vis.update(P2.vis)
+            P.panels = [P.panel, P2.panel]
+            rest = [u for u in rest if u not in pics]
+    if rest:
+        if wide:
+            ox = rect[2] if side == "left" else 0.0
+            t = stack(ctx, P, rest, (ox + m, m, W - rect[2] - 2 * m, H - 2 * m), src_align(rest), t_cap(ctx, W))
+        else:
+            oy = rect[3] if side == "top" else 0.0
+            t = stack(ctx, P, rest, (m, oy + m, W - 2 * m, H - rect[3] - 2 * m), src_align(rest), t_cap(ctx, W))
+        if t is None:
+            return None
+    P.meta = {"template": f"cardpanel-{side}-{frac}", "t": t}
+    return P
+
+
+def src_align(units):
+    """The alignment most of the text (by ink area) had in the source."""
+    tot = {}
+    for u in units:
+        for e in u.els:
+            if e["type"] == "text":
+                a = e.get("text_align", "left")
+                tot[a] = tot.get(a, 0.0) + e["width"] * e["height"]
+    if not tot:
+        return "center"
+    a = max(tot, key=tot.get)
+    return "left" if a == "left" else "center"
+
+
+def _columns(units, k):
+    """Contiguous splits of units (reading order) into k columns, most
+    balanced first (by source area). Yields lists of columns."""
+    import itertools
+    n = len(units)
+    if k > n or k < 1:
+        return []
+    area = [max(1.0, (u.bbox[2] - u.bbox[0]) * (u.bbox[3] - u.bbox[1])) for u in units]
+    out = []
+    for cuts in itertools.combinations(range(1, n), k - 1):
+        b = (0,) + cuts + (n,)
+        cols = [units[b[i]:b[i + 1]] for i in range(k)]
+        sums = [sum(area[b[i]:b[i + 1]]) for i in range(k)]
+        out.append((max(sums) / max(1.0, min(sums)), cols))
+    out.sort(key=lambda x: x[0])
+    return [c for _, c in out[:2]]
+
+
+def _stack_t(ctx, units, rect, align):
+    """Largest text scale at which units fit in rect (dry run)."""
+    return stack(ctx, Placed(), units, rect, align, t_cap(ctx, rect[2]))
+
+
+def tmpl_grid(ctx, flow, k=2, tiers=False, panel=None, align=None):
+    """Units in reading order split into k side-by-side columns sharing one
+    text scale. tiers: the headline (and subhead/logo) take a band across
+    the top first. panel: 'left'/'right' puts a croppable main picture as a
+    full-bleed band on that side. Every text keeps its own line breaks."""
+    W, H = ctx.W, ctx.H
+    flow = [u for u in flow if u.role != "aligned"]
+    align = align or src_align(flow)
+    P = Placed()
+    m = ctx.margin
+    x0, x1 = m, W - m
+    if panel:
+        flow2, lifted = _main_picture(ctx, flow)
+        heroes = [u for u in flow2 if u.role == "hero" and getattr(u, "croppable", False)]
+        if not heroes:
+            return None
+        hero = heroes[0]
+        el = hero.els[0]
+        A = el["width"] / max(1e-6, el["height"])
+        frac = min(0.45, max(0.25, A * H / W))
+        pw = W * frac
+        rect = (0.0, 0.0, pw, H) if panel == "left" else (W - pw, 0.0, pw, H)
+        if not place_photo_panel(ctx, P, hero, rect, panel):
+            return None
+        P.lifted = lifted
+        flow = [u for u in flow2 if u is not hero]
+        if panel == "left":
+            x0 = pw + m
+        else:
+            x1 = W - pw - m
+    if not flow or x1 - x0 < 0.2 * W:
+        return None
+    order = sorted(flow, key=lambda u: (u.bbox[1], u.bbox[0]))
+    y0, y1 = m, H - m
+    top = []
+    if tiers:
+        top = [u for u in order if u.role in ("headline", "subhead", "logo")]
+        rest = [u for u in order if u not in top]
+        if not top or not rest:
+            return None
+        th = 0.42 * (y1 - y0)
+        t_top = stack(ctx, P, top, (x0, y0, x1 - x0, th), align, t_cap(ctx, x1 - x0))
+        if t_top is None:
+            return None
+        y0 = y0 + th + 0.04 * H
+        order = rest
+    if len(order) < k:
+        return None
+    gut = 0.03 * W
+    best = None
+    for cols in _columns(order, k):
+        widths = [max(u.bbox[2] - u.bbox[0] for u in c) for c in cols]
+        tot = sum(widths)
+        avail = x1 - x0 - gut * (k - 1)
+        rects, x = [], x0
+        for wv in widths:
+            cw = avail * (0.5 * wv / tot + 0.5 / k)
+            rects.append((x, y0, cw, y1 - y0))
+            x += cw + gut
+        ts = [_stack_t(ctx, c, r, align) for c, r in zip(cols, rects)]
+        if any(t is None for t in ts):
+            continue
+        tc = min(ts)
+        if best is None or tc > best[0]:
+            best = (tc, cols, rects)
+    if best is None:
+        return None
+    tc, cols, rects = best
+    for c, r in zip(cols, rects):
+        # each column as large as it can be, but within 1.3x of the tightest one
+        tk = _stack_t(ctx, c, r, align) or tc
+        if stack(ctx, P, c, r, align, min(tk, 1.3 * tc)) is None:
+            return None
+    P.meta = {"template": f"grid-{k}" + ("-tiers" if tiers else "") + (f"-panel-{panel}" if panel else ""),
+              "t": tc}
+    return P
+
+
+# ---------------------------------------------------------------------------
+# The same design, rescaled. Every candidate above rebuilds the layout from the
+# inferred units, so a wrong grouping (a ruled grid torn into pieces) becomes a
+# wrong layout. This one keeps the source's own geometry, transformed as a
+# whole: the design the organizers expect to see, and the one a re-layout has
+# to clearly beat.
+#   center  the design scaled uniformly to fit, centred; the background fills
+#   pinned  each unit keeps to its nearest edge (or the centre line) at its
+#           scaled distance from it: corners stay corners
+#   spread  each unit at the same uniform scale, moved to the same relative
+#           place on the new canvas (uses the room when the shape changes a lot)
+
+SAME_ROLES_SKIP = {"bg", "border"}     # laid out by finalize (cover, edge-hugging)
+
+
+def _uels(u):
+    """A unit's elements, including those of its members (a badge row)."""
+    return u.els or [e for m in getattr(u, "members", []) for e in m.els]
+
+
+def tmpl_same(ctx, model, mode="center"):
+    from .analyze import norm_rot
+    W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
+    s = min(W / Ws, H / Hs)
+    ox, oy = (W - Ws * s) / 2, (H - Hs * s) / 2
+    P = Placed()
+    units = [u for u in model["units"] if u.role not in SAME_ROLES_SKIP]
+    blocks = _same_blocks(units, Ws, Hs) if mode != "center" else {id(u): [u] for u in units}
+    # a picture covering most of the canvas with a slim inset (a photo in a
+    # border) is the backdrop: it fills the new canvas at the same inset,
+    # cropped, and everything set on it keeps its place relative to the canvas
+    if mode != "center":
+        for u in units:
+            e = _uels(u)[0]
+            if len(_uels(u)) != 1 or e["type"] != "image" or abs(norm_rot(e.get("rotation", 0) or 0)) > 1:
+                continue
+            l, t = e["x"], e["y"]
+            r, b = Ws - e["x"] - e["width"], Hs - e["y"] - e["height"]
+            if e["width"] * e["height"] >= 0.6 * Ws * Hs and max(l, t, r, b) <= 0.08 * min(Ws, Hs) \
+                    and min(l, t, r, b) >= -0.02 * min(Ws, Hs):
+                k = min(W, H) / min(Ws, Hs)
+                x, y = l * k, t * k
+                w, h = W - (l + r) * k, H - (t + b) * k
+                P.set(e["id"], x=x, y=y, width=w, height=h, fit="cover")
+                P.vis[e["id"]] = (x, y, x + w, y + h)
+                units = [v for v in units if v is not u]
+                break
+    for u in units:
+        # a unit moves with its block: pieces set close together in the source
+        # (a ruled grid, a photo and its caption) move as one
+        blk = [e for v in blocks[id(u)] for e in _uels(v)]
+        xs = [e["x"] for e in blk] + [e["x"] + e["width"] for e in blk]
+        ys = [e["y"] for e in blk] + [e["y"] + e["height"] for e in blk]
+        ux, uy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+        if mode == "pinned":
+            # per axis: a block near an edge keeps to it (its margin scaled);
+            # anywhere else it keeps its offset from the centre line, so pieces
+            # aligned in the source stay aligned; a block spanning the axis
+            # lets each of its units do the same on their own
+
+            def pin(lo, hi, size, new):
+                near = 0.12 * size          # a designer's margin: up to about an eighth
+                a, b = lo, size - hi
+                if a <= near and b <= near:
+                    return None
+                if a <= near:
+                    return a * s + (hi - lo) * s / 2
+                if b <= near:
+                    return new - b * s - (hi - lo) * s / 2
+                return new / 2 + ((lo + hi) / 2 - size / 2) * s
+
+            def sides(k):
+                """The block split at its widest gap along axis k: (this unit's
+                part, the other part), each as (lo, hi); other is None if no gap."""
+                spans = sorted(((min(e["x" if k == 0 else "y"] for e in _uels(v)),
+                                 max(e["x" if k == 0 else "y"] + e["width" if k == 0 else "height"] for e in _uels(v)))
+                                for v in blocks[id(u)]))
+                best, cut, reach = 0.0, None, spans[0][1]
+                for lo_, hi_ in spans[1:]:
+                    if lo_ - reach > best:
+                        best, cut = lo_ - reach, lo_
+                    reach = max(reach, hi_)
+                if cut is None:
+                    return (spans[0][0], max(t[1] for t in spans)), None
+                me = min(e["x" if k == 0 else "y"] for e in _uels(u)) >= cut
+                mine = [t for t in spans if (t[0] >= cut) == me]
+                other = [t for t in spans if (t[0] >= cut) != me]
+                return (min(t[0] for t in mine), max(t[1] for t in mine)), \
+                    (min(t[0] for t in other), max(t[1] for t in other))
+
+            def axis(blo, bhi, k, size, new):
+                c = pin(blo, bhi, size, new)
+                if c is not None:
+                    return c - (blo + bhi) / 2 * s
+                (lo_, hi_), other = sides(k)
+                if other is None:
+                    c = new / 2 + ((lo_ + hi_) / 2 - size / 2) * s
+                    return c - (lo_ + hi_) / 2 * s
+                # the part nearer its edge anchors there; the other keeps its
+                # source gap to it, so spare room goes to the outer margin
+                def margin(t):
+                    return max(0.0, min(t[0], size - t[1]))      # a box bleeding past the edge is at it
+                if abs(margin((lo_, hi_)) - margin(other)) <= 0.03 * size:
+                    # a tie: the picture holds its edge and the copy follows it
+                    pic_side = _has_picture(blocks[id(u)], k, (lo_, hi_), Ws, Hs)
+                    anchor = (lo_, hi_) if pic_side else other
+                else:
+                    anchor = (lo_, hi_) if margin((lo_, hi_)) <= margin(other) else other
+                at_start = anchor[0] <= size - anchor[1]
+                a_off = (anchor[0] * s) if at_start else (new - (size - anchor[0]) * s)
+                # anchor's own shift; everything in the block shares it
+                return a_off - anchor[0] * s
+            dx = axis(min(xs), max(xs), 0, Ws, W)
+            dy = axis(min(ys), max(ys), 1, Hs, H)
+        elif mode == "spread":
+            # the unit's centre keeps its relative place; its extent stays inside
+            uw, uh = (max(xs) - min(xs)) * s, (max(ys) - min(ys)) * s
+            cx = min(max(ux / Ws * W, uw / 2), W - uw / 2)
+            cy = min(max(uy / Hs * H, uh / 2), H - uh / 2)
+            dx, dy = cx - ux * s, cy - uy * s
+        else:
+            dx, dy = ox, oy
+        for e in _uels(u):
+            x, y, w, h = dx + e["x"] * s, dy + e["y"] * s, e["width"] * s, e["height"] * s
+            if e["type"] == "text":
+                fs = max(1, int(e["font_size"] * s))          # never larger: keeps the designed lines
+                P.set(e["id"], x=x, y=y, width=w, height=h, font_size=fs, content=e["content"])
+                if abs(norm_rot(e.get("rotation", 0) or 0)) > 1:
+                    P.vis[e["id"]] = _rot_box(x, y, w, h, e.get("rotation", 0))
+                else:
+                    m = tf.measure(e, fs, w)
+                    P.vis[e["id"]] = tf.visual_box(e, x, y, w, fs, m)
+            else:
+                # what ran to a canvas edge in the source still runs to it: no
+                # empty band appears beside a photo or a bar. A picture is
+                # cropped to its new box (fit=cover), never stretched.
+                tol = 0.02 * min(Ws, Hs)
+                ex0, ey0 = e["x"] <= tol, e["y"] <= tol
+                ex1, ey1 = e["x"] + e["width"] >= Ws - tol, e["y"] + e["height"] >= Hs - tol
+                from .analyze import _fills_box
+                # only what fills its box (a photo, a flat band) stretches to the
+                # edge; a shape (a circle bleeding off the canvas) keeps its form
+                info_ = saliency.analyze(e.get("asset_id") or "") if e["type"] == "image" else None
+                tint = info_ is not None and info_.get("alpha_std", 1.0) < 0.05     # uniform see-through layer
+                if abs(norm_rot(e.get("rotation", 0) or 0)) <= 1 and (ex0 or ey0 or ex1 or ey1) and (_fills_box(e) or tint):
+                    # a surface spanning one axis keeps its share of the other
+                    # (a photo filling the height and two thirds of the width
+                    # still fills two thirds), anchored to the edge it touches
+                    if mode != "center" and ey0 and ey1 and not (ex0 and ex1):
+                        nw = max(w, e["width"] / Ws * W)
+                        x = x if ex0 else (W - nw if ex1 else x - (nw - w) / 2)
+                        w = nw
+                    if mode != "center" and ex0 and ex1 and not (ey0 and ey1):
+                        nh = max(h, e["height"] / Hs * H)
+                        y = y if ey0 else (H - nh if ey1 else y - (nh - h) / 2)
+                        h = nh
+                    x1, y1 = (W if ex1 else x + w), (H if ey1 else y + h)
+                    x, y = (min(x, 0.0) if ex0 else x), (min(y, 0.0) if ey0 else y)
+                    src_aspect = e["width"] / max(1e-6, e["height"])
+                    if e["type"] == "image" and abs((x1 - x) / max(1e-6, y1 - y) - src_aspect) > 0.01 * src_aspect:
+                        # its box changes shape: crop to the canvas side it touches
+                        x, y = (0.0 if ex0 else x), (0.0 if ey0 else y)
+                        P.set(e["id"], fit="cover")
+                    w, h = x1 - x, y1 - y
+                P.set(e["id"], x=x, y=y, width=w, height=h)
+                if abs(norm_rot(e.get("rotation", 0) or 0)) > 1:
+                    P.vis[e["id"]] = _rot_box(x, y, w, h, e.get("rotation", 0))
+                else:
+                    f = img_vis_frac(e) if e["type"] == "image" else (0.0, 0.0, 1.0, 1.0)
+                    P.vis[e["id"]] = (x + f[0] * w, y + f[1] * h, x + f[2] * w, y + f[3] * h)
+    _cover_tilted(P, model, ctx.W / ctx.Ws, ctx.H / ctx.Hs, ctx.Ws, ctx.Hs, ctx.W, ctx.H)
+    P.same = True
+    P.meta = {"template": f"same-{mode}", "t": s / ctx.t_star if ctx.t_star else 1.0}
+    return P
+
+
+def _same_blocks(units, Ws, Hs):
+    """{id(unit): units of its block}. Units within a small gap of each other
+    in the source form a block; a unit spanning the canvas (touching two or
+    more edges: a photo, a band) is a surface, not a member, and stays alone."""
+    from .analyze import _box
+    tol, gap = 0.02 * min(Ws, Hs), 0.07 * min(Ws, Hs)
+
+    def bb(u):
+        bs = [_box(e) for e in _uels(u)]
+        return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+    boxes = {id(u): bb(u) for u in units}
+
+    def surface(u):
+        b = boxes[id(u)]
+        return (b[0] <= tol) + (b[1] <= tol) + (b[2] >= Ws - tol) + (b[3] >= Hs - tol) >= 2
+    parent = {id(u): id(u) for u in units}
+
+    def find(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+    # decoration moves on its own: a ring behind a quote is not part of it
+    members = [u for u in units if not surface(u) and u.role not in ("deco", "minor")]
+    for i, a in enumerate(members):
+        for b in members[i + 1:]:
+            A, B = boxes[id(a)], boxes[id(b)]
+            dx = max(0.0, max(A[0], B[0]) - min(A[2], B[2]))
+            dy = max(0.0, max(A[1], B[1]) - min(A[3], B[3]))
+            if max(dx, dy) <= gap:
+                parent[find(id(a))] = find(id(b))
+    out = {}
+    for u in units:
+        out.setdefault(find(id(u)), []).append(u)
+    return {id(u): out[find(id(u))] for u in units}
+
+
+def _has_picture(units, k, span, Ws, Hs):
+    """Whether the part of a block within span (along axis k) holds a sizeable picture."""
+    lo, hi = span
+    for v in units:
+        for e in _uels(v):
+            p0 = e["x"] if k == 0 else e["y"]
+            p1 = p0 + (e["width"] if k == 0 else e["height"])
+            if e["type"] == "image" and lo - 1 <= p0 and p1 <= hi + 1 and e["width"] * e["height"] > 0.1 * Ws * Hs:
+                return True
+    return False
+
+
+def _rot_box(x, y, w, h, rot):
+    from .blocks import rot_bounds
+    return rot_bounds(x, y, w, h, rot)
+
+
+# ---------------------------------------------------------------------------
+# The whole design turned a quarter turn: for a tall design made wide (or the
+# reverse), every picture, panel and shape is rotated with the design, so the
+# composition stays exactly as the designer made it, only on its side. The
+# words alone are set upright again, each group of them in the turned box of
+# whatever held it (a copy panel, a badge), in its reading order.
+
+_UPRIGHT_CACHE: dict = {}
+
+
+def _keeps_upright(e):
+    """A photograph with a natural up: a face is found in it, or CLIP rates it
+    as people, hands, a building, a room or a landscape (p >= 0.15)."""
+    if e["type"] != "image":
+        return False
+    info = saliency.analyze(e.get("asset_id") or "")
+    if info is None or info["opaque_frac"] <= 0.6 or (info.get("plain", 1) >= 0.85 and info["busyness"] <= 0.03):
+        return False                       # a shape, a drawing, a flat panel
+    if info.get("faces"):
+        return True
+    aid = e.get("asset_id") or ""
+    if aid not in _UPRIGHT_CACHE:
+        from PIL import Image
+        from . import vision
+        p = saliency.asset_file(aid)
+        try:
+            _UPRIGHT_CACHE[aid] = vision.needs_upright(Image.open(p)) if p else None
+        except Exception:
+            _UPRIGHT_CACHE[aid] = None
+    pu = _UPRIGHT_CACHE[aid]
+    return pu is None or pu >= 0.15         # when in doubt (or no model) it stays upright
+
+
+def tmpl_turn(ctx, model):
+    from .analyze import Unit, _box, norm_rot
+    W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
+    if (Hs > Ws) == (H > W) or min(W, H) == 0:
+        return None
+    ccw = Hs > Ws          # tall -> wide: turn counter-clockwise (top goes left)
+    # the turned design fills the new canvas: its length along the new width,
+    # its breadth along the new height (pictures are cropped, never distorted)
+    # the design's content (not its outer margin) is mapped edge to edge
+    allb = [_box(e) for u in model["units"] if u.role not in ("bg", "border") for e in _uels(u)]
+    cx0, cy0 = max(0.0, min(b[0] for b in allb)), max(0.0, min(b[1] for b in allb))
+    cx1, cy1 = min(Ws, max(b[2] for b in allb)), min(Hs, max(b[3] for b in allb))
+    m = 0.03 * min(W, H)
+    sx = (W - 2 * m) / max(1e-6, cy1 - cy0)
+    sy = (H - 2 * m) / max(1e-6, cx1 - cx0)
+    s = min(sx, sy)
+
+    def turn_pt(x, y):
+        return (m + (y - cy0) * sx, m + (cx1 - x) * sy) if ccw else (m + (cy1 - y) * sx, m + (x - cx0) * sy)
+
+    def turn_box(b):
+        a, c = turn_pt(b[0], b[1]), turn_pt(b[2], b[3])
+        return (min(a[0], c[0]), min(a[1], c[1]), max(a[0], c[0]), max(a[1], c[1]))
+    P = Placed()
+    els = [e for u in model["units"] if u.role not in ("bg", "border") for e in _uels(u)]
+    texts = [e for e in els if e["type"] == "text"]
+    others = [e for e in els if e["type"] != "text"]
+    # inlay bars: a thin rule or separator set between two lines of copy keeps
+    # that relation (and its own orientation) instead of turning with the design
+    def _thin(e):
+        w_, h_ = e["width"], e["height"]
+        return min(w_, h_) < 0.03 * min(Ws, Hs) and max(w_, h_) > 4 * max(1e-6, min(w_, h_)) \
+            and max(w_, h_) < 0.8 * max(Ws, Hs)
+    inlays = {}
+    for e in others:
+        if not _thin(e):
+            continue
+        b = _box(e)
+        cx_ = (b[0] + b[2]) / 2
+        over = [t for t in texts if _box(t)[3] <= b[1] + 2 and _box(t)[0] - 2 <= cx_ <= _box(t)[2] + 2
+                or _box(t)[3] <= b[1] + 2 and _box(t)[0] <= b[2] and b[0] <= _box(t)[2]]
+        under = [t for t in texts if _box(t)[1] >= b[3] - 2 and _box(t)[0] <= b[2] and b[0] <= _box(t)[2]]
+        a_ = max(over, key=lambda t: _box(t)[3]) if over else None
+        c_ = min(under, key=lambda t: _box(t)[1]) if under else None
+        near = 0.05 * max(Ws, Hs)
+        if a_ is not None and b[1] - _box(a_)[3] > near:
+            a_ = None
+        if c_ is not None and _box(c_)[1] - b[3] > near:
+            c_ = None
+        if a_ is not None or c_ is not None:
+            # between two lines, under one (an underline) or over one (an overline)
+            inlays[e["id"]] = (a_["id"] if a_ else None, c_["id"] if c_ else None)
+    others = [e for e in others if e["id"] not in inlays]
+    for e in others:
+        cx, cy = turn_pt(e["x"] + e["width"] / 2, e["y"] + e["height"] / 2)
+        # before the turn the box's width runs along the new height
+        w, h = e["width"] * sy, e["height"] * sx
+        r = (float(e.get("rotation", 0) or 0) + (-90 if ccw else 90)) % 360
+        r = r - 360 if r > 180 else r
+        if e["width"] * e["height"] >= 0.08 * Ws * Hs and _keeps_upright(e) \
+                and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1:
+            # people, faces, buildings, rooms, landscapes have an up: the photo
+            # stays upright, cropped into the area its turned box covers
+            tb = turn_box(_box(e))
+            info_ = saliency.analyze(e.get("asset_id") or "")
+            iw_, ih_ = e["width"], e["height"]      # the picture as the design showed it
+            tw_, th_ = tb[2] - tb[0], tb[3] - tb[1]
+            k_ = max(tw_ / iw_, th_ / ih_)
+            bw_, bh_ = iw_ * k_, ih_ * k_
+            # the crop aims at the eyes (or the subject), as the background crop does
+            fx_, fy_ = (sum(q[0] for q in info_["eyes"]) / len(info_["eyes"]),
+                        sum(q[1] for q in info_["eyes"]) / len(info_["eyes"])) if info_.get("eyes") \
+                else info_["centroid"]
+            x_ = min(tb[0], max(tb[2] - bw_, tb[0] + tw_ / 2 - fx_ * bw_))
+            y_ = min(tb[1], max(tb[3] - bh_, tb[1] + th_ / 3 - fy_ * bh_))
+            # the subject (the faces, else the salient box) must fit the crop;
+            # if not, the whole picture is shown upright in its slot instead
+            sb_ = info_["sal_box"]
+            if info_.get("faces"):
+                fs_ = info_["faces"]
+                sb_ = (min(f[0] for f in fs_), min(f[1] for f in fs_), max(f[2] for f in fs_), max(f[3] for f in fs_))
+            wx0, wy0 = (tb[0] - x_) / bw_, (tb[1] - y_) / bh_
+            wx1, wy1 = wx0 + tw_ / bw_, wy0 + th_ / bh_
+            fits_ = sb_[0] >= wx0 - 0.03 and sb_[2] <= wx1 + 0.03 and sb_[1] >= wy0 - 0.03 and sb_[3] <= wy1 + 0.03
+            if not fits_:
+                k_ = min(tw_ / iw_, th_ / ih_)
+                bw_, bh_ = iw_ * k_, ih_ * k_
+                x_, y_ = tb[0] + (tw_ - bw_) / 2, tb[1] + (th_ - bh_) / 2
+                P.set(e["id"], x=x_, y=y_, width=bw_, height=bh_, rotation=0, fit="fill")
+                P.vis[e["id"]] = (x_, y_, x_ + bw_, y_ + bh_)
+                continue
+            P.set(e["id"], x=x_, y=y_, width=bw_, height=bh_, rotation=0, fit="fill")
+            P.vis[e["id"]] = tb
+            P.bleed = getattr(P, "bleed", set()) | {e["id"]}     # cropped by the canvas edge, like a backdrop
+            continue
+        from .analyze import _opaque_frac
+        if _opaque_frac(e) < 0.5:
+            # a shape or drawing keeps its proportions: one scale on both axes
+            w, h = e["width"] * s, e["height"] * s
+        P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h, rotation=r)
+        if e["type"] == "image" and abs(w / max(1e-6, h) - e["width"] / max(1e-6, e["height"])) > 0.02 * e["width"] / max(1e-6, e["height"]):
+            P.set(e["id"], fit="cover")      # a flat panel is cropped, never stretched
+        fw, fh = (h, w) if abs(abs(r) - 90) < 45 else (w, h)
+        P.vis[e["id"]] = (cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2)
+    # each text belongs to the smallest solid piece under it (its panel, its badge)
+    def holder(t):
+        tb = _box(t)
+        cx, cy = (tb[0] + tb[2]) / 2, (tb[1] + tb[3]) / 2
+        cands = [o for o in others if o.get("z_index", 0) < t.get("z_index", 0)
+                 and _box(o)[0] <= cx <= _box(o)[2] and _box(o)[1] <= cy <= _box(o)[3]
+                 and o["width"] * o["height"] < 0.8 * Ws * Hs]
+        return min(cands, key=lambda o: o["width"] * o["height"])["id"] if cands else None
+    groups = {}
+    for t in texts:
+        groups.setdefault(holder(t), []).append(t)
+    troles = model.get("troles", {})
+    for hid, ts in groups.items():
+        if hid is not None and not isinstance(hid, tuple):
+            hb = P.vis[hid]                 # the holder as actually drawn
+            he = model["els"][hid]
+            if he["type"] == "image" and (saliency.analyze(he.get("asset_id") or "") or {}).get("opaque_frac", 0) >= 0.5:
+                # its inner area as shaped (inside an arch's curve, a circle's round)
+                hr = norm_rot(P.props[hid].get("rotation", 0) or 0)
+                qt = 0 if abs(hr) < 45 else (1 if hr < 0 else -1)
+                ir = saliency.inner_rect(he.get("asset_id") or "", qt)
+                if ir is not None:
+                    w0, h0 = hb[2] - hb[0], hb[3] - hb[1]
+                    hb = (hb[0] + ir[0] * w0, hb[1] + ir[1] * h0, hb[0] + ir[2] * w0, hb[1] + ir[3] * h0)
+            pad = 0.08 * min(hb[2] - hb[0], hb[3] - hb[1])
+            rect = (hb[0] + pad, hb[1] + pad, hb[2] - hb[0] - 2 * pad, hb[3] - hb[1] - 2 * pad)
+        else:
+            bs = [turn_box(_box(t)) for t in ts]
+            rect = (min(b[0] for b in bs), min(b[1] for b in bs),
+                    max(b[2] for b in bs) - min(b[0] for b in bs), max(b[3] for b in bs) - min(b[1] for b in bs))
+        ts = sorted(ts, key=lambda t: (_box(t)[1], _box(t)[0]))
+        units = [Unit(t["id"], troles.get(t["id"], "body"), "text", [dict(t, rotation=0)]) for t in ts]
+        sub = Placed()
+        al = "left" if all(t.get("text_align", "left") == "left" for t in ts) else "center"
+        cols = [units]
+        if rect[2] > 2.5 * rect[3] and len(units) >= 3:
+            # a wide, short panel: the larger type in one column, the rest beside it
+            big = max(t["font_size"] for t in ts)
+            head = [u for u, t in zip(units, ts) if t["font_size"] >= 0.6 * big]
+            rest = [u for u in units if u not in head]
+            if head and rest:
+                cols = [head, rest]
+        if len(cols) == 2:
+            # the headline words, stacked in the narrow original, now run in one
+            # row across the wide panel at the largest size that fits
+            head, rest = cols
+            hw = 0.62 * rect[2]
+            hts = [u.els[0] for u in head]
+            line = [dict(t, content=" ".join(str(t["content"]).split())) for t in hts]
+            best = None
+            for nrows in range(1, min(3, len(line)) + 1):
+                # consecutive words per row, as even as their widths allow
+                ws1 = [tf.single_line_width(t, 100) for t in line]
+                tot = sum(ws1)
+                rows, cur, acc = [], [], 0.0
+                for t, w in zip(line, ws1):
+                    if cur and acc + w / 2 > tot * (len(rows) + 1) / nrows and len(rows) < nrows - 1:
+                        rows.append(cur)
+                        cur = []
+                    cur.append(t)
+                    acc += w
+                rows.append(cur)
+                fs = int(0.85 * rect[3] / (1.15 * len(rows)))
+                while fs > 6:
+                    widest = max(sum(tf.single_line_width(t, fs) for t in r) + 0.5 * fs * (len(r) - 1) for r in rows)
+                    if widest <= hw:
+                        break
+                    fs -= 1
+                if best is None or fs > best[0]:
+                    best = (fs, rows)
+            fs, rows = best
+            asc, cap, desc = tf.metrics(line[0])
+            lh = 1.15 * fs
+            y = rect[1] + (rect[3] - lh * len(rows)) / 2
+            for r in rows:
+                x = rect[0]
+                for t in r:
+                    w = tf.single_line_width(t, fs)
+                    sub.set(t["id"], x=x, y=y, width=w + 2, height=fs * 1.3, font_size=fs,
+                            content=t["content"], text_align="left")
+                    sub.vis[t["id"]] = (x, y + (asc - cap) * fs, x + w, y + asc * fs)
+                    x += w + 0.5 * fs
+                y += lh
+            used = max(sum(tf.single_line_width(t, fs) for t in r) + 0.5 * fs * (len(r) - 1) for r in rows)
+            gx = rect[0] + used + 0.06 * rect[2]
+            colw = rect[0] + rect[2] - gx
+            # the details: one size for all of them, the largest at which their
+            # re-flowed lines fit the rest of the panel, never above the headline's
+            dts = [dict(u.els[0], content=" ".join(str(u.els[0]["content"]).split())) for u in rest]
+            f2 = min(fs - 1, int(rect[3] / (1.3 * len(dts))))
+            while f2 > 5:
+                ms = [tf.measure(t, f2, colw) for t in dts]
+                if all(m_["word_w"] <= colw for m_ in ms) and \
+                        sum(m_["height"] for m_ in ms) + 0.3 * f2 * (len(ms) - 1) <= 0.96 * rect[3]:
+                    break
+                f2 -= 1
+            ms = [tf.measure(t, f2, colw) for t in dts]
+            th = sum(m_["height"] for m_ in ms) + 0.3 * f2 * (len(ms) - 1)
+            y = rect[1] + (rect[3] - th) / 2
+            for t, m_ in zip(dts, ms):
+                sub.set(t["id"], x=gx, y=y, width=colw, height=m_["height"], font_size=f2,
+                        content=t["content"], text_align="left")
+                sub.vis[t["id"]] = tf.visual_box(dict(t, text_align="left"), gx, y, colw, f2, m_)
+                y += m_["height"] + 0.3 * f2
+        elif stack(ctx, sub, units, rect, al, t_cap(ctx, rect[2]) * 2) is None:
+            return None
+        for kk, v in sub.props.items():
+            P.set(kk, rotation=0, **v)
+        P.vis.update(sub.vis)
+    for bid, (aid, cid) in inlays.items():
+        e = model["els"][bid]
+        va, vc = P.vis.get(aid) if aid else None, P.vis.get(cid) if cid else None
+        if va is None and vc is None:
+            return None
+        th = max(1.0, min(e["width"], e["height"]) * s)
+        if va is None or vc is None:
+            # attached to one line: under it (or over it), its length relative to it
+            ref, rid = (va, aid) if va is not None else (vc, cid)
+            tr = model["els"][rid]
+            rel = min(1.0, max(e["width"], e["height"]) / max(1e-6, tr["width"]))
+            ln = max(4.0, rel * (ref[2] - ref[0]))
+            gap = max(2.0, 0.12 * (ref[3] - ref[1]))
+            y = ref[3] + gap if va is not None else ref[1] - gap - th
+            al = tr.get("text_align", "left")
+            x = ref[0] if al == "left" else (ref[2] - ln if al == "right" else (ref[0] + ref[2]) / 2 - ln / 2)
+            P.set(bid, x=x, y=y, width=ln, height=th, rotation=0, fit="contain")
+            P.vis[bid] = (x, y, x + ln, y + th)
+            continue
+        ta, tc = model["els"][aid], model["els"][cid]
+        # its length relative to the copy above it, centred or aligned as it was
+        rel = e["width"] / max(1e-6, ta["width"]) if e["width"] >= e["height"] else 1.0
+        cw_ = max(va[2] - va[0], vc[2] - vc[0])
+        ln = min(cw_, max(4.0, rel * (va[2] - va[0])))
+        th = max(1.0, min(e["width"], e["height"]) * s)
+        al = ta.get("text_align", "left")
+        if vc[1] - va[3] >= th + 2:
+            y = (va[3] + vc[1]) / 2 - th / 2          # still between the two lines
+            x0, x1 = min(va[0], vc[0]), max(va[2], vc[2])
+        else:
+            # the lines now sit side by side: it stays under the line it followed
+            y = va[3] + max(2.0, 0.12 * (va[3] - va[1]))
+            x0, x1 = va[0], va[2]
+            ln = min(ln, x1 - x0)
+        x = x0 if al == "left" else (x1 - ln if al == "right" else (x0 + x1) / 2 - ln / 2)
+        horiz = e["width"] >= e["height"]
+        P.set(bid, x=x, y=y, width=ln if horiz else th, height=th if horiz else ln, rotation=0, fit="contain")
+        P.vis[bid] = (x, y, x + (ln if horiz else th), y + (th if horiz else ln))
+
+    # copy may sit on its holder, never under a picture drawn over it
+    for t in texts:
+        v = P.vis.get(t["id"])
+        if v is None:
+            continue
+        ta = max(1.0, (v[2] - v[0]) * (v[3] - v[1]))
+        for o in others:
+            ov = P.vis.get(o["id"])
+            if ov is None or o.get("z_index", 0) <= t.get("z_index", 0):
+                continue
+            ix = max(0.0, min(v[2], ov[2]) - max(v[0], ov[0])) * max(0.0, min(v[3], ov[3]) - max(v[1], ov[1]))
+            if ix > 0.2 * ta:
+                return None
+    P.same = True
+    P.meta = {"template": "turn", "t": s / ctx.t_star if ctx.t_star else 1.0}
+    return P
+
+
+# ---------------------------------------------------------------------------
+# The same design, filling the new canvas. Scaling a design uniformly leaves
+# empty bands when the shape changes. Here every large solid piece (a photo, a
+# panel) keeps its share of the canvas on both axes, cropped and never
+# stretched; each text keeps its relative place, its box widened or narrowed
+# with the canvas so it re-wraps; and all type grows by one factor, as far as
+# it can without texts meeting, leaving the canvas or leaving their panel.
+
+def _fill_rect(e, sx, sy):
+    return (e["x"] * sx, e["y"] * sy, (e["x"] + e["width"]) * sx, (e["y"] + e["height"]) * sy)
+
+
+def _tilted_cover(e, sx, sy, Ws, Hs):
+    """A tilted photo that ran past the canvas never showed its slanted edges.
+    Returns its new size and centre: at its own proportions, large enough to
+    still cover everything it covered, or None if it stayed inside the canvas."""
+    from .analyze import norm_rot
+    if abs(norm_rot(e.get("rotation", 0) or 0)) % 90 <= 1 or not _is_photo(e):
+        return None
+    t = math.radians(e["rotation"])
+    c, n = math.cos(t), math.sin(t)
+    cx, cy = e["x"] + e["width"] / 2, e["y"] + e["height"] / 2
+    q = [(cx + a * c - b * n, cy + a * n + b * c)
+         for a in (-e["width"] / 2, e["width"] / 2) for b in (-e["height"] / 2, e["height"] / 2)]
+    if all(0 <= x <= Ws and 0 <= y <= Hs for x, y in q):
+        return None
+    x0, y0 = max(0.0, min(x for x, _ in q)) * sx, max(0.0, min(y for _, y in q)) * sy
+    x1, y1 = min(Ws, max(x for x, _ in q)) * sx, min(Hs, max(y for _, y in q)) * sy
+    nx, ny = (x0 + x1) / 2, (y0 + y1) / 2        # about what it showed: the least zoom
+    W, H = Ws * sx, Hs * sy
+    eyes = (saliency.analyze(e.get("asset_id") or "") or {}).get("eyes") or []
+    pad = 0.08 * min(W, H)
+    for _ in range(12):
+        k = 0.0
+        for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+            lx, ly = (x - nx) * c + (y - ny) * n, -(x - nx) * n + (y - ny) * c
+            k = max(k, 2 * abs(lx) / e["width"], 2 * abs(ly) / e["height"])
+        # eyes first: the picture slides until they are on the canvas
+        dx = dy = 0.0
+        for q in eyes:
+            a, b = (q[0] - 0.5) * e["width"] * k, (q[1] - 0.5) * e["height"] * k
+            ex, ey = nx + a * c - b * n, ny + a * n + b * c
+            dx = max(dx, pad - ex) if ex < pad else min(dx, W - pad - ex) if ex > W - pad else dx
+            dy = max(dy, pad - ey) if ey < pad else min(dy, H - pad - ey) if ey > H - pad else dy
+        if abs(dx) < 0.5 and abs(dy) < 0.5:
+            break
+        nx, ny = nx + dx, ny + dy
+    return e["width"] * k, e["height"] * k, nx, ny, (x0, y0, x1, y1)
+
+
+def _cover_tilted(P, model, sx, sy, Ws, Hs, W, H):
+    # only a backdrop (the bottom layer, large): a tilted photo that is a piece
+    # of the layout keeps its size
+    low = min(e.get("z_index", 0) for e in model["els"].values())
+    for e in [e for e in model["els"].values() if e.get("z_index", 0) == low and e["width"] * e["height"] >= 0.3 * Ws * Hs]:
+        tilt = _tilted_cover(e, sx, sy, Ws, Hs) if e["type"] == "image" else None
+        if tilt:
+            w, h, cx, cy, shown = tilt
+            P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h, rotation=e["rotation"])
+            P.bleed = getattr(P, "bleed", set()) | {e["id"]}
+            P.vis[e["id"]] = shown
+
+
+def _overlap_share(a, b):
+    """The share of box a that lies inside box b."""
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    return max(0.0, w) * max(0.0, h) / max(1e-6, (a[2] - a[0]) * (a[3] - a[1]))
+
+
+def _inside(a, b):
+    m = 0.02 * max(b[2] - b[0], b[3] - b[1])        # a box may stand a hair past the shape
+    return a[0] >= b[0] - m and a[1] >= b[1] - m and a[2] <= b[2] + m and a[3] <= b[3] + m
+
+
+def _is_surface(e, Ws, Hs):
+    from .analyze import _fills_box
+    return e["type"] != "text" and _fills_box(e) and e["width"] * e["height"] >= 0.08 * Ws * Hs \
+        and min(e["width"], e["height"]) >= 0.05 * min(Ws, Hs)
+
+
+def _copy_centre(e):
+    m = tf.measure(e, max(1, int(e["font_size"])), e["width"])
+    return e["x"] + e["width"] / 2, e["y"] + m["height"] / 2
+
+
+def _set_texts(texts, k, sx, sy, W, H, holders, keep_clear=(), framed=None):
+    """Lay every text out at type scale k. Returns {id: (props, vis)} or None.
+    keep_clear: (box, text ids allowed on it) that no other text may touch.
+    framed: {id: place} for copy inside an outline shape: it keeps its lines and
+    grows with the shape, as one piece with it."""
+    framed = framed or {}
+    out = {}
+    for e in texts:
+        fs = max(1, int(e["font_size"] * k))
+        place = framed.get(e["id"])
+        w = min(W, e["width"] * (k if place else sx))
+        tracked = float(e.get("letter_spacing", 0) or 0) > 0.15 * float(e["font_size"])
+        flat = " ".join(str(tf.flow(e).get("content", e["content"])).split()) \
+            if sx > 1.3 * sy and not tracked and not place else tf.flow(e)["content"]       # spaced-out display lines keep their breaks
+        e2 = dict(e, content=flat)
+        hr = holders.get(e["id"])
+        if hr is not None:
+            w = min(w, hr[2] - hr[0])
+        m = tf.measure(e2, fs, w)
+        if m["word_w"] > w or m["width"] > w + 1:     # tracking counts: a line never leaves its box
+            return None
+        # the copy's own centre: a box can be taller than its lines
+        cx, cy = _copy_centre(e)
+        cx, cy = place(cx, cy, k) if place else (cx * sx, cy * sy)
+        x, y = cx - w / 2, cy - m["height"] / 2
+        if hr is not None:
+            x0_, y0_ = x, y
+            x = min(max(x, hr[0]), hr[2] - w)
+            if m["height"] > hr[3] - hr[1]:
+                return None
+            y = min(max(y, hr[1]), hr[3] - m["height"])
+            if place and (abs(x - x0_) > 2 or abs(y - y0_) > 2):
+                return None                 # a locked piece does not fit: never pushed out of its lines
+        if x < 0 or y < 0 or x + w > W or y + m["height"] > H:
+            if place:
+                return None                 # too large to stay locked: the type comes down
+            x, y = min(max(x, 0.0), W - w), min(max(y, 0.0), H - m["height"])
+            if m["height"] > H:
+                return None
+        v = tf.visual_box(e2, x, y, w, fs, m)
+        out[e["id"]] = (dict(x=x, y=y, width=w, height=m["height"], font_size=fs, content=flat), v)
+    ids = list(out)
+    overlaid = set()
+    if framed:
+        drawn = {e["id"]: (e["x"], e["y"], e["x"] + e["width"], e["y"] + tf.measure(e, max(1, int(e["font_size"])), e["width"])["height"])
+                 for e in texts}
+        overlaid = {(a, b) for a in drawn for b in drawn if a != b
+                    and min(drawn[a][2], drawn[b][2]) > max(drawn[a][0], drawn[b][0])
+                    and min(drawn[a][3], drawn[b][3]) > max(drawn[a][1], drawn[b][1])}
+    for i, a in enumerate(ids):
+        va = out[a][1]
+        for b in ids[i + 1:]:
+            vb = out[b][1]
+            if framed.get(a) is not None and framed.get(a) is framed.get(b) and (a, b) in overlaid:
+                continue                    # one piece, overlapping as the designer set them
+            if min(va[2], vb[2]) - max(va[0], vb[0]) > 0 and min(va[3], vb[3]) - max(va[1], vb[1]) > 0:
+                return None
+    for b, allowed in keep_clear:
+        for i, (_, v) in out.items():
+            if i not in allowed and min(v[2], b[2]) - max(v[0], b[0]) > 0 and min(v[3], b[3]) - max(v[1], b[1]) > 0:
+                return None
+    return out
+
+
+def _photo_place(e, r):
+    """Where a photo goes in its rect, and whether it is cropped. A crop that
+    would cut an eye, or lose more than half the picture, is refused: the photo
+    then keeps its proportions, as large as fits, centred in the rect."""
+    info = saliency.analyze(e.get("asset_id") or "")
+    a0 = e["width"] / max(1e-6, e["height"])
+    rw, rh = r[2] - r[0], r[3] - r[1]
+    a1 = rw / max(1e-6, rh)
+    if abs(a1 - a0) <= 0.01 * a0:
+        return r, False
+    keep = min(a1 / a0, a0 / a1)
+    wx, wy = (a1 / a0, 1.0) if a1 < a0 else (1.0, a0 / a1)      # the part of the picture cover shows
+    x0, y0 = (1 - wx) / 2, (1 - wy) / 2
+    eyes = (info or {}).get("eyes") or []
+    cut = any(not (x0 + 0.03 <= q[0] <= x0 + wx - 0.03 and y0 + 0.03 <= q[1] <= y0 + wy - 0.03) for q in eyes)
+    if not eyes and wy < 0.999 and _keeps_upright(e):
+        cut = True      # a person or a scene the face finder missed: its top stays
+    if not cut and keep >= 0.5:
+        return r, True
+    k = min(rw / e["width"], rh / e["height"])
+    w, h = e["width"] * k, e["height"] * k
+    cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
+    return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), False
+
+
+RIGID_FLOOR = 0.85   # whole groups stay rigid only if the type keeps this share of its size
+
+
+def tmpl_fill(ctx, model):
+    """Groups kept whole where the type can afford it; otherwise only the
+    lockups of lines on their bars stay locked."""
+    whole, lines = _fill(ctx, model, True), _fill(ctx, model, False)
+    if whole is None or (lines is not None and whole.meta["t"] < RIGID_FLOOR * lines.meta["t"]):
+        return lines
+    return whole
+
+
+def _fill(ctx, model, whole):
+    from .analyze import _box, norm_rot
+    W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
+    sx, sy = W / Ws, H / Hs
+    s = min(sx, sy)
+    P = Placed()
+    els = [e for u in model["units"] if u.role not in SAME_ROLES_SKIP for e in _uels(u)]
+    upright = [e for e in els if e["type"] == "text" and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1]
+    surfaces = [e for e in els if _is_surface(e, Ws, Hs) and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1]
+    # a large shaped panel laid over a photo is one composition with it: the
+    # poster scales as a whole, not piece by piece
+    for o in els:
+        if o["type"] == "image" and o not in surfaces and o["width"] * o["height"] >= 0.2 * Ws * Hs \
+                and not _is_photo(o) and any(_is_photo(e) and _overlap_share(_box(o), _box(e)) >= 0.05 for e in surfaces):
+            return None
+    rects = {}
+    for e in surfaces:
+        r = _fill_rect(e, sx, sy)
+        cover = True
+        if _is_photo(e):
+            r, cover = _photo_place(e, r)
+            if not cover and any(o is not e and min(_box(o)[2], _box(e)[2]) > max(_box(o)[0], _box(e)[0])
+                                 and min(_box(o)[3], _box(e)[3]) > max(_box(o)[1], _box(e)[1]) for o in surfaces):
+                return None     # a card on a photo that cannot crop: they cannot part ways
+        rects[e["id"]] = r
+        P.set(e["id"], x=r[0], y=r[1], width=r[2] - r[0], height=r[3] - r[1])
+        if cover:
+            P.set(e["id"], fit="cover")
+        P.vis[e["id"]] = r
+    _cover_tilted(P, model, sx, sy, Ws, Hs, W, H)
+    # the panel each text sat in, as it is now
+    holders = {}
+    for t in upright:
+        b = _box(t)
+        cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        hs = [o for o in surfaces if o.get("z_index", 0) < t.get("z_index", 0)
+              and o["x"] <= cx <= o["x"] + o["width"] and o["y"] <= cy <= o["y"] + o["height"]
+              and not _is_photo(o)]
+        if hs:
+            o = min(hs, key=lambda o: o["width"] * o["height"])
+            if tf.measure(t, max(1, int(t["font_size"])), t["width"])["height"] > o["height"]:
+                continue                # it overhangs its panel by design
+            r = rects[o["id"]]
+            pad = 0.04 * min(r[2] - r[0], r[3] - r[1])
+            holders[t["id"]] = (r[0] + pad, r[1] + pad, r[2] - pad, r[3] - pad)
+    on_surface = {}
+    for t in upright:
+        cx, cy = _copy_centre(t)
+        hs = [o for o in surfaces if o.get("z_index", 0) < t.get("z_index", 0) and o["width"] * o["height"] < 0.9 * Ws * Hs
+              and o["x"] <= cx <= o["x"] + o["width"] and o["y"] <= cy <= o["y"] + o["height"]]
+        if hs and t["id"] in [t["id"] for t in upright]:
+            on_surface[t["id"]] = min(hs, key=lambda o: o["width"] * o["height"])["id"]
+    # what copy must stay off: eyes and faces it did not cover in the source,
+    # and the small marks and drawings it was clear of
+    def clear_of(b):
+        return {t["id"] for t in upright if min(_box(t)[2], b[2]) - max(_box(t)[0], b[0]) > 0
+                and min(_box(t)[3], b[3]) - max(_box(t)[1], b[1]) > 0}
+    keep = []
+    for e in surfaces:
+        info = saliency.analyze(e.get("asset_id") or "") if e["type"] == "image" else None
+        if not info:
+            continue
+        r = rects[e["id"]]
+        for f in info.get("faces") or []:
+            src = (e["x"] + f[0] * e["width"], e["y"] + f[1] * e["height"],
+                   e["x"] + f[2] * e["width"], e["y"] + f[3] * e["height"])
+            now = (r[0] + f[0] * (r[2] - r[0]), r[1] + f[1] * (r[3] - r[1]),
+                   r[0] + f[2] * (r[2] - r[0]), r[1] + f[3] * (r[3] - r[1]))
+            keep.append((now, clear_of(src)))
+    def mark_box(e, k_):
+        cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
+        return (cx - e["width"] * k_ / 2, cy - e["height"] * k_ / 2, cx + e["width"] * k_ / 2, cy + e["height"] * k_ / 2)
+    marks = [e for e in els if e["type"] != "text" and e not in surfaces and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1
+             and max(e["width"], e["height"]) <= 6 * max(1e-6, min(e["width"], e["height"]))
+             and e["width"] * e["height"] < 0.3 * Ws * Hs]
+    turned = [e for e in els if e["type"] == "text" and abs(norm_rot(e.get("rotation", 0) or 0)) > 1]
+
+    def turned_box(e, k_):
+        cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
+        return _rot_box(cx - e["width"] * k_ / 2, cy - e["height"] * k_ / 2, e["width"] * k_, e["height"] * k_, e.get("rotation", 0))
+
+    # an outline shape around copy (a see-through hexagon, a thin frame) and
+    # what sits in it are one piece: they grow together about the shape's centre
+    frames = [e for e in els if e["type"] == "image" and e not in surfaces
+              and (saliency.analyze(e.get("asset_id") or "") or {"opaque_frac": 1})["opaque_frac"] < 0.9
+              and abs(norm_rot(e.get("rotation", 0) or 0)) <= 1 and e["width"] * e["height"] >= 0.08 * Ws * Hs
+              and any(_overlap_share(_box(t), _box(e)) >= 0.6 for t in upright)]
+    framed = {}
+    for f in sorted(frames, key=lambda e: -e["width"] * e["height"]):
+        fx, fy = f["x"] + f["width"] / 2, f["y"] + f["height"] / 2
+        def place(x, y, k_, fx=fx, fy=fy):
+            return fx * sx + (x - fx) * k_, fy * sy + (y - fy) * k_
+        for e in els:
+            if e is not f and e not in surfaces and _overlap_share(_box(e), _box(f)) >= 0.6:
+                framed[e["id"]] = place
+    # a design set as one centred column stays one: its pieces do not spread apart
+    column = whole and len(upright) >= 2 and sum(abs(_copy_centre(t)[0] - Ws / 2) <= 0.08 * Ws for t in upright) >= 0.7 * len(upright)
+    if column:
+        def place(x, y, k_):
+            return Ws / 2 * sx + (x - Ws / 2) * k_, Hs / 2 * sy + (y - Hs / 2) * k_
+        for e in els:
+            if e not in surfaces and e["id"] not in framed and e["width"] * e["height"] < 0.3 * Ws * Hs:
+                framed[e["id"]] = place
+    # a group the analysis found is one piece: it scales as a whole from its
+    # alignment edge, so its lines, bars and shared edges stay as designed
+    pieces = [[e for e in _uels(u) if e not in surfaces and e["id"] not in framed
+               and e["width"] * e["height"] < 0.3 * Ws * Hs]
+              for u in model["units"] if u.role not in SAME_ROLES_SKIP] if whole else []
+    if not whole:
+        for t in upright:
+            if "\n" in str(t.get("content", "")):
+                pieces.append([t] + [e for e in els if e is not t and e["type"] != "text" and e not in surfaces
+                                     and e["id"] not in framed and _overlap_share(_box(e), _box(t)) >= 0.6])
+    for ons in pieces:
+        if len(ons) < (2 if whole else 3):
+            continue
+        bs = [_box(e) for e in ons]
+        x0, y0, x1, y1 = min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs)
+        al = [t.get("text_align", "left") for t in ons if t["type"] == "text"]
+        side = max(set(al), key=al.count) if al else "center"
+        # the design's only text block, spanning most of the canvas, stays centred
+        alone = sum(1 for t in upright if t in ons) == len(upright)
+        if alone:                   # the design's one block: its decoration moves with it
+            ons += [e for e in els if e not in ons and e not in surfaces and e["id"] not in framed
+                    and e["width"] * e["height"] < 0.3 * Ws * Hs]
+        fx = (x0 + x1) / 2 if alone and x1 - x0 >= 0.5 * Ws else x0 if side == "left" else x1 if side == "right" else (x0 + x1) / 2
+        fy = (y0 + y1) / 2
+
+        def place(x, y, k_, fx=fx, fy=fy):
+            return fx * sx + (x - fx) * k_, fy * sy + (y - fy) * k_
+        for e in ons:
+            framed[e["id"]] = place
+    marks = [e for e in marks if e["id"] not in framed]
+
+    def attempt(k_):
+        if any(f["width"] * k_ > W or f["height"] * k_ > H for f in frames):
+            return None
+        for e in els:                       # every locked piece stays on the canvas
+            if e["id"] in framed and e["type"] != "text" and e["x"] >= 0 and e["y"] >= 0 \
+                    and e["x"] + e["width"] <= Ws and e["y"] + e["height"] <= Hs:
+                ax, ay = framed[e["id"]](e["x"] + e["width"] / 2, e["y"] + e["height"] / 2, k_)
+                if ax - e["width"] * k_ / 2 < 0 or ay - e["height"] * k_ / 2 < 0 \
+                        or ax + e["width"] * k_ / 2 > W or ay + e["height"] * k_ / 2 > H:
+                    return None
+        got = _set_texts(upright, k_, sx, sy, W, H, holders,
+                         keep + [(mark_box(e, k_), clear_of(_box(e))) for e in marks]
+                         + [(turned_box(e, k_), set()) for e in turned], framed)
+        for i, o in on_surface.items():     # copy stays on the panel or photo it sat on
+            if got and i in got:
+                v, r = got[i][1], rects[o]
+                if not (r[0] <= (v[0] + v[2]) / 2 <= r[2] and r[1] <= (v[1] + v[3]) / 2 <= r[3]):
+                    return None
+        return got
+    lo = s
+    best = attempt(lo)
+    if best is None:
+        return None
+    hi = max(sx, sy)
+    for _ in range(12):
+        mid = (lo + hi) / 2
+        got = attempt(mid)
+        if got is None:
+            hi = mid
+        else:
+            lo, best = mid, got
+    for i, (props, v) in best.items():
+        P.set(i, **props)
+        P.vis[i] = v
+    done = {e["id"] for e in surfaces} | set(best)
+    k = lo
+    for e in els:
+        if e["id"] in done:
+            continue
+        cx, cy = (e["x"] + e["width"] / 2) * sx, (e["y"] + e["height"] / 2) * sy
+        if e["id"] in framed:
+            cx, cy = framed[e["id"]](e["x"] + e["width"] / 2, e["y"] + e["height"] / 2, k)
+        w, h = e["width"] * k, e["height"] * k
+        if e["id"] in getattr(P, "bleed", ()):
+            continue
+        long_thin = e["id"] not in framed and max(e["width"], e["height"]) > 6 * max(1e-6, min(e["width"], e["height"]))
+        if e["type"] == "text":
+            fs = max(1, int(e["font_size"] * k))
+            P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h, font_size=fs, content=e["content"])
+        else:
+            if long_thin:                    # a rule follows the canvas along its length
+                if e["width"] >= e["height"]:
+                    w, h = e["width"] * sx, max(1.0, e["height"] * s)
+                else:
+                    w, h = max(1.0, e["width"] * s), e["height"] * sy
+            P.set(e["id"], x=cx - w / 2, y=cy - h / 2, width=w, height=h)
+        P.vis[e["id"]] = _rot_box(cx - w / 2, cy - h / 2, w, h, e.get("rotation", 0))
+    P.same = True
+    P.meta = {"template": "same-fill", "t": k / ctx.t_star if ctx.t_star else 1.0}
+    return P
+
+
+def _has_words(e):
+    """A picture with words drawn in it reads in one direction only."""
+    from PIL import Image
+    from . import vision
+    p = saliency.asset_file(e.get("asset_id") or "")
+    try:
+        got = vision.read_text(Image.open(p)) if p else None
+    except Exception:
+        return True
+    return bool(got and len([w for w in got[0] if len(w) > 2]) >= 2)
+
+
+def tmpl_bgturn(ctx, model, cw):
+    """The same design with its background photo turned a quarter: for a picture
+    with no natural up whose subject runs along one end, so the turn puts the
+    subject down one side of the new canvas and opens the calm part beside it.
+    The copy moves there as one block, keeping its arrangement."""
+    from .analyze import _box, norm_rot
+    W, H, Ws, Hs = ctx.W, ctx.H, ctx.Ws, ctx.Hs
+    els = [e for u in model["units"] if u.role not in SAME_ROLES_SKIP for e in _uels(u)]
+    photos = [e for e in model["els"].values() if _is_photo(e) and e["width"] * e["height"] >= 0.6 * Ws * Hs]
+    if not photos:
+        return None
+    bg = max(photos, key=lambda e: e["width"] * e["height"])
+    r0 = float(bg.get("rotation", 0) or 0)
+    q0 = int(round(r0 / 90))
+    if abs(r0 - q0 * 90) > 1 or _keeps_upright(bg) or _has_words(bg):
+        return None
+    info = saliency.analyze(bg.get("asset_id") or "")
+    r1 = r0 + (90 if cw else -90)
+    busy = np.rot90(np.asarray(info["busy"], float) + np.asarray(info["sal"], float) / 255.0, -int(round(r1 / 90)))
+    wide = W >= H
+    prof = busy.mean(axis=0 if wide else 1)      # energy along the new long side
+    n = len(prof)
+    near, far = prof[: n // 2].mean(), prof[n // 2:].mean()
+    if max(near, far) < 1.5 * min(near, far):
+        return None                              # no calm end
+    calm_first = near < far
+    if not calm_first:
+        prof = prof[::-1]
+    hot = np.nonzero(prof > 0.5 * prof.max())[0]
+    free = hot[0] / n if len(hot) else 0.0       # the share of the long side that is calm
+    if free < 0.45:
+        return None
+    # the picture covers the canvas, at its own proportions
+    dw, dh = (bg["height"], bg["width"]) if q0 % 2 == 0 else (bg["width"], bg["height"])  # turned size
+    c = max(W / dw, H / dh)
+    across = busy.mean(axis=1 if wide else 0)
+    span, room = (H, dh * c) if wide else (W, dw * c)
+    keep = max(1, int(len(across) * span / room))
+    start = int(np.argmax(np.convolve(across, np.ones(keep), "valid")))   # the richest window across
+    off = -(start / len(across)) * room
+    P = Placed()
+    bw, bh = bg["width"] * c, bg["height"] * c
+    cx, cy = (W / 2, off + room / 2) if wide else (off + room / 2, H / 2)
+    P.set(bg["id"], x=cx - bw / 2, y=cy - bh / 2, width=bw, height=bh, rotation=r1 % 360)
+    P.vis[bg["id"]] = (0.0, 0.0, float(W), float(H))
+    P.bleed = {bg["id"]}
+    L = W if wide else H
+    fr = (0.0, 0.0, W * free, float(H)) if wide else (0.0, 0.0, float(W), H * free)
+    if not calm_first:
+        fr = (W - fr[2], 0.0, float(W), float(H)) if wide else (0.0, H - fr[3], float(W), float(H))
+    texts = [e for e in els if e["type"] == "text"]
+    if not texts:
+        return None
+    bs = [_box(t) for t in texts]
+    x0, y0, x1, y1 = min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs)
+    k = 0.86 * min((fr[2] - fr[0]) / (x1 - x0), (fr[3] - fr[1]) / (y1 - y0))
+    mx, my = (fr[0] + fr[2]) / 2, (fr[1] + fr[3]) / 2
+    sx, sy = W / Ws, H / Hs
+    for e in els:
+        if e is bg:
+            continue
+        if _is_surface(e, Ws, Hs) or e["width"] * e["height"] >= 0.6 * Ws * Hs:     # the plate under the photo
+            P.set(e["id"], x=e["x"] * sx, y=e["y"] * sy, width=e["width"] * sx, height=e["height"] * sy, fit="cover")
+            continue
+        ecx, ecy = e["x"] + e["width"] / 2, e["y"] + e["height"] / 2
+        nx, ny = mx + (ecx - (x0 + x1) / 2) * k, my + (ecy - (y0 + y1) / 2) * k
+        w, h = e["width"] * k, e["height"] * k
+        P.set(e["id"], x=nx - w / 2, y=ny - h / 2, width=w, height=h)
+        if e["type"] == "text":
+            P.set(e["id"], font_size=max(1, int(e["font_size"] * k)))
+        P.vis[e["id"]] = _rot_box(nx - w / 2, ny - h / 2, w, h, e.get("rotation", 0))
+    P.same = True
+    P.meta = {"template": "same-bgturn", "t": k / ctx.t_star if ctx.t_star else 1.0}
+    return P
+
+
+def _is_photo(e):
+    if e["type"] != "image":
+        return False
+    info = saliency.analyze(e.get("asset_id") or "")
+    return bool(info and info.get("busyness", 0) > 0.03)
