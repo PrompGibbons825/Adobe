@@ -12,6 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 
 FONTS_DIR = Path(os.environ.get("CHAMELEON_FONTS_DIR", "brand_kit/fonts"))
+UNWRAP = os.environ.get("CHAMELEON_UNWRAP", "1") == "1"   # hand-wrapped breaks may go where text re-flows; 0 keeps every string exact
 FONTS_PICKLE = os.environ.get("CHAMELEON_FONTS_PICKLE")  # dev only: Crello font set
 _FM = None
 
@@ -135,6 +136,8 @@ def unwrap_breaks(content: str) -> str:
     or clause (. ! ? :), when the next line starts a new piece of information
     (a capital or a number, unless the whole text is set in caps), or when
     the text is display type (fewer than 3 words per line on average)."""
+    if not UNWRAP:
+        return content
     lines = content.split("\n")
     if len(lines) < 2:
         return content

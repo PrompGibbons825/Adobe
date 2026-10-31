@@ -1634,9 +1634,7 @@ def _set_texts(texts, k, sx, sy, W, H, holders, keep_clear=(), framed=None):
         fs = max(1, int(e["font_size"] * k))
         place = framed.get(e["id"])
         w = min(W, e["width"] * (k if place else sx))
-        tracked = float(e.get("letter_spacing", 0) or 0) > 0.15 * float(e["font_size"])
-        flat = " ".join(str(tf.flow(e).get("content", e["content"])).split()) \
-            if sx > 1.3 * sy and not tracked and not place else tf.flow(e)["content"]       # spaced-out display lines keep their breaks
+        flat = tf.flow(e)["content"]      # designed breaks stay; the wider box lets the rest spread
         e2 = dict(e, content=flat)
         hr = holders.get(e["id"])
         if hr is not None:
