@@ -6,8 +6,8 @@
 
 Read with the rules decided on 2026-10-31 (context/notes/adobe-rules.md):
 
-* ``rules.faults``: ids exactly once, canvas, numeric geometry, type/font/asset/shape unchanged,
-  colour unchanged, no hiding (opacity, text at 2 px or less, collapsed boxes), the bleed policy.
+* ``rules.faults`` (combo/four-v2 1cb897b): the decided rules, including output shape, cut-outs never
+  cropped, and burial under the union of opaque layers above (90%, alpha-aware); plus, here:
 * Content is compared byte for byte (rule 9), not with whitespace collapsed.
 * A shape's ``fill_color`` is unchanged (rule 11).
 * An image keeps its source aspect within 5% unless it is ``fit: "cover"`` or covers the whole
