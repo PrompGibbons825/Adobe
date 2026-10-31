@@ -139,6 +139,7 @@ setup.sh        one-command local setup
 
 | Variable | Default | Effect |
 |---|---|---|
+| `CHAMELEON_BLEED` | off | `1` lets elements run past the canvas edge, for subject-aimed crops |
 | `CHAMELEON_DEBUG` | off | `1` prints every candidate's score and any swallowed error |
 | `CHAMELEON_TURN_MIN` | `8` | aspect-ratio change from which the whole design may turn |
 | `CHAMELEON_READ_CHECK` | on | `0` disables the OCR veto |

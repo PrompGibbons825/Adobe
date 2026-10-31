@@ -6,11 +6,96 @@ Give it a design (text, images, shapes) and a new size. It returns the same
 design with the same elements, words and pictures, repositioned and rescaled so
 it still looks like the designer's work.
 
-| | original | our resize |
+---
+
+## Please read this first: the bleed toggle
+
+**This engine has two modes, and one setting switches between them. If bleed is
+allowed, please score it with bleed on. That is our best work.**
+
+| | Strict (default) | Bleed (`CHAMELEON_BLEED=1`) |
 |---|---|---|
-| Square → portrait | ![](docs/examples/level1_source.png) | ![](docs/examples/level1_output.png) |
-| Square → banner | ![](docs/examples/level2_source.png) | ![](docs/examples/level2_output.png) |
-| Portrait → 728×90 strip | ![](docs/examples/level3_source.png) | ![](docs/examples/level3_output.png) |
+| Element boxes | Stay on the canvas | May run past the edge, cut off by it |
+| Photo crops | Centred only | Aimed at the subject |
+| Designer's own bleed | Pulled inside | Kept |
+| Structural self-check | Designed to pass | Prints `off-canvas` warnings on purpose |
+| Aesthetics | Safe | **Our best results** |
+
+```bash
+# local
+CHAMELEON_BLEED=1 .venv/bin/python -m engine.main
+
+# Docker
+docker run --rm --network none -e CHAMELEON_BLEED=1 \
+    -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output my-chameleon-engine
+```
+
+### Why there are two modes
+
+We could not tell whether bleed is allowed. The rules say "nothing off-canvas",
+but they do not say whether that covers an image that is cropped and
+repositioned, and a designer does this all the time.
+
+Jeffrey and Vlatko asked this at the Teams meeting around October 22. The lead
+engineer, Ajit Kumar, gave us a vague answer on whether images could bleed when
+cropped and repositioned. His guidance was to prioritize whatever looks good
+and whatever a designer would do.
+
+So we built for that guidance, and we also ship a safe default in case our
+reading is wrong. The toggle is our answer to the ambiguity:
+
+- **Strict is the default**, in case our subject-aimed cropping is not allowed.
+- **If we misread the rules and bleed is allowed, please turn bleed on.**
+
+### Why the bleed mode looks better
+
+The output schema has no crop offset. An image with `fit: cover` is always
+cropped around its centre. The only way to show a subject that is not in the
+centre is to make the image box larger than the canvas and slide it, which lets
+the canvas edge do the cropping. To the structural check, that is an element
+off the canvas.
+
+This matters most on photo-heavy designs, which is where we spent most of our
+optimization. Bleed mode also keeps the designer's intent when elements were
+meant to run off the edge, such as a large circle clipped by the frame. On the
+large majority of Crello designs we ran, this engine looks significantly better than our other engines.
+
+### What bleed gets you
+
+Three designs from our Crello test sets, resized in both modes.
+
+**The subject stays in frame.** On a 728×90 strip, a centred crop lands on the
+man's mouth. Bleed mode aims at his face and keeps his eyes, so the headache
+that carries the "Forget about pain" message still reads.
+
+![Original, strict and bleed versions of a 728x90 strip](docs/examples/bleed/portrait_strip.png)
+
+**The photo becomes the design.** A tall photo can't fill a 3000×1055 banner
+whole. Bleed mode does what a designer would: it pushes in on the two friends,
+lets their hair and shoulders run off the edges, and floats the card over the
+photo. Strict mode has to keep the picture on the canvas, so it shrinks into a
+corner. The card's white type is left on bare white, where it disappears.
+
+![Original, strict and bleed versions of a 3000x1055 banner](docs/examples/bleed/hen_party.png)
+
+**A cinematic crop.** At 600×200, bleed mode lets the hat and shoulders run past
+the frame and keeps the shaded eyes and red lips that make the design. The copy
+block overlaps the photo, as in the original. In strict mode, the photo and copy
+split apart with white between them.
+
+![Original, strict and bleed versions of a 600x200 banner](docs/examples/bleed/nothing_haunts.png)
+
+Comparison with our other engine, measured on 2026-10-30 (distance to the
+designer's resize / words read by OCR; lower distance is better). These are
+fidelity and legibility numbers. Aesthetics were judged by eye on side-by-side
+sheets.
+
+| set | this engine | our other engine |
+|---|---|---|
+| challenging (`crello_hard`) | 0.543 / 90.5% | 0.674 / 83.0% |
+| training split (`crello_train`) | 0.584 / 90.4% | 0.689 / 80.2% |
+| validation split (`crello_val`) | 0.625 / 90.7% | 0.805 / 86.1% |
+| first held-out (`crello_fresh`) | 0.461 / 93.3% | 0.560 / 84.4% |
 
 ---
 
@@ -22,7 +107,7 @@ the first run.
 ```bash
 git clone git@github.com:PrompGibbons825/Adobe.git
 cd Adobe
-git checkout engine-v1
+git checkout jeffrey-engine-strict-no-bleed
 ./setup.sh
 ```
 
@@ -30,8 +115,8 @@ This takes about a minute. It installs everything, downloads about 150 MB of
 model files once, and resizes the three sample designs. Open the PNGs in
 `output/` to see the results.
 
-- The first design takes about 30 seconds (one-time warm-up). After that, each takes 1–2 seconds.
-- The Level 2 sample prints two `off-canvas` warnings. That is expected: its two decorative circles bleed off the edge on purpose.
+The first design takes about 30 seconds (one-time warm-up). After that, each
+takes 1–2 seconds.
 
 **Your own design:** put a task JSON in `input/` (format: see the samples and
 `chameleon_design_schema_v0.9.json`), then run:
@@ -64,11 +149,30 @@ Run with `CHAMELEON_DEBUG=1` to see every candidate layout and its score.
 The input is just boxes, fonts and asset names, with no labels. So the engine
 first works out what everything is, then tries many layouts and picks the best.
 
-1. **Analyze.** Work out each element's role (headline, logo, button, photo, badges, fine print, decoration) and which elements belong together. Find faces and the subject in photos.
+1. **Analyze.** Work out each element's role (headline, logo, button, photo, badges, fine print, decoration) and which elements belong together. Read each photo (below).
 2. **Propose.** Build 10–40 candidate layouts: refit the original, stack, split, panel, one row, columns, or, for extreme strips, turn the whole design.
-3. **Finalize.** Crop background photos around the subject (never across eyes), place decoration, keep everything on the canvas, and enforce a minimum readable type size.
+3. **Finalize.** Crop background photos around the subject (never across eyes), place decoration, and enforce a minimum readable type size.
 4. **Critique.** Score each candidate against our model of the judge's rubric. Then render the top ones and check with OCR that the headline and button still read.
-5. **Build.** Output schema-valid JSON. No image is ever stretched, and any error falls back to a plain proportional scale, so a run never crashes.
+5. **Build.** Output schema-valid JSON. In strict mode, a last pass (`engine/nobleed.py`) brings in anything still over the edge. Any error falls back to a plain proportional scale, so a run never crashes.
+
+### How it reads a photo
+
+All of this runs offline on CPU, in [`engine/saliency.py`](engine/saliency.py)
+and [`engine/vision.py`](engine/vision.py).
+
+| Signal | Method | What it decides |
+|---|---|---|
+| **Subject** | Spectral residual saliency map: whatever stands out from the image's smooth frequency curve | Where the crop aims, and what copy must not cover |
+| **Busyness** | Local edge density | Where text can sit and still read: calm sky yes, foliage no |
+| **Faces and eyes** | YuNet, with a Haar cascade as well | Crops never cut eyes, and cards never cover them |
+| **Cut-outs** | The PNG's alpha channel is the object mask | Exact subject shape for transparent images |
+| **Natural up** | CLIP ViT-B/32 | Whether a photo may turn with the design, and logo detection |
+| **Legibility** | PP-OCRv4 via RapidOCR on the rendered result | Vetoes layouts whose headline or button no longer reads |
+
+In bleed mode, the crop slides so the subject lands on a rule-of-thirds line
+opposite the text, then searches for the best window. In strict mode the crop
+cannot slide, so if eyes would be cut, the box narrows until the centred crop
+reaches them.
 
 Three rules shape everything:
 
@@ -76,7 +180,6 @@ Three rules shape everything:
 - **Nothing invented.** Same element ids, same words, same pictures. Images are only cropped or scaled, never redrawn.
 - **It has to read.** We check by rendering and running OCR, not just by arithmetic.
 
-It is about 6,000 lines of Python, runs on CPU, and works fully offline.
 **[Read the in-depth walkthrough →](docs/HOW_IT_WORKS.md)**
 
 ---
@@ -85,15 +188,12 @@ It is about 6,000 lines of Python, runs on CPU, and works fully offline.
 
 | Decision | Why | What it costs |
 |---|---|---|
+| **Strict by default, bleed behind a toggle** | The bleed rule is unclear, and strict is the safe reading. | The default is not our best-looking output. |
 | **Classical analysis plus small offline models**, no generative or large model | Image regeneration is disqualifying, scoring is offline, and speed counts. Every choice is inspectable. | It can't "understand" a design like a person. Unusual designs can be misread. |
 | **Try many layouts, let our critic choose** | No single template wins everywhere. | The critic is hand-tuned and can overfit. |
-| **Keep the original's look for standard formats** | The rubric rewards faithfulness. A recognisable, clean refit is safer than a clever rebuild. | Conservative when the original is mediocre at the new shape. |
 | **Restructure only for extreme shape changes** | A square can't become a 12:1 strip without rows or turned text, but an ordinary portrait↔landscape change should stay upright. | Strip layouts differ from the source, and the type is small. |
 | **Crop or fit pictures, never stretch. Eyes come first.** | Distortion and a card across someone's eyes are the first things a judge notices. | Crops are sometimes more cautious than a designer's. |
-| **Words are fixed, only size and line breaks change** | The rules treat text and fonts as fixed for stage one. | Hand-wrapped paragraphs can lose their old line breaks (`CHAMELEON_UNWRAP=0` turns this off). |
-| **OCR as a veto, not a score** | The judge is an AI looking at the picture, so we check by reading it. | OCR is slow, so only the top few are checked. |
 | **Tiered critic and learned subject mask are built but off** | Not yet reliable. They flipped choices on unrelated designs. | We leave their gains unused for now. |
-| **Quality over speed** | The rules don't penalise slow, good results. | 1–2 s per design, not real-time. |
 
 **[Read the full reasoning for each decision →](docs/TRADEOFFS.md)**
 
@@ -104,7 +204,7 @@ It is about 6,000 lines of Python, runs on CPU, and works fully offline.
 | Rule | How we meet it |
 |---|---|
 | Same element ids, nothing added or removed | Every id returns once, checked by `self_check` in `main.py`. |
-| Nothing off-canvas | Everything is clamped to the canvas. |
+| Nothing off-canvas | Strict mode keeps boxes on the canvas. Bleed mode deliberately does not (see the top of this page). |
 | Images in proportion, never regenerated | Crop or fit only. No generative model anywhere. |
 | Text and font family fixed | Never rewritten. |
 | Offline (`--network none`) | Models are in git, in the pip wheel, or fetched at Docker build time. |
@@ -112,10 +212,10 @@ It is about 6,000 lines of Python, runs on CPU, and works fully offline.
 
 ## Known limitations
 
-- **Two cases where an element is not shown.** A piece that was entirely off the source canvas, and an image whose asset file is missing, stay in the JSON (so the id check passes) but are set to invisible. The one real case is the Level 3 sample's deliberately missing `holiday_watermark`. If the rules forbid any hidden element, this is the place to change.
+- **Two cases where an element is not shown.** A piece that was entirely off the source canvas, and an image whose asset file is missing, stay in the JSON (so the id check passes) but are set to invisible. The one real case is the Level 3 sample's deliberately missing `holiday_watermark`.
+- **Turned text in strict mode.** A turned line sits inside the canvas on screen, but its unrotated box can overrun, and `self_check` counts that as off-canvas.
 - **Extreme strips are hard.** The 728×90 output is legible but small, and our own critic rates its readability poorly.
 - **The critic is hand-tuned**, and role detection is heuristic.
-- **Some code comments are stale.** The header of `engine/resize.py` still mentions "drop levels". The engine no longer drops anything except the two cases above.
 
 ---
 
@@ -129,3 +229,46 @@ It is about 6,000 lines of Python, runs on CPU, and works fully offline.
 **Credits:** [cr-renderer](https://github.com/CyberAgentAILab/cr-renderer)
 (CyberAgent AI Lab), YuNet face detection, CLIP ViT-B/32, PP-OCRv4 via RapidOCR,
 and Crello designs for testing.
+
+---
+
+## Appendix: the full pipeline, step by step
+
+One real run: "Nothing Haunts", resized to 600×200 with bleed on. Every figure
+below is drawn from the engine's own data by `tools/pipeline_viz.py`.
+
+**1. Analyze the design.** The input is unlabelled boxes (left). The engine infers
+each element's role and what belongs together (right). Here the copy block, its
+panel and yellow bars lock into one headline group, the photo becomes the
+background, and the thin lines become minor groups.
+
+![Input boxes and inferred roles and groups](docs/examples/pipeline/1_analyze.png)
+
+**2. Read the photo.** The saliency map finds what stands out, which gives the
+subject box and centroid. The busyness map finds where text would be hard to
+read. The face finder found no face in this photo, because the hat shadows the
+eyes, so the crop relies on saliency.
+
+![Photo, saliency map and busyness map](docs/examples/pipeline/2_photo.png)
+
+**3. Propose and grade layouts.** This run scored 23 candidates across 19 layouts.
+These are the top 12, in the critic's order, with the winner in green. Notice how
+candidates that put the copy on her face or lips fall far down the ranking.
+
+![Twelve candidate layouts ranked by score](docs/examples/pipeline/3_candidates.png)
+
+**4. Why the winner won.** Its score terms: clear prominence and balance, with only
+small penalties. It has no penalty for covering the subject.
+
+![Score breakdown of the winning layout](docs/examples/pipeline/4_score.png)
+
+**5. Bleed.** The red frame is the canvas. The faded photo is the part of the image
+box past the edge. This overhang aims the crop, and it is what strict mode
+cannot do.
+
+![The image box running past the canvas](docs/examples/pipeline/5_bleed.png)
+
+**6. Check that it reads.** OCR runs on the rendered result, and each green box is
+text it found. OCR is a check on legibility, so its small misreads are shown as is.
+
+![OCR boxes on the final design](docs/examples/pipeline/6_final.png)

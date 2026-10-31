@@ -1,6 +1,6 @@
-"""Strict mode (CHAMELEON_NO_BLEED=1): every element's box stays on the canvas.
+"""Strict mode, the default (CHAMELEON_BLEED=1 turns it off): every element's box stays on the canvas.
 
-The default engine lets backdrops, heroes and circles run past the edge. Here
+The bleed engine lets backdrops, heroes and circles run past the edge. Here
 nothing does: a backdrop is a canvas-sized box with fit=cover, and this last
 pass brings in whatever is left over. The schema has no crop offset, so a
 cover crop is always centred.
@@ -14,7 +14,7 @@ from . import saliency, textfit as tf
 from .analyze import _fills_box, norm_rot
 from .blocks import rot_bounds
 
-NO_BLEED = os.environ.get("CHAMELEON_NO_BLEED", "1") == "1"
+NO_BLEED = os.environ.get("CHAMELEON_BLEED", "0") != "1"
 BACKDROP_AREA = 0.6     # a turned photo showing this much of the canvas is a backdrop
 EPS = 0.01
 
@@ -79,29 +79,12 @@ def _free_spot(e, design, W, H, b):
     return best
 
 
-def _keep_turned(e, W, H):
-    """Turned text stays turned if a narrower box, wrapped, passes both ways."""
-    cx, cy = e["x"] + e["width"] / 2, e["y"] + e["height"] / 2
-    bw, bh = 2 * min(cx, W - cx), 2 * min(cy, H - cy)
-    w = min(e["width"], bw)
-    fs0 = e["font_size"]
-    for fs in (fs0, int(fs0 * 0.85), int(fs0 * 0.7)):
-        m = tf.measure(e, fs, w)
-        h = m["height"] + 2
-        if m["word_w"] <= w and h <= bw and h <= bh and w <= bh:
-            e.update(x=round(cx - w / 2, 2), y=round(cy - h / 2, 2), width=round(w, 2), height=round(h, 2), font_size=fs)
-            if e.get("letter_spacing"):
-                e["letter_spacing"] = round(e["letter_spacing"] * fs / fs0, 3)
-            return True
-    return False
-
-
 def _stand_up(e, design, W, H):
     """A box on its side overruns the canvas before rotation, which the
     structural check counts. It stands upright: text moves to free space, a
     photo takes the space it had on screen."""
-    if e["type"] == "text" and _keep_turned(e, W, H):
-        return
+    if e["type"] == "text":
+        return          # on screen it is inside the canvas: it keeps its one turned line
     b = rot_bounds(e["x"], e["y"], e["width"], e["height"], e.get("rotation", 0) or 0)
     info = saliency.analyze(e.get("asset_id") or "") if e["type"] == "image" else None
     # the square only for a subject the centre crop would lose; on a strip it would be a speck
