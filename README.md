@@ -30,6 +30,23 @@ docker run --rm --network none -e CHAMELEON_BLEED=1 \
     -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output my-chameleon-engine
 ```
 
+### How to tell which mode you ran
+
+Bleed is off unless you set `CHAMELEON_BLEED=1`. Leaving it unset gives exactly
+the same output as `CHAMELEON_BLEED=0`.
+
+We ran the three sample designs through the Docker image, offline:
+
+| Setting | Mode | Level 1 | Level 2 | Level 3 |
+|---|---|---|---|---|
+| Not set | Strict | OK | OK | OK |
+| `CHAMELEON_BLEED=0` | Strict | OK | OK | OK |
+| `CHAMELEON_BLEED=1` | Bleed | OK | 2 `off-canvas` warnings | OK |
+
+- **OK** means the self-check found no problems.
+- **The two warnings are expected, not errors.** Level 2 has two decorative circles that the designer ran off the edge. Bleed mode keeps them that way, so the self-check reports them. The run still finishes and writes its JSON and PNG.
+- **Levels 1 and 3 come out identical in both modes.** Neither needs anything past the canvas edge. The modes differ on photo-heavy designs, shown below, not on these samples.
+
 ### Why there are two modes
 
 We could not tell whether bleed is allowed. The rules say "nothing off-canvas",
