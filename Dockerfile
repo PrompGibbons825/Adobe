@@ -26,6 +26,11 @@ COPY chameleon_design_schema_v0.9.json .
 COPY brand_kit/ ./brand_kit/
 COPY renderer/ ./renderer/
 COPY engine/ ./engine/
+COPY tools/fetch_models.py ./tools/fetch_models.py
+
+# Aesthetic mode's model weights (CLIP, U2-Netp) are too large for git: fetched here at BUILD time
+# and checked against pinned SHA-256 digests. Nothing is downloaded at run time.
+RUN python tools/fetch_models.py
 
 # input/ and output/ are mounted as volumes at run time (see README) —
 # not baked into the image.

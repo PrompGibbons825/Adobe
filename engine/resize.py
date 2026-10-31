@@ -1,27 +1,33 @@
 """
-Chameleon resize engine - entry point (combined engine, branch combo/strict).
+Chameleon resize engine - entry point.
 
 `resize(source, target_canvas)` runs two resize engines on the design in parallel, each in its own
 process with its own full `engine/` package under `engine/subs/<name>/`:
 
-  night  line/night 3dfabd7 (archetype layouts, candidate scoring, photo-aware crops, ranker)
-  learn  lane/learn 8ae6a42 (designers' median moves learned from Crello families, then repair)
+  night  archetype layouts, candidate scoring, photo-aware crops, learned ranker
+  learn  designers' moves learned from Crello multi-size families, then repair
 
-The pick (2026-10-31): every output first goes through `engine/combo/strict.clamp` (every box
-inside the canvas), then `engine/combo/strict.faults` (the stage-one rules as decided in
-context/notes/adobe-rules.md, nothing hidden, nothing off-canvas). Night's output is kept when it
-passes; otherwise Night's layout with every unit it dropped put back
-(`engine/combo/strict.unhide`, CHAMELEON_UNHIDE=0 turns it off) if that passes; otherwise Learn's; otherwise the output with the fewest faults, Night first on a tie. If
-neither engine answers, a fit-and-centre layout with a type floor.
+The pick: every output first goes through `engine/combo/strict.clamp` (every box inside the
+canvas), then `engine/combo/strict.faults` (the stage-one rules: nothing hidden, nothing
+off-canvas). Night's output is kept when it passes; otherwise Night's layout with every unit it
+dropped put back (`engine/combo/strict.unhide`, CHAMELEON_UNHIDE=0 turns it off) if that passes;
+otherwise Learn's; otherwise the output with the fewest faults, Night first on a tie. If neither
+engine answers, a fit-and-centre layout with a type floor.
 
 On the judged official-format tiles this order scored 6.22 against 4.67 for Night alone and 5.66
 for Learn alone (broken output = 0), because Night hides elements on dense designs and Learn
 almost never does.
 
-Environment: CHAMELEON_BRAND_KIT (default <repo>/brand_kit) is passed to both engines;
-CHAMELEON_COMBO_ENGINES limits the engines (comma list); CHAMELEON_COMBO_TIMEOUT caps one engine
-in seconds (default 300); CHAMELEON_COMBO_LOG appends one JSON line per design (pick, faults,
-seconds).
+Aesthetic mode (CHAMELEON_AESTHETIC=1, off by default): a third engine, jeff (saliency crops, CLIP
+logo check, OCR read check, its own critic), runs beside the two. Its output is returned when the
+only rule it breaks is allowed bleed: photos and decoration past the canvas edge with at least 60%
+of their box on the canvas (`engine/combo/bleed.py`). Anything else it breaks, and the default
+pick is returned instead. With the variable unset the output is exactly the default.
+
+Environment: CHAMELEON_BRAND_KIT (default <repo>/brand_kit) is passed to every engine;
+CHAMELEON_COMBO_ENGINES limits the default engines (comma list); CHAMELEON_COMBO_TIMEOUT caps one
+engine in seconds (default 300); CHAMELEON_COMBO_LOG appends one JSON line per design (pick,
+faults, seconds).
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ REPO = Path(__file__).resolve().parents[1]
 SUBS = Path(__file__).resolve().parent / "subs"
 ENGINES = ["night", "learn"]
 LEAD = "night"
+AESTHETIC = "jeff"
 
 RUNNER = r"""
 import json, os, sys
@@ -133,20 +140,50 @@ def choose(source: dict, target: dict, runs: List[Dict[str, Any]]) -> Dict[str, 
     return {"run": min(order, key=lambda r: len(r["faults"])), "why": "fewest faults (none pass)"}
 
 
+def aesthetic_mode() -> bool:
+    return os.environ.get("CHAMELEON_AESTHETIC", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def beyond_bleed(source: dict, out: dict, target: dict, kit: Path) -> List[str]:
+    """Faults of `out` other than allowed bleed (photos and decoration past the canvas edge,
+    keeping at least 60% of their box on it). [] = only allowed bleed, or nothing at all."""
+    from engine.combo import bleed
+    from engine.combo.strict import faults
+
+    errs, _ = bleed.check(source, out, target, kit)
+    allowed = bleed.allowed_ids(source, out, target, kit)
+    rest = []
+    for f in faults(source, out, target, kit):
+        i, _, why = f.partition(": ")
+        if i in allowed and why in ("off-canvas", "past canvas"):
+            continue
+        rest.append(f)
+    return errs + rest
+
+
 def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, Any]:
     t0 = time.time()
     target = {"width": target_canvas["width"], "height": target_canvas["height"]}
     names = [n for n in (os.environ.get("CHAMELEON_COMBO_ENGINES") or ",".join(ENGINES)).split(",") if n in ENGINES]
     timeout = float(os.environ.get("CHAMELEON_COMBO_TIMEOUT") or 300)
+    extra = [AESTHETIC] if aesthetic_mode() else []
+    aest = None
     try:
-        with ThreadPoolExecutor(max_workers=len(names)) as ex:
-            runs = list(ex.map(lambda n: _run(n, source, target, timeout), names))
+        with ThreadPoolExecutor(max_workers=len(names) + len(extra)) as ex:
+            done = list(ex.map(lambda n: _run(n, source, target, timeout), names + extra))
+        runs = [r for r in done if r["engine"] in ENGINES]
+        aest = next((r for r in done if r["engine"] == AESTHETIC), None)
         from engine.combo.strict import clamp
 
         for r in runs:
             if r["out"] is not None:
                 r["out"] = clamp(r["out"], target)
         pick = choose(source, target, runs)
+        if aest is not None and aest["out"] is not None:
+            kit = Path(os.environ.get("CHAMELEON_BRAND_KIT") or REPO / "brand_kit") / "assets"
+            aest["faults"] = beyond_bleed(source, aest["out"], target, kit)
+            if not aest["faults"]:
+                pick = {"run": aest, "why": "aesthetic mode: only allowed bleed"}
     except Exception:  # noqa: BLE001  never let one odd design take the run down
         traceback.print_exc(file=sys.stderr)
         runs, pick = [], {"run": None, "why": "combiner failed"}
@@ -160,7 +197,7 @@ def resize(source: dict[str, Any], target_canvas: dict[str, Any]) -> dict[str, A
     if log:
         rec = {"pick": run["engine"] if run else "fallback", "why": pick["why"], "secs": round(time.time() - t0, 2),
                "runs": {r["engine"]: {"faults": r.get("faults"), "secs": r["secs"],
-                                       "error": r["error"]} for r in runs}}
+                                       "error": r["error"]} for r in runs + ([aest] if aest else [])}}
         with open(log, "a") as f:
             f.write(json.dumps(rec) + "\n")
     return out

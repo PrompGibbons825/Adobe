@@ -1,7 +1,10 @@
-# Combined engine (combo/strict): the union of Night's and Learn's dependencies, pinned to the
-# versions the 2026-10-31 benchmark ran with (worktrees/jeff-engine-v1/.venv).
+# The union of the three engines' dependencies, pinned to the versions the engine was
+# benchmarked with. Everything installs at build time; nothing is fetched at run time.
 Pillow==13.0.0
 git+https://github.com/CyberAgentAILab/cr-renderer@a17e1fb9a732959dd6c21ae168d5ee09d74bd64f
 skia-python==144.1
 numpy==2.4.6
 opencv-python-headless==4.14.0.94   # night: YuNet face detector (232 KB, in git)
+onnxruntime==1.31.0                 # aesthetic mode: CLIP logo check, saliency mask, OCR read check (CPU, offline)
+rapidocr-onnxruntime==1.4.4         # aesthetic mode: OCR models ship inside the wheel
+tokenizers==0.23.3                  # aesthetic mode: CLIP text tokenizer
