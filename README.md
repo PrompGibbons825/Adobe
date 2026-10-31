@@ -134,37 +134,67 @@ Aesthetics were judged by eye on side-by-side sheets.
 
 ## Run it
 
-You need Python 3.11 (3.12 and 3.13 also work) and an internet connection for
-the first run.
+### 1. Install
+
+You need `git`, Python 3.11 (3.10, 3.12 and 3.13 also work), and an internet
+connection for the first run. Works on macOS and Linux.
 
 ```bash
 git clone https://github.com/PrompGibbons825/Adobe.git
+```
+
+```bash
 cd Adobe
+```
+
+```bash
 ./setup.sh
 ```
 
-This takes about a minute. It installs everything, downloads about 150 MB of
-model files once, and resizes the three sample designs. Open the PNGs in
-`output/` to see the results.
+`setup.sh` is the only install step. It does all of this for you:
 
-The first design takes about 30 seconds (one-time warm-up). After that, each
-takes 1–2 seconds.
+1. Creates a virtual environment in `.venv`.
+2. Installs every dependency from `requirements.txt`, including the renderer.
+3. Downloads about 150 MB of model files, once.
+4. Resizes the three sample designs in strict mode.
 
-**Your own design:** put a task JSON in `input/` (format: see the samples and
-`chameleon_design_schema_v0.9.json`), then run:
+It takes about a minute and is safe to re-run. Open the PNGs in `output/` to see
+the results.
+
+### 2. Run it
+
+The engine resizes every task JSON in `input/` and writes a JSON and a PNG for
+each one to `output/`. Run these from the `Adobe` folder.
+
+Strict (default):
 
 ```bash
 .venv/bin/python -m engine.main
 ```
 
-**Docker (how it is scored).** This runs strict mode. To run bleed, use the command in the [toggle section](#please-read-this-first-the-bleed-toggle).
+Bleed:
+
+```bash
+CHAMELEON_BLEED=1 .venv/bin/python -m engine.main
+```
+
+The first design takes about 30 seconds (one-time warm-up). After that, each
+takes 1–2 seconds. Each run overwrites `output/`, so copy the results out first
+if you want to compare the two modes.
+
+**Your own design:** put a task JSON in `input/` (format: see the samples and
+`chameleon_design_schema_v0.9.json`), then run either command.
+
+### 3. Docker
+
+This is how it is scored. These commands run strict mode. To run bleed, use the command in the [toggle section](#please-read-this-first-the-bleed-toggle).
 
 ```bash
 docker build --platform linux/amd64 -t my-chameleon-engine .
 docker run --rm --network none -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output my-chameleon-engine
 ```
 
-**Something broke?**
+### Something broke?
 
 | Problem | Fix |
 |---|---|
