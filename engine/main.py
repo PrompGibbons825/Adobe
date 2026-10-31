@@ -105,6 +105,43 @@ def _fallback_render(design: dict, png_path: Path) -> None:
     img.save(png_path)
 
 
+def load_task(path: Path) -> dict:
+    """Reads a task file and checks it has what resize() needs, with a
+    message that says what to fix instead of a bare KeyError."""
+    try:
+        task = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise ValueError(f"not valid JSON ({e})")
+    if not isinstance(task, dict):
+        raise ValueError("top level must be an object with 'source' and 'target_canvas'")
+    for key in ("source", "target_canvas"):
+        if key not in task:
+            raise ValueError(f"missing '{key}'")
+    src = task["source"]
+    if not isinstance(src, dict) or "canvas" not in src or not isinstance(src.get("elements"), list):
+        raise ValueError("'source' needs 'canvas' and an 'elements' list")
+    tc = task["target_canvas"]
+    if not all(isinstance(tc.get(k), (int, float)) and tc[k] > 0 for k in ("width", "height")):
+        raise ValueError("'target_canvas' needs positive 'width' and 'height'")
+    return task
+
+
+def naive_scale(source: dict, target: dict) -> dict:
+    """Last-resort output when the engine raises: scale everything uniformly
+    and centre it, so every element id is still present and on canvas."""
+    sw, sh = source["canvas"]["width"], source["canvas"]["height"]
+    k = min(target["width"] / sw, target["height"] / sh)
+    ox, oy = (target["width"] - sw * k) / 2, (target["height"] - sh * k) / 2
+    out = json.loads(json.dumps(source))
+    out["canvas"] = {**source["canvas"], "width": target["width"], "height": target["height"]}
+    for el in out["elements"]:
+        el["x"], el["y"] = el["x"] * k + ox, el["y"] * k + oy
+        el["width"], el["height"] = el["width"] * k, el["height"] * k
+        if "font_size" in el:
+            el["font_size"] = el["font_size"] * k
+    return out
+
+
 def main() -> int:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     task_files = sorted(INPUT_DIR.glob("*.json"))
@@ -114,17 +151,31 @@ def main() -> int:
 
     exit_code = 0
     for task_path in task_files:
-        task = json.loads(task_path.read_text())
+        stem = task_path.stem
+        try:
+            task = load_task(task_path)
+        except ValueError as e:
+            print(f"[{task_path.name}] SKIPPED: {e}", file=sys.stderr)
+            exit_code = 1
+            continue
         source, target_canvas = task["source"], task["target_canvas"]
 
         t0 = time.time()
-        output = resize(source, target_canvas)
+        try:
+            output = resize(source, target_canvas)
+        except Exception as e:  # keep the batch going; still emit a valid file
+            print(f"[{task_path.name}] engine failed ({type(e).__name__}: {e}); "
+                  f"writing a plain proportional scale instead", file=sys.stderr)
+            output = naive_scale(source, target_canvas)
+            exit_code = 1
         elapsed = time.time() - t0
 
         problems = self_check(source, output)
-        stem = task_path.stem
         (OUTPUT_DIR / f"{stem}_output.json").write_text(json.dumps(output, indent=2))
-        render_to_png(output, ASSETS_DIR, OUTPUT_DIR / f"{stem}_output.png")
+        try:
+            render_to_png(output, ASSETS_DIR, OUTPUT_DIR / f"{stem}_output.png")
+        except Exception as e:
+            problems.append(f"PNG render failed: {type(e).__name__}: {e}")
 
         status = "OK" if not problems else f"{len(problems)} self-check warning(s)"
         print(f"[{task_path.name}] {status} in {elapsed:.2f}s "

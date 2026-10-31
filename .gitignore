@@ -39,3 +39,7 @@ output/*
 /crello_train/
 /crello_hard/
 /crello_hard_all/
+
+# LICA test data (downloaded)
+/lica/
+/lica_pilot36/

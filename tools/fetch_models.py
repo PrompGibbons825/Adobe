@@ -6,7 +6,9 @@ Run once after cloning (the Docker build runs it too):  python tools/fetch_model
 YuNet (faces) is in git. OCR models ship inside the rapidocr wheel.
 Without these files the engine still runs; it just skips what needs them.
 """
+import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -28,5 +30,10 @@ for rel, url in FILES.items():
         continue
     dst.parent.mkdir(parents=True, exist_ok=True)
     print("fetch  ", rel, file=sys.stderr)
-    urllib.request.urlretrieve(url, dst)
+    try:
+        urllib.request.urlretrieve(url, dst)
+    except urllib.error.URLError:
+        # python.org builds of Python on macOS ship without root certificates;
+        # the system curl has them
+        subprocess.run(["curl", "-fsSL", "--retry", "3", "-o", str(dst), url], check=True)
     print("fetched", rel, dst.stat().st_size // 1024, "KB")
