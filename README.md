@@ -21,14 +21,27 @@ allowed, please score it with bleed on. That is our best work.**
 | Structural self-check | Designed to pass | Prints `off-canvas` warnings on purpose |
 | Aesthetics | Safe | **Our best results** |
 
-```bash
-# local
-CHAMELEON_BLEED=1 .venv/bin/python -m engine.main
+**Strict is the default.** You get it by running the engine normally. Bleed only
+turns on when you add `CHAMELEON_BLEED=1`:
 
-# Docker
-docker run --rm --network none -e CHAMELEON_BLEED=1 \
-    -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output my-chameleon-engine
+| | Strict (default) | Bleed |
+|---|---|---|
+| Local | `.venv/bin/python -m engine.main` | `CHAMELEON_BLEED=1 .venv/bin/python -m engine.main` |
+| Docker | the `docker run` command below | the same command with `-e CHAMELEON_BLEED=1` added |
+
+Docker, strict (default):
+
+```bash
+docker run --rm --network none -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output my-chameleon-engine
 ```
+
+Docker, bleed:
+
+```bash
+docker run --rm --network none -e CHAMELEON_BLEED=1 -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output my-chameleon-engine
+```
+
+Build the image first (see [Run it](#run-it)).
 
 ### How to tell which mode you ran
 
@@ -75,7 +88,8 @@ off the canvas.
 This matters most on photo-heavy designs, which is where we spent most of our
 optimization. Bleed mode also keeps the designer's intent when elements were
 meant to run off the edge, such as a large circle clipped by the frame. On the
-large majority of Crello designs we ran, this engine looks significantly better than our other engines.
+large majority of Crello designs we ran, this engine looks significantly better
+than our other engines.
 
 ### What bleed gets you
 
@@ -102,10 +116,12 @@ split apart with white between them.
 
 ![Original, strict and bleed versions of a 600x200 banner](docs/examples/bleed/nothing_haunts.png)
 
-Comparison with our other engine, measured on 2026-10-30 (distance to the
-designer's resize / words read by OCR; lower distance is better). These are
-fidelity and legibility numbers. Aesthetics were judged by eye on side-by-side
-sheets.
+### Measured results
+
+The bleed version of this engine against our other engine, measured on
+2026-10-30. Each cell shows distance to the designer's resize / words read by
+OCR, and lower distance is better. These are fidelity and legibility numbers.
+Aesthetics were judged by eye on side-by-side sheets.
 
 | set | this engine | our other engine |
 |---|---|---|
@@ -122,9 +138,8 @@ You need Python 3.11 (3.12 and 3.13 also work) and an internet connection for
 the first run.
 
 ```bash
-git clone git@github.com:PrompGibbons825/Adobe.git
+git clone https://github.com/PrompGibbons825/Adobe.git
 cd Adobe
-git checkout jeffrey-engine-strict-no-bleed
 ./setup.sh
 ```
 
@@ -142,7 +157,7 @@ takes 1–2 seconds.
 .venv/bin/python -m engine.main
 ```
 
-**Docker (how it is scored):**
+**Docker (how it is scored).** This runs strict mode. To run bleed, use the command in the [toggle section](#please-read-this-first-the-bleed-toggle).
 
 ```bash
 docker build --platform linux/amd64 -t my-chameleon-engine .
