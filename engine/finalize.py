@@ -10,7 +10,6 @@ import numpy as np
 
 from . import saliency
 from .blocks import GroupBlock, ImageBlock, img_vis_frac, rot_bounds
-from . import nobleed
 from .nobleed import NO_BLEED
 
 HIDE_ROLES = {"missing", "offcanvas"}
@@ -233,7 +232,7 @@ def _turned_info(info, k):
 def place_bg(ctx, P, unit, model=None):
     el = unit.els[0]
     W, H = ctx.W, ctx.H
-    if el["id"] in getattr(P, "bleed", ()) and "rotation" in P.props.get(el["id"], {}) and not nobleed.UPRIGHT:
+    if el["id"] in getattr(P, "bleed", ()) and "rotation" in P.props.get(el["id"], {}):
         return                  # the layout already turned and placed this picture
     info = saliency.analyze(el.get("asset_id") or "") if el["type"] == "image" else None
     if info is None:
@@ -241,7 +240,7 @@ def place_bg(ctx, P, unit, model=None):
         return
     from .analyze import norm_rot
     rot = norm_rot(el.get("rotation", 0) or 0)
-    if NO_BLEED and rot and (abs(abs(rot) - 90) > 1 or nobleed.UPRIGHT):
+    if NO_BLEED and rot and abs(abs(rot) - 90) > 1:
         rot = 0.0               # a turned box would leave the canvas: the picture stands upright
         P.set(el["id"], rotation=0)
         el = dict(el, rotation=0)
